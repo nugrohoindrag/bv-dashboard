@@ -822,3 +822,8 @@ func describeObject(ctx context.Context, tx pgx.Tx, objectType string, id uuid.U
 func DescribeObject(ctx context.Context, tx pgx.Tx, objectType string, id uuid.UUID) (label, title, status string) {
 	return describeObject(ctx, tx, objectType, id)
 }
+
+// ListLinksTx diekspor untuk modul domain.
+func (s *Service) ListLinksTx(ctx context.Context, tx pgx.Tx, objectType string, objectID uuid.UUID) ([]ObjectLink, error) {
+	return s.listLinksTx(ctx, tx, objectType, objectID)
+}

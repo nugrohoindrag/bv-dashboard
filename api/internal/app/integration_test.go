@@ -39,8 +39,9 @@ type env struct {
 	jobs      *jobs.MemoryEnqueuer
 	refs      *seed.DemoRefs
 	orgB      uuid.UUID
-	orgBAdmin string
-	tokens    map[string]string
+	orgBAdmin  string
+	tokens     map[string]string
+	dispatched int
 }
 
 func adminURL() string {

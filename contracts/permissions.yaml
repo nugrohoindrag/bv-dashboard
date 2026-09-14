@@ -62,37 +62,37 @@ roles:
     permissions: ["*"]
   property_manager:
     label: Property Manager
-    permissions: ["platform.*", "iam.*.view", "property.*", "operations.*", "engineering.*", "security.*", "housekeeping.*", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*"]
+    permissions: ["platform.*", "iam.*.view", "property.*", "operations.*", "engineering.*", "security.*", "housekeeping.*", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create"]
   building_manager:
     label: Building Manager
-    permissions: ["iam.*.view", "property.*.view", "operations.*", "engineering.*.view", "security.*.view", "housekeeping.*.view", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*"]
+    permissions: ["iam.*.view", "property.*.view", "operations.*", "engineering.*.view", "security.*.view", "housekeeping.*.view", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create"]
   operations_manager:
     label: Operations Manager
-    permissions: ["property.*.view", "operations.*", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*"]
+    permissions: ["property.*.view", "operations.*", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create"]
   engineering_manager:
     label: Engineering Manager
-    permissions: ["property.*.view", "operations.tasks.*", "operations.work_orders.*", "operations.findings.*", "operations.checklists.*", "operations.comments.*", "operations.attachments.*", "engineering.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*"]
+    permissions: ["property.*.view", "operations.tasks.*", "operations.work_orders.*", "operations.findings.*", "operations.checklists.*", "operations.comments.*", "operations.attachments.*", "engineering.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create"]
   engineering_supervisor:
     label: Engineering Supervisor
-    permissions: ["property.*.view", "operations.tasks.*", "operations.work_orders.*", "operations.findings.*", "operations.checklists.view", "operations.comments.*", "operations.attachments.*", "engineering.*.view", "engineering.inspections.*", "engineering.maintenance_schedules.*", "notification.*", "overview.*", "search.*", "sync.*"]
+    permissions: ["property.*.view", "operations.tasks.*", "operations.work_orders.*", "operations.findings.*", "operations.checklists.view", "operations.comments.*", "operations.attachments.*", "engineering.*.view", "engineering.inspections.*", "engineering.maintenance_schedules.*", "notification.*", "overview.*", "search.*", "sync.*", "platform.exports.create"]
   technician:
     label: Technician
     permissions: ["property.*.view", "operations.tasks.view", "operations.tasks.start", "operations.tasks.complete", "operations.work_orders.view", "operations.work_orders.create", "operations.work_orders.start", "operations.work_orders.complete", "operations.findings.view", "operations.findings.create", "operations.comments.create", "operations.attachments.create", "engineering.assets.view", "engineering.equipment.view", "engineering.inspections.view", "engineering.inspections.complete", "notification.inbox.view", "search.global.view", "sync.work_bundle.view", "sync.mutations.create"]
   security_manager:
     label: Security Manager
-    permissions: ["property.*.view", "operations.tasks.*", "operations.incidents.*", "operations.findings.*", "operations.checklists.*", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "security.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*"]
+    permissions: ["property.*.view", "operations.tasks.*", "operations.incidents.*", "operations.findings.*", "operations.checklists.*", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "security.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create"]
   security_supervisor:
     label: Security Supervisor
-    permissions: ["property.*.view", "operations.tasks.*", "operations.incidents.*", "operations.findings.*", "operations.checklists.view", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "security.*", "notification.*", "overview.*", "search.*", "sync.*"]
+    permissions: ["property.*.view", "operations.tasks.*", "operations.incidents.*", "operations.findings.*", "operations.checklists.view", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "security.*", "notification.*", "overview.*", "search.*", "sync.*", "platform.exports.create"]
   security_officer:
     label: Security Officer
     permissions: ["property.*.view", "operations.tasks.view", "operations.tasks.start", "operations.tasks.complete", "operations.incidents.view", "operations.incidents.create", "operations.findings.view", "operations.findings.create", "operations.comments.create", "operations.attachments.create", "security.patrol.view", "security.patrol.start", "security.patrol.complete", "security.incidents.view", "security.incidents.create", "notification.inbox.view", "search.global.view", "sync.work_bundle.view", "sync.mutations.create"]
   housekeeping_manager:
     label: Housekeeping Manager
-    permissions: ["property.*.view", "operations.tasks.*", "operations.findings.*", "operations.checklists.*", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "housekeeping.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*"]
+    permissions: ["property.*.view", "operations.tasks.*", "operations.findings.*", "operations.checklists.*", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "housekeeping.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create"]
   housekeeping_supervisor:
     label: Housekeeping Supervisor
-    permissions: ["property.*.view", "operations.tasks.*", "operations.findings.*", "operations.checklists.view", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "housekeeping.*", "notification.*", "overview.*", "search.*", "sync.*"]
+    permissions: ["property.*.view", "operations.tasks.*", "operations.findings.*", "operations.checklists.view", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "housekeeping.*", "notification.*", "overview.*", "search.*", "sync.*", "platform.exports.create"]
   housekeeping_staff:
     label: Housekeeping Staff
     permissions: ["property.*.view", "operations.tasks.view", "operations.tasks.start", "operations.tasks.complete", "operations.findings.view", "operations.findings.create", "operations.comments.create", "operations.attachments.create", "housekeeping.cleaning.view", "housekeeping.cleaning.start", "housekeeping.cleaning.complete", "notification.inbox.view", "search.global.view", "sync.work_bundle.view", "sync.mutations.create"]

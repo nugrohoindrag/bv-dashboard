@@ -393,3 +393,22 @@ var ErrNotFound = errors.New("not found")
 func (s *Service) invalidateAll() {
 	s.permCache.Range(func(k, _ any) bool { s.permCache.Delete(k); return true })
 }
+
+// LoadPrincipal: principal penuh untuk user (dipakai worker export agar permission tetap berlaku).
+func (s *Service) LoadPrincipal(ctx context.Context, userID, orgID uuid.UUID) (*authctx.Principal, error) {
+	var p *authctx.Principal
+	err := s.DB.WithOrgTx(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
+		var ver int
+		if err := tx.QueryRow(ctx, `SELECT permission_version FROM users WHERE id = $1 AND is_active AND deleted_at IS NULL`, userID).Scan(&ver); err != nil {
+			return apperr.NotFound("User")
+		}
+		var err error
+		p, err = s.loadPrincipalTx(ctx, tx, userID, orgID, uuid.Nil, ver)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	p.Source = authctx.SourceSystem
+	return p, nil
+}

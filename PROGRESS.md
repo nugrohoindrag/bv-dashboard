@@ -49,15 +49,17 @@ Referensi: PRD P0 v1.0 · Technical Architecture v1.0 · Dashboard Design System
 - ✅ AT-005, AT-006, AT-007 lulus (integration test)
 
 ## P0.5 Service Request + Notification
-- 🔄 sedang dikerjakan
-- ⏳ service_requests lifecycle, SR ↔ Task/WO bidirectional links, resolution hook
-- ⏳ notification rules (PRD §17.1), inbox, push adapter (FCM), deep link, device tokens
+- ✅ service_requests (SR-, kategori → default priority/team, tenant → lokasi unit), lifecycle New→Acknowledged→Assigned→In Progress→Waiting for Tenant→Resolved→Closed, SR ↔ Task/WO bidirectional links, hook: WO/Task closed ⇒ SR resolved, guard resolve saat work masih open
+- ✅ notification rules (seluruh tabel PRD §17.1 + sync.conflict + export.ready), resolver (assignee / team supervisor / property domain supervisor / requester), dedup, inbox API (list/unread/read/read-all/preferences), push job + FCM HTTP v1 adapter, deep link
+- ✅ search (tsvector + pg_trgm, filter permission per object type), exports CSV/XLSX (job → storage → signed URL + notifikasi)
+- ✅ worker binary (River): domain_event dispatch, push, attachment thumbnails (EXIF strip), search index, export, sweeps periodic, generator PM/patrol/cleaning
 - ⏳ web: Service Requests, NotificationInbox
-- ⏳ AT-008
+- ✅ AT-008 lulus (integration test) + notifikasi SR received / WO assigned / WO completed (supervisor & requester) terverifikasi
 
 ## P0.6 Overview + Pilot Hardening
+- 🔄 sedang dikerjakan
 - ⏳ overview endpoints: today, attention-required, todays-operations, team-workload, pm-due, tenant-requests, building-state
-- ⏳ search (tsvector + pg_trgm), exports CSV/XLSX
+- ✅ (dikerjakan di P0.5) search + exports
 - ⏳ sync: work-bundle, mutations (C1–C10), conflicts
 - ⏳ web Overview page (TodayCounter, AttentionRequiredList, ...)
 - ⏳ contracts/sync-api.md untuk repo mobile (work-bundle, mutations, C1–C10)

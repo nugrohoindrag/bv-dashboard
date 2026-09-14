@@ -971,3 +971,8 @@ func itoa(n int) string {
 // ListHandler / GetHandler diekspor untuk modul domain (patrol-tasks, cleaning-tasks alias).
 func (h *Handler) ListHandler(objectType string) http.HandlerFunc { return h.list(objectType) }
 func (h *Handler) GetHandler(objectType string) http.HandlerFunc  { return h.get(objectType) }
+
+// MountSubResources diekspor untuk modul lain (service-requests).
+func (h *Handler) MountSubResources(r chi.Router, base, objectType string) {
+	h.mountSub(r, base, objectType)
+}
