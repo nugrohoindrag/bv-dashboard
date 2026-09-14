@@ -11,8 +11,10 @@ import (
 	"github.com/buildingvision/api/internal/housekeeping"
 	"github.com/buildingvision/api/internal/notification"
 	"github.com/buildingvision/api/internal/operations"
+	"github.com/buildingvision/api/internal/overview"
 	"github.com/buildingvision/api/internal/search"
 	"github.com/buildingvision/api/internal/security"
+	bvsync "github.com/buildingvision/api/internal/sync"
 	"github.com/buildingvision/api/internal/tenantservice"
 )
 
@@ -32,6 +34,8 @@ func DefaultExtensions(a *App) []Extension {
 	a.TenantService = tsSvc
 	a.Notification = &notification.Service{DB: a.DB, Jobs: a.Jobs, PublicURL: a.Cfg.PublicURL}
 	a.Search = &search.Service{DB: a.DB}
+	a.Overview = &overview.Service{DB: a.DB, Ops: a.Operations, CacheTTL: a.Cfg.OverviewCacheTTL}
+	a.Sync = &bvsync.Service{DB: a.DB, Jobs: a.Jobs, Ops: a.Operations, Security: secSvc, Attachments: a.Attachments, Storage: a.Storage, ClockSkew: 10 * time.Minute}
 	a.Exports = &exports.Service{DB: a.DB, Jobs: a.Jobs, Storage: a.Storage, IAM: a.IAM, Ops: a.Operations, Assets: assetSvc, SR: tsSvc, DownloadTTL: 24 * time.Hour}
 	opsH := &operations.Handler{Svc: a.Operations, IAM: a.IAM}
 	return []Extension{
@@ -43,6 +47,8 @@ func DefaultExtensions(a *App) []Extension {
 		extFn{"notification", func(a *App, r chi.Router) { (&notification.Handler{Svc: a.Notification, IAM: a.IAM}).Mount(r) }},
 		extFn{"search", func(a *App, r chi.Router) { (&search.Handler{Svc: a.Search, IAM: a.IAM}).Mount(r) }},
 		extFn{"exports", func(a *App, r chi.Router) { (&exports.Handler{Svc: a.Exports, IAM: a.IAM}).Mount(r) }},
+		extFn{"overview", func(a *App, r chi.Router) { (&overview.Handler{Svc: a.Overview, IAM: a.IAM, Eng: engSvc}).Mount(r) }},
+		extFn{"sync", func(a *App, r chi.Router) { (&bvsync.Handler{Svc: a.Sync, IAM: a.IAM}).Mount(r) }},
 	}
 }
 

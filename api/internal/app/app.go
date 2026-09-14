@@ -21,6 +21,7 @@ import (
 	"github.com/buildingvision/api/internal/iam"
 	"github.com/buildingvision/api/internal/notification"
 	"github.com/buildingvision/api/internal/operations"
+	"github.com/buildingvision/api/internal/overview"
 	"github.com/buildingvision/api/internal/platform/apperr"
 	"github.com/buildingvision/api/internal/platform/authctx"
 	"github.com/buildingvision/api/internal/platform/config"
@@ -31,6 +32,7 @@ import (
 	"github.com/buildingvision/api/internal/property"
 	"github.com/buildingvision/api/internal/search"
 	"github.com/buildingvision/api/internal/security"
+	bvsync "github.com/buildingvision/api/internal/sync"
 	"github.com/buildingvision/api/internal/tenantservice"
 )
 
@@ -55,6 +57,8 @@ type App struct {
 	Notification  *notification.Service
 	Search        *search.Service
 	Exports       *exports.Service
+	Overview      *overview.Service
+	Sync          *bvsync.Service
 
 	// modul lanjutan didaftarkan lewat Extensions (engineering, security, housekeeping, tenantservice, notification, overview, search, sync)
 	Extensions []Extension

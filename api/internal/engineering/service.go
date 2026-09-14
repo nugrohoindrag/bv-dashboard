@@ -576,7 +576,7 @@ func (s *Service) ListSchedules(ctx context.Context, f ScheduleFilter, page http
 			where += " AND ms.due_at <= " + add(*f.To)
 		}
 		if f.DueWithinDays != nil {
-			where += " AND ms.due_at <= now() + (" + add(*f.DueWithinDays) + " || ' days')::interval AND ms.status IN ('scheduled','due','overdue')"
+			where += " AND ms.due_at <= now() + make_interval(days => " + add(*f.DueWithinDays) + ") AND ms.status IN ('scheduled','due','overdue')"
 		}
 		if page.Cursor != nil {
 			where += " AND (ms.due_at, ms.id) > (" + add(page.Cursor.Value) + "::timestamptz, " + add(page.Cursor.ID) + ")"
