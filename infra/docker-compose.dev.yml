@@ -1,0 +1,58 @@
+# Dev lokal (TAD §11.1 env `local`): hanya dependensi — Postgres 17, MinIO, Mailpit. api/worker/web dijalankan dari source.
+#   docker compose -f infra/docker-compose.dev.yml up -d
+#   cd api && go run ./cmd/bvctl migrate && go run ./cmd/bvctl seed --demo && go run ./cmd/api   (worker: go run ./cmd/worker)
+#   cd web && npm run dev   → http://localhost:5173 (proxy /api → :8080)
+name: buildingvision-dev
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: bv-postgres
+    ports: ["5432:5432"]
+    environment:
+      POSTGRES_DB: buildingvision
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    command: ["postgres", "-c", "log_min_duration_statement=250"]
+    volumes: [pg-dev:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d buildingvision"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: bv-minio
+    command: server /data --console-address ":9001"
+    ports: ["9000:9000", "9001:9001"]
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes: [minio-dev:/data]
+
+  mailpit:
+    image: axllent/mailpit:v1.24
+    container_name: bv-mailpit
+    ports: ["8025:8025", "1025:1025"]
+
+  # Opsional: observability lokal ringan — `docker compose -f infra/docker-compose.dev.yml --profile obs up -d`
+  prometheus:
+    profiles: [obs]
+    image: prom/prometheus:v3.3.0
+    ports: ["9090:9090"]
+    volumes: [./prometheus/prometheus.dev.yml:/etc/prometheus/prometheus.yml:ro]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+  grafana:
+    profiles: [obs]
+    image: grafana/grafana:11.6.1
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+volumes:
+  pg-dev:
+  minio-dev:

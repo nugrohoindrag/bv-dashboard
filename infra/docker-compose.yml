@@ -1,0 +1,287 @@
+# BuildingVision — topologi pilot (TAD §11.2, ADR-009): Caddy → api (2 replika) + web statis, worker, Postgres 17 + pgBackRest,
+# MinIO, observability (otel-collector, Prometheus, Grafana, Loki, Promtail). Jalankan dari folder infra/: `docker compose up -d`.
+# Env: salin .env.example → .env. Untuk dev lokal ringan pakai docker-compose.dev.yml (postgres, minio, mailpit saja).
+name: buildingvision
+
+x-api-env: &api-env
+  BV_ENV: ${BV_ENV:-production}
+  BV_PUBLIC_URL: ${BV_PUBLIC_URL:-https://app.example.com}
+  BV_DATABASE_URL: postgres://bv_app:${BV_APP_DB_PASSWORD:-bv_app_dev}@postgres:5432/buildingvision?sslmode=disable
+  BV_WORKER_DATABASE_URL: postgres://bv_worker:${BV_WORKER_DB_PASSWORD:-bv_worker_dev}@postgres:5432/buildingvision?sslmode=disable
+  BV_JWT_PRIVATE_KEY: ${BV_JWT_PRIVATE_KEY}
+  BV_JWT_PUBLIC_KEY: ${BV_JWT_PUBLIC_KEY}
+  BV_COOKIE_SECURE: "true"
+  BV_COOKIE_DOMAIN: ${BV_COOKIE_DOMAIN:-}
+  BV_CORS_ORIGINS: ${BV_PUBLIC_URL:-https://app.example.com}
+  BV_S3_ENDPOINT: ${BV_S3_ENDPOINT:-http://minio:9000}
+  BV_S3_REGION: ${BV_S3_REGION:-ap-southeast-3}
+  BV_S3_BUCKET: ${BV_S3_BUCKET:-buildingvision}
+  BV_S3_ACCESS_KEY: ${BV_S3_ACCESS_KEY:-minioadmin}
+  BV_S3_SECRET_KEY: ${BV_S3_SECRET_KEY:-minioadmin}
+  BV_S3_PATH_STYLE: ${BV_S3_PATH_STYLE:-true}
+  BV_FCM_PROJECT_ID: ${BV_FCM_PROJECT_ID:-}
+  BV_FCM_SERVICE_ACCOUNT: ${BV_FCM_SERVICE_ACCOUNT:-}
+  BV_QR_BASE_URL: ${BV_QR_BASE_URL:-https://app.example.com/q/}
+  BV_LOG_LEVEL: ${BV_LOG_LEVEL:-info}
+  BV_METRICS_ADDR: ":9091"
+  TZ: UTC
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+    tag: "{{.Name}}"
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      BV_DOMAIN: ${BV_DOMAIN:-localhost}
+      BV_ACME_EMAIL: ${BV_ACME_EMAIL:-admin@example.com}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - web-dist:/srv:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [api, web]
+    logging: *logging
+
+  web:
+    # Image web menyalin dist/ ke volume yang disajikan Caddy utama (SPA statis, ADR-008).
+    image: ghcr.io/nugrohoindrag/bv-web:${BV_VERSION:-latest}
+    build: { context: ../web }
+    restart: "no"
+    entrypoint: ["sh", "-c", "rm -rf /srv-out/* && cp -r /srv/. /srv-out/ && echo web dist synced"]
+    volumes: [web-dist:/srv-out]
+
+  api:
+    image: ghcr.io/nugrohoindrag/bv-api:${BV_VERSION:-latest}
+    build: { context: ../api, args: { VERSION: "${BV_VERSION:-dev}" } }
+    restart: unless-stopped
+    command: ["/app/api"]
+    environment: *api-env
+    deploy:
+      replicas: 2
+      update_config: { parallelism: 1, order: start-first, delay: 5s }
+    healthcheck:
+      test: ["CMD", "/app/bvctl", "healthcheck", "http://127.0.0.1:8080/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+      minio: { condition: service_started }
+    logging: *logging
+
+  worker:
+    image: ghcr.io/nugrohoindrag/bv-api:${BV_VERSION:-latest}
+    restart: unless-stopped
+    command: ["/app/worker"]
+    environment:
+      <<: *api-env
+      BV_METRICS_ADDR: ":9092"
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    logging: *logging
+
+  migrate:
+    # Job terpisah sebelum rollout api (TAD §11.4). Migrasi backward-compatible (§7.7). Menjalankan goose + River schema.
+    image: ghcr.io/nugrohoindrag/bv-api:${BV_VERSION:-latest}
+    command: ["/app/bvctl", "migrate"]
+    environment:
+      <<: *api-env
+      BV_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/buildingvision?sslmode=disable
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: buildingvision
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - effective_cache_size=3GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - max_connections=200
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=pgbackrest --stanza=bv archive-push %p
+      - -c
+      - archive_timeout=60
+      - -c
+      - log_min_duration_statement=500
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - pgbackrest-spool:/var/spool/pgbackrest
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d buildingvision"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+
+  pgbackrest:
+    # Backup: full harian 02:00, incremental tiap 6 jam, WAL archiving kontinu ke object storage lokasi berbeda (TAD §11.6).
+    # Container ini berbagi volume data Postgres (read) dan menjalankan cron; archive-push dijalankan dari container postgres
+    # lewat socket/stanza yang sama (repo S3), sehingga pgbackrest harus terpasang di image postgres pada produksi — lihat docs/runbooks/backup-restore.md.
+    image: woblerr/pgbackrest:2.54
+    restart: unless-stopped
+    environment:
+      BACKREST_MODE: cron
+    volumes:
+      - pg-data:/var/lib/postgresql/data:ro
+      - ./pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - ./pgbackrest/crontab:/etc/crontabs/postgres:ro
+      - pgbackrest-spool:/var/spool/pgbackrest
+    depends_on:
+      postgres: { condition: service_healthy }
+    logging: *logging
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${BV_S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${BV_S3_SECRET_KEY:-minioadmin}
+    volumes: [minio-data:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    logging: *logging
+
+  minio-init:
+    # Bucket + versioning (TAD §11.6). Replikasi ke bucket kedua/region lain dikonfigurasi lewat `mc replicate add` (runbook).
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio: { condition: service_healthy }
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
+        (mc mb -p local/"$${BUCKET}" || true) &&
+        mc version enable local/"$${BUCKET}" &&
+        (mc mb -p local/bv-backup || true) &&
+        echo minio ready
+    environment:
+      MINIO_ROOT_USER: ${BV_S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${BV_S3_SECRET_KEY:-minioadmin}
+      BUCKET: ${BV_S3_BUCKET:-buildingvision}
+    restart: "no"
+
+  # ---------- Observability (TAD §11.5) ----------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.123.0
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes: [./otel/collector.yaml:/etc/otelcol/config.yaml:ro]
+    logging: *logging
+
+  prometheus:
+    image: prom/prometheus:v3.3.0
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d", "--web.enable-lifecycle"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prom-data:/prometheus
+    logging: *logging
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    restart: unless-stopped
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-0}
+    volumes: [./prometheus/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro]
+    logging: *logging
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    restart: unless-stopped
+    pid: host
+    volumes: ["/:/host:ro,rslave"]
+    command: ["--path.rootfs=/host"]
+    logging: *logging
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/buildingvision?sslmode=disable
+    depends_on:
+      postgres: { condition: service_healthy }
+    logging: *logging
+
+  loki:
+    image: grafana/loki:3.4.3
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./loki/config.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    logging: *logging
+
+  promtail:
+    image: grafana/promtail:3.4.3
+    restart: unless-stopped
+    command: ["-config.file=/etc/promtail/config.yaml"]
+    volumes:
+      - ./promtail/config.yaml:/etc/promtail/config.yaml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on: [loki]
+    logging: *logging
+
+  grafana:
+    image: grafana/grafana:11.6.1
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_SERVER_ROOT_URL: https://${BV_DOMAIN:-localhost}/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on: [prometheus, loki]
+    logging: *logging
+
+volumes:
+  pg-data:
+  pgbackrest-spool:
+  minio-data:
+  web-dist:
+  caddy-data:
+  caddy-config:
+  prom-data:
+  loki-data:
+  grafana-data:

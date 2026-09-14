@@ -1,0 +1,43 @@
+# Deploy (TAD §11.4): staging otomatis dari default branch; production manual approve dari tag v* (environment protection di GitHub).
+# Butuh secrets: DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY (per environment). Server sudah punya clone repo di /opt/buildingvision + infra/.env.
+name: deploy
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [master, main]
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version: { description: "Tag image (mis. v0.1.3)", required: true }
+      environment: { description: "staging | production", required: true, default: staging }
+
+jobs:
+  staging:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /opt/buildingvision && git fetch --all && git checkout ${{ github.event.workflow_run.head_branch }} && git pull
+            cd infra && BV_VERSION=latest ./scripts/deploy.sh
+
+  production:
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
+    runs-on: ubuntu-latest
+    environment: production   # wajib reviewer approval (Settings → Environments)
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /opt/buildingvision && git fetch --tags && git checkout ${{ inputs.version || github.ref_name }}
+            cd infra && BV_VERSION=${{ inputs.version || github.ref_name }} ./scripts/deploy.sh

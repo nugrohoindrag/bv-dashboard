@@ -28,6 +28,7 @@ import (
 	"github.com/buildingvision/api/internal/platform/db"
 	"github.com/buildingvision/api/internal/platform/httpx"
 	"github.com/buildingvision/api/internal/platform/jobs"
+	"github.com/buildingvision/api/internal/platform/metrics"
 	"github.com/buildingvision/api/internal/platform/storage"
 	"github.com/buildingvision/api/internal/property"
 	"github.com/buildingvision/api/internal/search"
@@ -109,6 +110,7 @@ func (a *App) BuildRouter() http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(httpx.RecoverMiddleware(a.Log))
 	r.Use(httpx.LoggingMiddleware(a.Log))
+	r.Use(metrics.Middleware)
 	r.Use(httpx.SecurityHeaders)
 	r.Use(httpx.CORS(a.Cfg.CORSOrigins))
 	r.Use(middleware.Timeout(60 * time.Second))

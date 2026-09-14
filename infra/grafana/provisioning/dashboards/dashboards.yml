@@ -1,0 +1,6 @@
+apiVersion: 1
+providers:
+  - name: buildingvision
+    folder: BuildingVision
+    type: file
+    options: { path: /var/lib/grafana/dashboards }

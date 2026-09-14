@@ -1,0 +1,19 @@
+# Promtail: ambil log JSON container Docker → Loki, label per service; parse field slog (request_id, route, status, org_id, user_id).
+server: { http_listen_port: 9080 }
+positions: { filename: /tmp/positions.yaml }
+clients: [{ url: http://loki:3100/loki/api/v1/push }]
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs: [{ host: unix:///var/run/docker.sock, refresh_interval: 15s }]
+    relabel_configs:
+      - source_labels: [__meta_docker_container_name]
+        regex: /(.*)
+        target_label: container
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: service
+    pipeline_stages:
+      - docker: {}
+      - json:
+          expressions: { level: level, msg: msg, request_id: request_id, route: route, status: status, org_id: org_id, user_id: user_id }
+      - labels: { level: "" }
+      - structured_metadata: { request_id: "", route: "", status: "", org_id: "", user_id: "" }

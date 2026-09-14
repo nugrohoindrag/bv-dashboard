@@ -1,0 +1,131 @@
+# CI monorepo dengan path filter (TAD §11.4): api → lint/test/govulncheck; web → lint/typecheck/vitest/build;
+# contracts → cek permissions.yaml identik dengan salinan go:embed, OpenAPI & artefak generate tidak berbeda dari yang di-commit.
+name: ci
+on:
+  push:
+    branches: [master, main]
+    tags: ["v*"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.f.outputs.api }}
+      web: ${{ steps.f.outputs.web }}
+      contracts: ${{ steps.f.outputs.contracts }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: f
+        with:
+          filters: |
+            api: ['api/**', 'contracts/**', '.github/workflows/ci.yml']
+            web: ['web/**', 'contracts/**', 'design-tokens/**', '.github/workflows/ci.yml']
+            contracts: ['contracts/**', 'design-tokens/**', 'api/internal/iam/catalog/**', 'web/scripts/**']
+
+  api:
+    needs: changes
+    if: needs.changes.outputs.api == 'true' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: postgres }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 20
+    defaults: { run: { working-directory: api } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: api/go.mod, cache-dependency-path: api/go.sum }
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - name: go vet
+        run: go vet ./...
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with: { version: latest, working-directory: api, args: --timeout=5m }
+      - name: go test (unit + integration, RLS via bv_app)
+        env:
+          BV_TEST_ADMIN_DATABASE_URL: postgres://postgres:postgres@localhost:5432/buildingvision_test?sslmode=disable
+        run: go test -race -count=1 ./...
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: web } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      - run: npm ci --legacy-peer-deps
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with: { name: web-dist, path: web/dist, retention-days: 7 }
+
+  contracts:
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: permissions.yaml identik dengan salinan go:embed
+        run: cmp contracts/permissions.yaml api/internal/iam/catalog/permissions.yaml
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      - run: cd web && npm ci --legacy-peer-deps && npm run gen
+      - uses: actions/setup-go@v5
+        with: { go-version-file: api/go.mod, cache-dependency-path: api/go.sum }
+      - name: regenerate OpenAPI
+        run: cd api && go run ./cmd/bvctl openapi ../contracts/openapi/v1.yaml
+      - name: artefak generate harus sama dengan yang di-commit
+        run: |
+          git status --porcelain
+          test -z "$(git status --porcelain contracts web/src/styles/tokens.css web/src/lib/status-map.ts web/src/lib/i18n/status.generated.json)" || (git diff && exit 1)
+      - name: openapi lint (spectral)
+        run: npx --yes @stoplight/spectral-cli lint contracts/openapi/v1.yaml --ruleset .spectral.yaml || true
+
+  images:
+    # Build & push image ke GHCR pada push ke default branch dan tag v* (TAD §11.4).
+    needs: [api, web]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - id: ver
+        run: echo "version=${GITHUB_REF_NAME#refs/tags/}" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: api
+          push: true
+          build-args: VERSION=${{ steps.ver.outputs.version }}
+          tags: |
+            ghcr.io/nugrohoindrag/bv-api:${{ steps.ver.outputs.version }}
+            ghcr.io/nugrohoindrag/bv-api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: docker/build-push-action@v6
+        with:
+          context: web
+          push: true
+          tags: |
+            ghcr.io/nugrohoindrag/bv-web:${{ steps.ver.outputs.version }}
+            ghcr.io/nugrohoindrag/bv-web:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -15,11 +15,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivertype"
 
 	"github.com/buildingvision/api/internal/app"
 	"github.com/buildingvision/api/internal/platform/authctx"
 	"github.com/buildingvision/api/internal/platform/events"
 	"github.com/buildingvision/api/internal/platform/jobs"
+	"github.com/buildingvision/api/internal/platform/metrics"
 )
 
 type Worker struct {
@@ -57,9 +59,10 @@ func New(a *app.App, log *slog.Logger) (*Worker, error) {
 			"push":             {MaxWorkers: 5},
 			"index":            {MaxWorkers: 5},
 		},
-		Workers:      workers,
-		PeriodicJobs: jobs.PeriodicJobs(),
-		Logger:       log,
+		Workers:          workers,
+		PeriodicJobs:     jobs.PeriodicJobs(),
+		Logger:           log,
+		WorkerMiddleware: []rivertype.WorkerMiddleware{&metricsMiddleware{}},
 	})
 	if err != nil {
 		return nil, err
@@ -196,7 +199,25 @@ func forEachOrg(ctx context.Context, a *app.App, log *slog.Logger, name string, 
 	if total > 0 {
 		log.Info(name, "affected", total, "orgs", len(orgs), "took", time.Since(start))
 	}
+	metrics.MarkSweep(name)
 	return nil
+}
+
+// metricsMiddleware mencatat durasi & status tiap job River (RED job, TAD §11.5).
+type metricsMiddleware struct {
+	river.WorkerMiddlewareDefaults
+}
+
+func (*metricsMiddleware) Work(ctx context.Context, job *rivertype.JobRow, doInner func(context.Context) error) error {
+	start := time.Now()
+	err := doInner(ctx)
+	status := "ok"
+	if err != nil {
+		status = "error"
+	}
+	metrics.JobsProcessed.WithLabelValues(job.Kind, status).Inc()
+	metrics.JobDuration.WithLabelValues(job.Kind).Observe(time.Since(start).Seconds())
+	return err
 }
 
 type overdueSweepWorker struct {

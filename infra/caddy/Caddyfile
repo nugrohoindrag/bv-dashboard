@@ -1,0 +1,63 @@
+# Caddy — TLS otomatis (Let's Encrypt), HSTS, reverse proxy /api & /public → api (2 replika, round-robin, health check),
+# statis / → web build (SPA fallback), /grafana → grafana (basic proteksi lewat login Grafana). TAD §11.2, §11.7.
+{
+	email {$BV_ACME_EMAIL}
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+{$BV_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), geolocation=(self), microphone=()"
+		-Server
+	}
+
+	# API + intake publik → Go (dua replika lewat DNS service compose; health check /health)
+	@api path /api/* /public/* /health /ready
+	handle @api {
+		reverse_proxy api:8080 {
+			lb_policy round_robin
+			health_uri /health
+			health_interval 10s
+			fail_duration 15s
+			header_up X-Request-Id {http.request.uuid}
+			transport http {
+				read_timeout 65s
+			}
+		}
+	}
+
+	# QR deep link (BV_QR_BASE_URL = https://{domain}/q/) → web SPA yang me-resolve lewat /api/v1/qr/{code}/resolve
+	handle /q/* {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+
+	# Grafana di sub-path
+	handle_path /grafana/* {
+		reverse_proxy grafana:3000
+	}
+
+	# SPA statis
+	handle {
+		root * /srv
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		header /index.html Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

@@ -15,8 +15,12 @@ import (
 	"github.com/buildingvision/api/internal/platform/config"
 	"github.com/buildingvision/api/internal/platform/db"
 	"github.com/buildingvision/api/internal/platform/jobs"
+	"github.com/buildingvision/api/internal/platform/metrics"
 	"github.com/buildingvision/api/internal/platform/storage"
 )
+
+// version diisi saat build (-ldflags "-X main.version=...").
+var version = "dev"
 
 func main() {
 	cfg, err := config.Load()
@@ -70,11 +74,13 @@ func main() {
 		os.Exit(1)
 	}
 	a.Use(app.DefaultExtensions(a)...)
+	metrics.Serve(ctx, cfg.MetricsAddr, log)
+	go metrics.CollectPool(ctx, d.Pool, 15*time.Second)
 	handler := a.BuildRouter()
 
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
 	go func() {
-		log.Info("api listening", "addr", cfg.HTTPAddr, "env", cfg.Env)
+		log.Info("api listening", "version", version, "addr", cfg.HTTPAddr, "env", cfg.Env)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("http", "err", err)
 			os.Exit(1)

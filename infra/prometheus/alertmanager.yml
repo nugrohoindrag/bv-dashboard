@@ -1,0 +1,20 @@
+# Alert ke Telegram (TAD §11.5). Isi TELEGRAM_BOT_TOKEN & TELEGRAM_CHAT_ID di .env. Slack: ganti receiver dengan slack_configs.
+global:
+  resolve_timeout: 5m
+route:
+  receiver: telegram
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: [severity="critical"]
+      receiver: telegram
+      repeat_interval: 1h
+receivers:
+  - name: telegram
+    telegram_configs:
+      - bot_token: ${TELEGRAM_BOT_TOKEN}
+        chat_id: ${TELEGRAM_CHAT_ID}
+        parse_mode: HTML
+        message: '{{ range .Alerts }}<b>{{ .Labels.severity | toUpper }}</b> {{ .Annotations.summary }} ({{ .Status }}){{ "\n" }}{{ end }}'

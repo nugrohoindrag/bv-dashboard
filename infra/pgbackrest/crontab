@@ -1,0 +1,4 @@
+# crontab user postgres di container pgbackrest (UTC). Full 02:00 harian, incremental tiap 6 jam, verifikasi mingguan.
+0 2 * * *   pgbackrest --stanza=bv --type=full backup >> /proc/1/fd/1 2>&1
+0 8,14,20 * * *  pgbackrest --stanza=bv --type=incr backup >> /proc/1/fd/1 2>&1
+30 3 * * 0  pgbackrest --stanza=bv verify >> /proc/1/fd/1 2>&1

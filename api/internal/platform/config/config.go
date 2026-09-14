@@ -46,6 +46,7 @@ type Config struct {
 	DueSoonWindow       time.Duration
 	MinMobileAppVersion string
 	QRBaseURL           string
+	MetricsAddr         string // alamat internal /metrics (kosong = nonaktif)
 }
 
 func Load() (Config, error) {
@@ -78,6 +79,7 @@ func Load() (Config, error) {
 		DueSoonWindow:         getdur("BV_DUE_SOON_WINDOW", 60*time.Minute),
 		MinMobileAppVersion:   getenv("BV_MIN_MOBILE_APP_VERSION", "0.1.0"),
 		QRBaseURL:             getenv("BV_QR_BASE_URL", "https://bv.link/q/"),
+		MetricsAddr:           getenv("BV_METRICS_ADDR", ""),
 	}
 	if c.WorkerDatabaseURL == "" {
 		c.WorkerDatabaseURL = c.DatabaseURL

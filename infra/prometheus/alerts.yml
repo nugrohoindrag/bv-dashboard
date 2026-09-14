@@ -1,0 +1,55 @@
+# Alert minimum P0 (TAD §11.5): p95 > 2s 5 menit, error rate > 2%, sweep lag > 5 menit, disk > 80%, backup gagal, api down.
+groups:
+  - name: buildingvision
+    rules:
+      - alert: ApiDown
+        expr: up{job="bv-api"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations: { summary: "API BuildingVision tidak bisa di-scrape ({{ $labels.instance }})" }
+      - alert: ApiLatencyP95High
+        expr: histogram_quantile(0.95, sum(rate(bv_http_request_duration_seconds_bucket{route!~"/health|/ready"}[5m])) by (le)) > 2
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "p95 latensi API > 2s selama 5 menit" }
+      - alert: ApiErrorRateHigh
+        expr: sum(rate(bv_http_requests_total{status=~"5.."}[5m])) / sum(rate(bv_http_requests_total[5m])) > 0.02
+        for: 5m
+        labels: { severity: critical }
+        annotations: { summary: "Error rate 5xx API > 2%" }
+      - alert: SweepLagHigh
+        expr: max(bv_sweep_lag_seconds) > 300
+        for: 2m
+        labels: { severity: warning }
+        annotations: { summary: "Sweep {{ $labels.sweep }} tertinggal > 5 menit (overdue/SLA tidak diperbarui)" }
+      - alert: JobQueueBacklog
+        expr: sum(bv_jobs_queue_depth) > 500
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: "Antrian job River > 500 selama 10 menit" }
+      - alert: JobFailures
+        expr: sum(rate(bv_jobs_processed_total{status="error"}[15m])) > 0.1
+        for: 15m
+        labels: { severity: warning }
+        annotations: { summary: "Job gagal > 6/menit (cek river_job state=retryable/discarded)" }
+      - alert: DiskUsageHigh
+        expr: (1 - node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}) > 0.8
+        for: 10m
+        labels: { severity: critical }
+        annotations: { summary: "Disk VPS > 80%" }
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations: { summary: "Postgres tidak dapat dihubungi" }
+      - alert: PostgresConnectionsHigh
+        expr: sum(pg_stat_activity_count) / max(pg_settings_max_connections) > 0.85
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Koneksi Postgres > 85% max_connections" }
+      - alert: BackupStale
+        # Metrik dari textfile collector infra/scripts/backup-metrics.sh (dijalankan setelah tiap backup) — lihat docs/runbooks/backup-restore.md
+        expr: time() - max(bv_backup_last_success_timestamp) > 60*60*30
+        for: 30m
+        labels: { severity: critical }
+        annotations: { summary: "Backup pgBackRest terakhir > 30 jam yang lalu / gagal" }

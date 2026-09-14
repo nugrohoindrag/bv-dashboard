@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"time"
 
@@ -31,6 +32,22 @@ func main() {
 	}
 
 	switch os.Args[1] {
+	case "healthcheck":
+		// Dipakai Docker HEALTHCHECK pada image distroless (tanpa curl/wget).
+		url := "http://127.0.0.1:8080/ready"
+		if len(os.Args) > 2 {
+			url = os.Args[2]
+		}
+		client := &http.Client{Timeout: 4 * time.Second}
+		resp, err := client.Get(url)
+		if err != nil {
+			fail(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			fail(fmt.Errorf("status %d", resp.StatusCode))
+		}
+		return
 	case "migrate":
 		fs := flag.NewFlagSet("migrate", flag.ExitOnError)
 		down := fs.Bool("down", false, "rollback satu migration")
@@ -91,7 +108,8 @@ func usage() {
   reindex                     backfill search index seluruh organization
   import --org <slug> --type assets|locations --file x.csv [--property <id>] [--dry-run]   migrasi data (OD-008)
   openapi [out.yaml]          generate OpenAPI 3.1 dari router + struct
-  keygen                      generate Ed25519 keypair (PEM) untuk BV_JWT_PRIVATE_KEY`)
+  keygen                      generate Ed25519 keypair (PEM) untuk BV_JWT_PRIVATE_KEY
+  healthcheck [url]           GET url (default /ready lokal), exit 0 bila 200 — untuk Docker HEALTHCHECK`)
 }
 
 func fail(err error) {

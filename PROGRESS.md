@@ -64,10 +64,12 @@ Referensi: PRD P0 v1.0 · Technical Architecture v1.0 · Dashboard Design System
 - ✅ backend pelengkap: Idempotency-Key middleware (TAD §6.4), public SR intake `/public/v1` + feature flag + intake key (OD-001), seed demo operasional (asset, template, PM, patrol, cleaning, WO/SR/incident), bvctl reindex + import CSV dry-run (OD-008), OpenAPI 3.1 ter-generate (`bvctl openapi`, 195 path) di contracts/openapi/v1.yaml
 - ✅ web Overview page (6 TodayCounter + breakdown, Attention Required filter domain + aksi cepat, Tenant Requests, Today's Operations per domain, PM Due 7 hari, Team Workload, Building State) — panel dimuat independen
 - ✅ web build (`npm run build` ✓, `tsc` strict ✓, vitest 10 test ✓: StatusBadge kontrak status-map, format tz)
-- ⏳ contracts/sync-api.md untuk repo mobile (work-bundle, mutations, C1–C10)
-- ⏳ infra: docker-compose, Caddy, backup (pgBackRest), observability, CI workflows
-- ⏳ docs: ADR, runbooks (restore, rollback), conflict rules, training material, acceptance test mapping
+- ✅ contracts/sync-api.md untuk repo mobile (auth/headers, work-bundle, mutations + tabel action/payload, foto offline, QR, push, versi kontrak)
+- ✅ infra: Dockerfile api (distroless, api/worker/bvctl + `bvctl healthcheck`) & web, docker-compose.yml produksi (Caddy TLS/HSTS → api ×2 start-first + web statis, worker, migrate job, Postgres 17 + pgBackRest full/incr/WAL ke repo S3, MinIO versioning, Prometheus + Alertmanager Telegram + node/postgres exporter, Loki/Promtail, OTel collector, Grafana provisioning + dashboard), docker-compose.dev.yml, `/metrics` api & worker (RED per route, job River, queue depth, sweep lag, pool DB), alert TAD §11.5, scripts deploy/rollback/restore-drill/set-db-passwords/backup-metrics, `.env.example`; CI GitHub Actions (api lint/test/govulncheck, web lint/typecheck/vitest/build, contracts: permissions identik + regenerate OpenAPI/tokens harus sama, image → GHCR) + deploy staging otomatis / production approval tag `v*`
+- ✅ docs: README, ADR-001…011, runbooks (deploy, backup-restore + drill, rollback, operations), conflict-rules C1–C10, ERD (mermaid + kelompok tabel), acceptance-tests (AT-001..010 → test & verifikasi manual), training per peran (overview, operations, engineering, security, housekeeping, tenant, admin)
 - ✅ AT-009 lulus (integration test C1, C3, C4, C6, C8, C9, C10) + Overview test (Today, Attention, Today's Ops, Building State, Tenant Requests, Team Workload)
 
 ## Catatan
-- (kosong)
+- Semua item P0 selesai. Push ke GitHub (`git push -u origin master`) dijalankan manual oleh user (push diblokir kebijakan sesi).
+- Sebelum UAT (Release Criteria #25): jalankan restore drill di server (`infra/scripts/restore-drill.sh`) dan pastikan `pgbackrest check` sukses (image postgres produksi perlu biner pgbackrest — lihat runbook backup-restore).
+- Mobile (repo terpisah) mengonsumsi `contracts/` (openapi, status-map, tokens Dart, sync-api.md).

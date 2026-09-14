@@ -1,11 +1,15 @@
-node_modules/
-dist/
-*.log
+# env & rahasia
 .env
-.env.*
-!.env.example
-api/bin/
-web/node_modules/
-web/dist/
+infra/.env
+*.pem
+# build
+web/dist
+web/node_modules
+web/coverage
+api/bin
+api/tmp
+# os/editor
 .DS_Store
 Thumbs.db
+.idea
+.vscode/settings.json

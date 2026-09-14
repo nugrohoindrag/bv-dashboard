@@ -1,0 +1,9 @@
+# Caddyfile untuk image web mandiri (dipakai saat web dijalankan terpisah dari infra/caddy). SPA fallback ke index.html.
+:80 {
+	root * /srv
+	encode zstd gzip
+	try_files {path} /index.html
+	file_server
+	header /assets/* Cache-Control "public, max-age=31536000, immutable"
+	header /index.html Cache-Control "no-cache"
+}

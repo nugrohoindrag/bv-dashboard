@@ -14,9 +14,13 @@ import (
 	"github.com/buildingvision/api/internal/platform/config"
 	"github.com/buildingvision/api/internal/platform/db"
 	"github.com/buildingvision/api/internal/platform/jobs"
+	"github.com/buildingvision/api/internal/platform/metrics"
 	"github.com/buildingvision/api/internal/platform/storage"
 	"github.com/buildingvision/api/internal/worker"
 )
+
+// version diisi saat build (-ldflags "-X main.version=...").
+var version = "dev"
 
 func main() {
 	cfg, err := config.Load()
@@ -57,6 +61,10 @@ func main() {
 		os.Exit(1)
 	}
 	a.Use(app.DefaultExtensions(a)...)
+	metrics.Serve(ctx, cfg.MetricsAddr, log)
+	go metrics.CollectPool(ctx, d.Pool, 15*time.Second)
+	go metrics.CollectQueueDepth(ctx, d.Pool, 15*time.Second)
+	go metrics.CollectSweepLag(ctx, 15*time.Second)
 	if cfg.FCMProjectID != "" && cfg.FCMServiceAccountJSON != "" {
 		if p, err := notification.NewFCM(ctx, cfg.FCMProjectID, cfg.FCMServiceAccountJSON); err != nil {
 			log.Warn("fcm disabled", "err", err)
@@ -73,7 +81,7 @@ func main() {
 		log.Error("worker start", "err", err)
 		os.Exit(1)
 	}
-	log.Info("worker started", "env", cfg.Env)
+	log.Info("worker started", "version", version, "env", cfg.Env)
 	<-ctx.Done()
 	sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
