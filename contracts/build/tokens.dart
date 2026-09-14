@@ -1,0 +1,56 @@
+// GENERATED — jangan edit manual. Sumber: design-tokens/tokens.json.
+import 'package:flutter/material.dart';
+
+class BvTokens {
+  static const Color brand50 = Color(0xFFE6F6F5);
+  static const Color brand100 = Color(0xFFC2EAE7);
+  static const Color brand500 = Color(0xFF14A69E);
+  static const Color brand600 = Color(0xFF0E9187);
+  static const Color brand700 = Color(0xFF0B776F);
+  static const Color brand900 = Color(0xFF064540);
+  static const Color success50 = Color(0xFFF0FDF4);
+  static const Color success100 = Color(0xFFDCFCE7);
+  static const Color success600 = Color(0xFF16A34A);
+  static const Color success700 = Color(0xFF166534);
+  static const Color warning50 = Color(0xFFFFFBEB);
+  static const Color warning100 = Color(0xFFFEF3C7);
+  static const Color warning600 = Color(0xFFD97706);
+  static const Color warning700 = Color(0xFF92400E);
+  static const Color critical50 = Color(0xFFFEF2F2);
+  static const Color critical100 = Color(0xFFFEE2E2);
+  static const Color critical600 = Color(0xFFDC2626);
+  static const Color critical700 = Color(0xFF991B1B);
+  static const Color info50 = Color(0xFFEFF6FF);
+  static const Color info100 = Color(0xFFDBEAFE);
+  static const Color info600 = Color(0xFF2563EB);
+  static const Color info700 = Color(0xFF1E40AF);
+  static const Color neutral50 = Color(0xFFF9FAFB);
+  static const Color neutral100 = Color(0xFFF3F4F6);
+  static const Color neutral200 = Color(0xFFE5E7EB);
+  static const Color neutral300 = Color(0xFFD1D5DB);
+  static const Color neutral400 = Color(0xFF9CA3AF);
+  static const Color neutral500 = Color(0xFF6B7280);
+  static const Color neutral600 = Color(0xFF4B5563);
+  static const Color neutral700 = Color(0xFF374151);
+  static const Color neutral800 = Color(0xFF1F2937);
+  static const Color neutral900 = Color(0xFF111827);
+  static const Color surfaceBackground = Color(0xFFF5F7FA);
+  static const Color surfaceCard = Color(0xFFFFFFFF);
+  static const Color surfaceForeground = Color(0xFF111827);
+  static const Color surfaceSidebar = Color(0xFF0F172A);
+  static const Color surfaceSidebarForeground = Color(0xFFCBD5E1);
+  static const double radiusSm = 6;
+  static const double radiusMd = 8;
+  static const double radiusLg = 12;
+  static const double radiusXl = 16;
+  static const double radiusFull = 9999;
+  static const double space1 = 4;
+  static const double space2 = 8;
+  static const double space3 = 12;
+  static const double space4 = 16;
+  static const double space5 = 20;
+  static const double space6 = 24;
+  static const double space8 = 32;
+  static const double space10 = 40;
+  static const double space12 = 48;
+}
