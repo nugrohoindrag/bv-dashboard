@@ -200,6 +200,9 @@ type workItem struct {
 	SLA *struct {
 		ResolutionDueAt *time.Time `json:"resolution_due_at"`
 	} `json:"sla"`
+	Type      string         `json:"type"`
+	Title     string         `json:"title"`
+	Extension map[string]any `json:"extension"`
 }
 
 func has(list []string, s string) bool {

@@ -42,14 +42,14 @@ Referensi: PRD P0 v1.0 · Technical Architecture v1.0 · Dashboard Design System
 - ✅ AT-004 lulus (integration test)
 
 ## P0.4 Security + Housekeeping
-- 🔄 sedang dikerjakan
-- ⏳ patrol_routes, checkpoints, patrol_schedules, patrol_tasks, checkpoint_scans, generator
-- ⏳ incidents (INC-) report → assign → resolve → close → WO
-- ⏳ cleaning_schedules, cleaning_tasks, housekeeping_inspections, findings → rework/WO
+- ✅ patrol_routes (urutan checkpoint), checkpoints (QR), patrol_schedules → generator patrol task (7 hari, idempotent), checkpoint scan (QR/manual, GPS, idempotent client_scan_id), Missed (TD-007: auto saat complete / manual), hook BeforeComplete
+- ✅ incidents (INC-) report → assign → resolve → close → WO; Finding → Incident
+- ✅ cleaning_schedules → generator cleaning task (7 hari), adhoc cleaning, housekeeping_inspections (INS-, hasil pass/fail/partial → inspection_status cleaning task), Not OK → Finding → rework Task / WO
 - ⏳ web: Security Patrol/Incidents, Housekeeping Cleaning/Schedule/Inspections
-- ⏳ AT-005, AT-006, AT-007
+- ✅ AT-005, AT-006, AT-007 lulus (integration test)
 
 ## P0.5 Service Request + Notification
+- 🔄 sedang dikerjakan
 - ⏳ service_requests lifecycle, SR ↔ Task/WO bidirectional links, resolution hook
 - ⏳ notification rules (PRD §17.1), inbox, push adapter (FCM), deep link, device tokens
 - ⏳ web: Service Requests, NotificationInbox

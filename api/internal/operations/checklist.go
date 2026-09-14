@@ -577,6 +577,11 @@ func (s *Service) AnswerItemTx(ctx context.Context, tx pgx.Tx, itemID uuid.UUID,
 						ftype = "patrol"
 					case "inspection":
 						ftype = "inspection"
+						var hk bool
+						_ = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM housekeeping_inspections WHERE task_id = $1)`, objectID).Scan(&hk)
+						if hk {
+							ftype = "housekeeping"
+						}
 					case "cleaning":
 						ftype = "housekeeping"
 					}

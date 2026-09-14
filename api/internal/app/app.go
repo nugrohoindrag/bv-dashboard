@@ -16,6 +16,7 @@ import (
 	"github.com/buildingvision/api/internal/attachments"
 	"github.com/buildingvision/api/internal/audit"
 	"github.com/buildingvision/api/internal/engineering"
+	"github.com/buildingvision/api/internal/housekeeping"
 	"github.com/buildingvision/api/internal/iam"
 	"github.com/buildingvision/api/internal/operations"
 	"github.com/buildingvision/api/internal/platform/apperr"
@@ -26,6 +27,7 @@ import (
 	"github.com/buildingvision/api/internal/platform/jobs"
 	"github.com/buildingvision/api/internal/platform/storage"
 	"github.com/buildingvision/api/internal/property"
+	"github.com/buildingvision/api/internal/security"
 )
 
 type App struct {
@@ -41,8 +43,10 @@ type App struct {
 	Operations  *operations.Service
 
 	// modul domain (diisi DefaultExtensions)
-	Asset       *asset.Service
-	Engineering *engineering.Service
+	Asset        *asset.Service
+	Engineering  *engineering.Service
+	Security     *security.Service
+	Housekeeping *housekeeping.Service
 
 	// modul lanjutan didaftarkan lewat Extensions (engineering, security, housekeeping, tenantservice, notification, overview, search, sync)
 	Extensions []Extension

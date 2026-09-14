@@ -80,19 +80,19 @@ roles:
     permissions: ["property.*.view", "operations.tasks.view", "operations.tasks.start", "operations.tasks.complete", "operations.work_orders.view", "operations.work_orders.create", "operations.work_orders.start", "operations.work_orders.complete", "operations.findings.view", "operations.findings.create", "operations.comments.create", "operations.attachments.create", "engineering.assets.view", "engineering.equipment.view", "engineering.inspections.view", "engineering.inspections.complete", "notification.inbox.view", "search.global.view", "sync.work_bundle.view", "sync.mutations.create"]
   security_manager:
     label: Security Manager
-    permissions: ["property.*.view", "operations.tasks.*", "operations.incidents.*", "operations.findings.*", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "security.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*"]
+    permissions: ["property.*.view", "operations.tasks.*", "operations.incidents.*", "operations.findings.*", "operations.checklists.*", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "security.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*"]
   security_supervisor:
     label: Security Supervisor
-    permissions: ["property.*.view", "operations.tasks.*", "operations.incidents.*", "operations.findings.*", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "security.*", "notification.*", "overview.*", "search.*", "sync.*"]
+    permissions: ["property.*.view", "operations.tasks.*", "operations.incidents.*", "operations.findings.*", "operations.checklists.view", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "security.*", "notification.*", "overview.*", "search.*", "sync.*"]
   security_officer:
     label: Security Officer
     permissions: ["property.*.view", "operations.tasks.view", "operations.tasks.start", "operations.tasks.complete", "operations.incidents.view", "operations.incidents.create", "operations.findings.view", "operations.findings.create", "operations.comments.create", "operations.attachments.create", "security.patrol.view", "security.patrol.start", "security.patrol.complete", "security.incidents.view", "security.incidents.create", "notification.inbox.view", "search.global.view", "sync.work_bundle.view", "sync.mutations.create"]
   housekeeping_manager:
     label: Housekeeping Manager
-    permissions: ["property.*.view", "operations.tasks.*", "operations.findings.*", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "housekeeping.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*"]
+    permissions: ["property.*.view", "operations.tasks.*", "operations.findings.*", "operations.checklists.*", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "housekeeping.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*"]
   housekeeping_supervisor:
     label: Housekeeping Supervisor
-    permissions: ["property.*.view", "operations.tasks.*", "operations.findings.*", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "housekeeping.*", "notification.*", "overview.*", "search.*", "sync.*"]
+    permissions: ["property.*.view", "operations.tasks.*", "operations.findings.*", "operations.checklists.view", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "housekeeping.*", "notification.*", "overview.*", "search.*", "sync.*"]
   housekeeping_staff:
     label: Housekeeping Staff
     permissions: ["property.*.view", "operations.tasks.view", "operations.tasks.start", "operations.tasks.complete", "operations.findings.view", "operations.findings.create", "operations.comments.create", "operations.attachments.create", "housekeeping.cleaning.view", "housekeeping.cleaning.start", "housekeeping.cleaning.complete", "notification.inbox.view", "search.global.view", "sync.work_bundle.view", "sync.mutations.create"]

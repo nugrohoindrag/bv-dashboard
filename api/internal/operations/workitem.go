@@ -235,6 +235,16 @@ func (s *Service) afterCreate(ctx context.Context, tx pgx.Tx, objectType string,
 			return err
 		}
 	}
+	// hook AfterCreate (domain extension)
+	if w, _, err := s.loadTx(ctx, tx, objectType, id, false); err == nil {
+		for _, h := range s.hooksFor(w) {
+			if ch, ok := h.(CreateHook); ok {
+				if err := ch.AfterCreate(ctx, tx, w); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	_ = audit.Record(ctx, tx, audit.Entry{ObjectType: objectType, ObjectID: id, Action: audit.ActCreated, Payload: map[string]any{"number": number, "priority": priority}})
 	if assigneeUser != nil || assigneeTeam != nil {
 		_ = audit.Record(ctx, tx, audit.Entry{ObjectType: objectType, ObjectID: id, Action: audit.ActAssigned, Payload: assigneePayload(ctx, tx, assigneeUser, assigneeTeam)})

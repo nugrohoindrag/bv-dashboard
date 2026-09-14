@@ -27,6 +27,11 @@ type ExecutionHook interface {
 	AfterTransition(ctx context.Context, tx pgx.Tx, item *WorkItem, action string, from, to workflow.Status) error
 }
 
+// CreateHook (opsional): dipanggil setelah work item dibuat (mis. housekeeping memastikan cleaning_tasks extension ada).
+type CreateHook interface {
+	AfterCreate(ctx context.Context, tx pgx.Tx, item *WorkItem) error
+}
+
 type Service struct {
 	DB          *db.DB
 	Jobs        jobs.Enqueuer
