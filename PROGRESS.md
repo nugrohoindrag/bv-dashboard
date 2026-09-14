@@ -57,15 +57,15 @@ Referensi: PRD P0 v1.0 · Technical Architecture v1.0 · Dashboard Design System
 - ✅ AT-008 lulus (integration test) + notifikasi SR received / WO assigned / WO completed (supervisor & requester) terverifikasi
 
 ## P0.6 Overview + Pilot Hardening
-- 🔄 sedang dikerjakan
-- ⏳ overview endpoints: today, attention-required, todays-operations, team-workload, pm-due, tenant-requests, building-state
+- ✅ overview endpoints: today (6 counter + breakdown), attention-required (severity→umur, CTA dari permission, termasuk sync conflict), todays-operations per domain, team-workload, pm-due, tenant-requests, building-state per Building/Tower; cache 30 dtk
 - ✅ (dikerjakan di P0.5) search + exports
-- ⏳ sync: work-bundle, mutations (C1–C10), conflicts
+- ✅ sync: work-bundle (today + open overdue + referensi + removed), mutations (seq per device/object, idempotent, C1–C10, evidence dipertahankan, clock skew), conflicts list/acknowledge + notifikasi supervisor
+- ✅ backend pelengkap: Idempotency-Key middleware (TAD §6.4), public SR intake `/public/v1` + feature flag + intake key (OD-001), seed demo operasional (asset, template, PM, patrol, cleaning, WO/SR/incident), bvctl reindex + import CSV dry-run (OD-008), OpenAPI 3.1 ter-generate (`bvctl openapi`, 195 path) di contracts/openapi/v1.yaml
 - ⏳ web Overview page (TodayCounter, AttentionRequiredList, ...)
 - ⏳ contracts/sync-api.md untuk repo mobile (work-bundle, mutations, C1–C10)
 - ⏳ infra: docker-compose, Caddy, backup (pgBackRest), observability, CI workflows
 - ⏳ docs: ADR, runbooks (restore, rollback), conflict rules, training material, acceptance test mapping
-- ⏳ AT-009
+- ✅ AT-009 lulus (integration test C1, C3, C4, C6, C8, C9, C10) + Overview test (Today, Attention, Today's Ops, Building State, Tenant Requests, Team Workload)
 
 ## Catatan
 - (kosong)

@@ -41,11 +41,13 @@ func TestOfflineSync(t *testing.T) {
 
 	// 1) Pull work bundle (cache today's assigned)
 	var bundle struct {
-		WorkOrders []workItem `json:"work_orders"`
+		WorkOrders []workItem               `json:"work_orders"`
 		Locations  []struct{ ID uuid.UUID } `json:"locations"`
-		Cursor     string   `json:"cursor"`
-		Me         struct{ UserID uuid.UUID `json:"user_id"` } `json:"me"`
-		Removed    []any    `json:"removed"`
+		Cursor     string                   `json:"cursor"`
+		Me         struct {
+			UserID uuid.UUID `json:"user_id"`
+		} `json:"me"`
+		Removed []any `json:"removed"`
 	}
 	st, body = e.do(tech, http.MethodGet, "/api/v1/sync/work-bundle?device_id=dev-1", nil)
 	e.mustJSON(st, body, 200, &bundle)
@@ -272,8 +274,8 @@ func TestOverview(t *testing.T) {
 			Value     int            `json:"value"`
 			Breakdown map[string]int `json:"breakdown"`
 		} `json:"open_work_orders"`
-		Overdue        struct{ Value int } `json:"overdue"`
-		Incidents      struct {
+		Overdue   struct{ Value int } `json:"overdue"`
+		Incidents struct {
 			Value     int            `json:"value"`
 			Breakdown map[string]int `json:"breakdown"`
 		} `json:"incidents"`
@@ -356,8 +358,8 @@ func TestOverview(t *testing.T) {
 		t.Fatalf("Building State: %+v", bs.Data)
 	}
 	var tr struct {
-		NewToday int `json:"new_today"`
-		Open     int `json:"open"`
+		NewToday int                              `json:"new_today"`
+		Open     int                              `json:"open"`
 		Recent   []struct{ RequestNumber string } `json:"recent"`
 	}
 	st, body = e.do(pm, http.MethodGet, "/api/v1/overview/tenant-requests?property_id="+e.refs.PropertyID.String(), nil)

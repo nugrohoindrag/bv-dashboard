@@ -84,25 +84,39 @@ type PlanInput struct {
 var frequencies = map[string]int{"daily": 1, "weekly": 7, "biweekly": 14, "monthly": 0, "quarterly": 0, "semiannual": 0, "annual": 0, "custom_days": -1}
 
 func (s *Service) CreatePlan(ctx context.Context, in PlanInput) (*MaintenancePlan, error) {
+	var out *MaintenancePlan
+	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		id, err := s.CreatePlanTx(ctx, tx, in)
+		if err != nil {
+			return err
+		}
+		out, err = s.getPlanTx(ctx, tx, id)
+		return err
+	})
+	return out, err
+}
+
+// CreatePlanTx: di dalam transaksi (seed / import).
+func (s *Service) CreatePlanTx(ctx context.Context, tx pgx.Tx, in PlanInput) (uuid.UUID, error) {
 	p := authctx.Must(ctx)
 	if in.Name == nil || strings.TrimSpace(*in.Name) == "" || in.AssetID == nil || in.Frequency == nil || in.StartDate == nil {
-		return nil, apperr.Validation("name, asset_id, frequency, start_date wajib")
+		return uuid.Nil, apperr.Validation("name, asset_id, frequency, start_date wajib")
 	}
 	if _, ok := frequencies[*in.Frequency]; !ok {
-		return nil, apperr.Validation("frequency tidak valid")
+		return uuid.Nil, apperr.Validation("frequency tidak valid")
 	}
 	if *in.Frequency == "custom_days" && (in.IntervalDays == nil || *in.IntervalDays < 1) {
-		return nil, apperr.Validation("interval_days wajib untuk custom_days")
+		return uuid.Nil, apperr.Validation("interval_days wajib untuk custom_days")
 	}
 	start, err := time.Parse("2006-01-02", *in.StartDate)
 	if err != nil {
-		return nil, apperr.Validation("start_date harus YYYY-MM-DD")
+		return uuid.Nil, apperr.Validation("start_date harus YYYY-MM-DD")
 	}
 	var end *time.Time
 	if in.EndDate != nil && *in.EndDate != "" {
 		e, err := time.Parse("2006-01-02", *in.EndDate)
 		if err != nil {
-			return nil, apperr.Validation("end_date harus YYYY-MM-DD")
+			return uuid.Nil, apperr.Validation("end_date harus YYYY-MM-DD")
 		}
 		end = &e
 	}
@@ -111,27 +125,26 @@ func (s *Service) CreatePlan(ctx context.Context, in PlanInput) (*MaintenancePla
 		prio = *in.DefaultPriority
 	}
 	if !operations.Priorities[prio] {
-		return nil, apperr.Validation("default_priority tidak valid")
+		return uuid.Nil, apperr.Validation("default_priority tidak valid")
 	}
-	var out *MaintenancePlan
-	err = s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+	{
 		var propertyID uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT property_id FROM assets WHERE id = $1 AND deleted_at IS NULL`, *in.AssetID).Scan(&propertyID); err != nil {
-			return apperr.Validation("asset_id tidak ditemukan")
+			return uuid.Nil, apperr.Validation("asset_id tidak ditemukan")
 		}
 		if !p.HasOnProperty("engineering.maintenance_plans.create", propertyID) {
-			return apperr.Forbidden("")
+			return uuid.Nil, apperr.Forbidden("")
 		}
 		if in.ChecklistTemplateID != nil {
 			var st string
 			if err := tx.QueryRow(ctx, `SELECT status FROM checklist_templates WHERE id = $1 AND deleted_at IS NULL`, *in.ChecklistTemplateID).Scan(&st); err != nil || st != "published" {
-				return apperr.Validation("checklist_template_id tidak ditemukan / belum dipublikasikan")
+				return uuid.Nil, apperr.Validation("checklist_template_id tidak ditemukan / belum dipublikasikan")
 			}
 		}
 		loc := property.PropertyTimezone(ctx, tx, propertyID)
 		code, err := ids.NextYearly(ctx, tx, p.OrganizationID, ids.PrefixMaintenancePlan, time.Now(), loc)
 		if err != nil {
-			return err
+			return uuid.Nil, err
 		}
 		lead := 0
 		if in.LeadTimeDays != nil {
@@ -141,14 +154,12 @@ func (s *Service) CreatePlan(ctx context.Context, in PlanInput) (*MaintenancePla
 		if err := tx.QueryRow(ctx, `INSERT INTO maintenance_plans (organization_id, property_id, plan_code, name, asset_id, frequency, interval_days, start_date, end_date, checklist_template_id, default_priority, responsible_team_id, lead_time_days, duration_minutes, description, created_by, updated_by)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16) RETURNING id`,
 			p.OrganizationID, propertyID, code, strings.TrimSpace(*in.Name), *in.AssetID, *in.Frequency, in.IntervalDays, start, end, in.ChecklistTemplateID, prio, in.ResponsibleTeamID, lead, in.DurationMinutes, in.Description, p.UserID).Scan(&id); err != nil {
-			return err
+			return uuid.Nil, err
 		}
 		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "maintenance_plan", EntityID: &id, EntityLabel: code, After: in})
 		_ = audit.Record(ctx, tx, audit.Entry{ObjectType: "asset", ObjectID: *in.AssetID, Action: "maintenance_plan_created", Payload: map[string]any{"plan_code": code, "frequency": *in.Frequency}})
-		out, err = s.getPlanTx(ctx, tx, id)
-		return err
-	})
-	return out, err
+		return id, nil
+	}
 }
 
 func (s *Service) UpdatePlan(ctx context.Context, id uuid.UUID, in PlanInput) (*MaintenancePlan, error) {
@@ -239,7 +250,7 @@ func (s *Service) SetPlanStatus(ctx context.Context, id uuid.UUID, status string
 		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditStatusChange, EntityType: "maintenance_plan", EntityID: &id, EntityLabel: plan.PlanCode, Before: map[string]any{"status": plan.Status}, After: map[string]any{"status": status}})
 		if status == "published" {
 			// generate langsung (sinkron) agar AT-004 terlihat seketika; job periodic menjaga horizon
-			if _, err := s.generateSchedulesForPlanTx(ctx, tx, id); err != nil {
+			if _, err := s.GenerateSchedulesTx(ctx, tx, id); err != nil {
 				return err
 			}
 		}
@@ -370,8 +381,8 @@ func nextDueDates(freq string, interval int, start time.Time, from, until time.T
 	return out
 }
 
-// generateSchedulesForPlanTx: schedule dari hari ini s/d horizon; insert ON CONFLICT DO NOTHING (idempotent).
-func (s *Service) generateSchedulesForPlanTx(ctx context.Context, tx pgx.Tx, planID uuid.UUID) (int, error) {
+// GenerateSchedulesTx: schedule dari hari ini s/d horizon; insert ON CONFLICT DO NOTHING (idempotent).
+func (s *Service) GenerateSchedulesTx(ctx context.Context, tx pgx.Tx, planID uuid.UUID) (int, error) {
 	p := authctx.Must(ctx)
 	plan, err := s.getPlanTx(ctx, tx, planID)
 	if err != nil {
@@ -429,7 +440,7 @@ func (s *Service) GenerateSchedules(ctx context.Context, orgID uuid.UUID, planID
 			rows.Close()
 		}
 		for _, id := range idList {
-			n, err := s.generateSchedulesForPlanTx(ctx, tx, id)
+			n, err := s.GenerateSchedulesTx(ctx, tx, id)
 			if err != nil {
 				return err
 			}

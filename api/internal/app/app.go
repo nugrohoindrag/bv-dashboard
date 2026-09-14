@@ -121,10 +121,14 @@ func (a *App) BuildRouter() http.Handler {
 	attH := &attachments.Handler{Svc: a.Attachments, IAM: a.IAM}
 	opsH := &operations.Handler{Svc: a.Operations, IAM: a.IAM}
 
+	if a.TenantService != nil {
+		tenantservice.NewPublicHandler(a.TenantService, nil).Mount(r)
+	}
 	r.Route("/api/v1", func(r chi.Router) {
 		iamH.MountPublic(r)
 		r.Group(func(r chi.Router) {
 			r.Use(a.IAM.Authenticate)
+			r.Use(httpx.Idempotency(a.DB))
 			iamH.MountProtected(r)
 			propH.Mount(r)
 			attH.Mount(r)

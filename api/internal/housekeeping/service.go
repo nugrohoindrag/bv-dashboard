@@ -78,27 +78,41 @@ type ScheduleInput struct {
 }
 
 func (s *Service) CreateSchedule(ctx context.Context, in ScheduleInput) (*CleaningSchedule, error) {
+	var out *CleaningSchedule
+	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		id, err := s.CreateScheduleTx(ctx, tx, in)
+		if err != nil {
+			return err
+		}
+		out, err = s.getScheduleTx(ctx, tx, id)
+		return err
+	})
+	return out, err
+}
+
+// CreateScheduleTx: di dalam transaksi (seed / import); langsung generate cleaning task horizon.
+func (s *Service) CreateScheduleTx(ctx context.Context, tx pgx.Tx, in ScheduleInput) (uuid.UUID, error) {
 	p := authctx.Must(ctx)
 	if in.Name == nil || in.LocationID == nil || in.StartTime == nil {
-		return nil, apperr.Validation("name, location_id, start_time wajib")
+		return uuid.Nil, apperr.Validation("name, location_id, start_time wajib")
 	}
 	st, err := time.Parse("15:04", *in.StartTime)
 	if err != nil {
-		return nil, apperr.Validation("start_time harus HH:MM")
+		return uuid.Nil, apperr.Validation("start_time harus HH:MM")
 	}
 	ct := "routine"
 	if in.CleaningType != nil {
 		ct = *in.CleaningType
 	}
 	if !cleaningTypes[ct] {
-		return nil, apperr.Validation("cleaning_type harus routine|periodic|deep|spot|special")
+		return uuid.Nil, apperr.Validation("cleaning_type harus routine|periodic|deep|spot|special")
 	}
 	prio := "medium"
 	if in.Priority != nil {
 		prio = *in.Priority
 	}
 	if !operations.Priorities[prio] {
-		return nil, apperr.Validation("priority tidak valid")
+		return uuid.Nil, apperr.Validation("priority tidak valid")
 	}
 	dur := 60
 	if in.DurationMinutes != nil && *in.DurationMinutes > 0 {
@@ -112,29 +126,31 @@ func (s *Service) CreateSchedule(ctx context.Context, in ScheduleInput) (*Cleani
 	if in.RequiresPhoto != nil {
 		reqPhoto = *in.RequiresPhoto
 	}
-	var out *CleaningSchedule
-	err = s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		pid, err := property.ResolvePropertyOfLocation(ctx, tx, *in.LocationID)
-		if err != nil {
-			return err
-		}
-		if !p.HasOnProperty("housekeeping.cleaning_schedules.create", pid) {
-			return apperr.Forbidden("")
-		}
-		var id uuid.UUID
-		if err := tx.QueryRow(ctx, `INSERT INTO cleaning_schedules (organization_id, property_id, name, location_id, cleaning_type, start_time, duration_minutes, weekdays, checklist_template_id, responsible_team_id, default_assignee_user_id, priority, requires_photo, valid_from, valid_until, created_by, updated_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::date,$15::date,$16,$16) RETURNING id`,
-			p.OrganizationID, pid, strings.TrimSpace(*in.Name), *in.LocationID, ct, st.Format("15:04:05"), dur, wd, in.ChecklistTemplateID, in.ResponsibleTeamID, in.DefaultAssigneeUserID, prio, reqPhoto, nilIfEmpty(in.ValidFrom), nilIfEmpty(in.ValidUntil), p.UserID).Scan(&id); err != nil {
-			return err
-		}
-		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "cleaning_schedule", EntityID: &id, EntityLabel: *in.Name, After: in})
-		if _, err := s.generateForScheduleTx(ctx, tx, id); err != nil {
-			return err
-		}
-		out, err = s.getScheduleTx(ctx, tx, id)
-		return err
-	})
-	return out, err
+	pid, err := property.ResolvePropertyOfLocation(ctx, tx, *in.LocationID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if !p.HasOnProperty("housekeeping.cleaning_schedules.create", pid) {
+		return uuid.Nil, apperr.Forbidden("")
+	}
+	var id uuid.UUID
+	if err := tx.QueryRow(ctx, `INSERT INTO cleaning_schedules (organization_id, property_id, name, location_id, cleaning_type, start_time, duration_minutes, weekdays, checklist_template_id, responsible_team_id, default_assignee_user_id, priority, requires_photo, valid_from, valid_until, created_by, updated_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::date,$15::date,$16,$16) RETURNING id`,
+		p.OrganizationID, pid, strings.TrimSpace(*in.Name), *in.LocationID, ct, st.Format("15:04:05"), dur, wd, in.ChecklistTemplateID, in.ResponsibleTeamID, in.DefaultAssigneeUserID, prio, reqPhoto, nilIfEmpty(in.ValidFrom), nilIfEmpty(in.ValidUntil), actorOrNil(p)).Scan(&id); err != nil {
+		return uuid.Nil, err
+	}
+	_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "cleaning_schedule", EntityID: &id, EntityLabel: *in.Name, After: in})
+	if _, err := s.generateForScheduleTx(ctx, tx, id); err != nil {
+		return uuid.Nil, err
+	}
+	return id, nil
+}
+
+func actorOrNil(p *authctx.Principal) *uuid.UUID {
+	if p.UserID == uuid.Nil {
+		return nil
+	}
+	return &p.UserID
 }
 
 func nilIfEmpty(s *string) *string {

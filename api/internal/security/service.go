@@ -63,36 +63,45 @@ type CheckpointInput struct {
 }
 
 func (s *Service) CreateCheckpoint(ctx context.Context, in CheckpointInput) (*Checkpoint, error) {
-	p := authctx.Must(ctx)
-	if in.Name == nil || strings.TrimSpace(*in.Name) == "" || in.LocationID == nil {
-		return nil, apperr.Validation("name dan location_id wajib")
-	}
 	var out *Checkpoint
 	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		pid, err := property.ResolvePropertyOfLocation(ctx, tx, *in.LocationID)
+		id, err := s.CreateCheckpointTx(ctx, tx, in)
 		if err != nil {
 			return err
 		}
-		if !p.HasOnProperty("security.checkpoints.create", pid) {
-			return apperr.Forbidden("")
-		}
-		qr, err := ids.NewQRCode()
-		if err != nil {
-			return err
-		}
-		var id uuid.UUID
-		if err := tx.QueryRow(ctx, `INSERT INTO checkpoints (organization_id, property_id, name, location_id, qr_code, instructions, checklist_template_id, created_by, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8) RETURNING id`,
-			p.OrganizationID, pid, strings.TrimSpace(*in.Name), *in.LocationID, qr, in.Instructions, in.ChecklistTemplateID, p.UserID).Scan(&id); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO qr_codes (code, organization_id, object_type, object_id) VALUES ($1,$2,'checkpoint',$3)`, qr, p.OrganizationID, id); err != nil {
-			return err
-		}
-		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "checkpoint", EntityID: &id, EntityLabel: *in.Name, After: in})
 		out, err = s.getCheckpointTx(ctx, tx, id)
 		return err
 	})
 	return out, err
+}
+
+// CreateCheckpointTx: di dalam transaksi (seed / import).
+func (s *Service) CreateCheckpointTx(ctx context.Context, tx pgx.Tx, in CheckpointInput) (uuid.UUID, error) {
+	p := authctx.Must(ctx)
+	if in.Name == nil || strings.TrimSpace(*in.Name) == "" || in.LocationID == nil {
+		return uuid.Nil, apperr.Validation("name dan location_id wajib")
+	}
+	pid, err := property.ResolvePropertyOfLocation(ctx, tx, *in.LocationID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if !p.HasOnProperty("security.checkpoints.create", pid) {
+		return uuid.Nil, apperr.Forbidden("")
+	}
+	qr, err := ids.NewQRCode()
+	if err != nil {
+		return uuid.Nil, err
+	}
+	var id uuid.UUID
+	if err := tx.QueryRow(ctx, `INSERT INTO checkpoints (organization_id, property_id, name, location_id, qr_code, instructions, checklist_template_id, created_by, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8) RETURNING id`,
+		p.OrganizationID, pid, strings.TrimSpace(*in.Name), *in.LocationID, qr, in.Instructions, in.ChecklistTemplateID, actorOrNil(p)).Scan(&id); err != nil {
+		return uuid.Nil, err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO qr_codes (code, organization_id, object_type, object_id) VALUES ($1,$2,'checkpoint',$3)`, qr, p.OrganizationID, id); err != nil {
+		return uuid.Nil, err
+	}
+	_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "checkpoint", EntityID: &id, EntityLabel: *in.Name, After: in})
+	return id, nil
 }
 
 func (s *Service) UpdateCheckpoint(ctx context.Context, id uuid.UUID, in CheckpointInput) (*Checkpoint, error) {
@@ -207,31 +216,39 @@ type RouteInput struct {
 }
 
 func (s *Service) CreateRoute(ctx context.Context, in RouteInput) (*PatrolRoute, error) {
-	p := authctx.Must(ctx)
-	if in.PropertyID == nil || in.Name == nil || strings.TrimSpace(*in.Name) == "" {
-		return nil, apperr.Validation("property_id dan name wajib")
-	}
-	if !p.HasOnProperty("security.patrol_routes.create", *in.PropertyID) {
-		return nil, apperr.Forbidden("")
-	}
 	var out *PatrolRoute
 	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		var id uuid.UUID
-		if err := tx.QueryRow(ctx, `INSERT INTO patrol_routes (organization_id, property_id, name, description, estimated_minutes, checklist_template_id, created_by, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$7) RETURNING id`,
-			p.OrganizationID, *in.PropertyID, strings.TrimSpace(*in.Name), in.Description, in.EstimatedMinutes, in.ChecklistTemplateID, p.UserID).Scan(&id); err != nil {
+		id, err := s.CreateRouteTx(ctx, tx, in)
+		if err != nil {
 			return err
 		}
-		if in.Checkpoints != nil {
-			if err := s.setRouteCheckpoints(ctx, tx, id, *in.PropertyID, *in.Checkpoints); err != nil {
-				return err
-			}
-		}
-		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "patrol_route", EntityID: &id, EntityLabel: *in.Name, After: in})
-		var err error
 		out, err = s.getRouteTx(ctx, tx, id)
 		return err
 	})
 	return out, err
+}
+
+// CreateRouteTx: di dalam transaksi (seed / import).
+func (s *Service) CreateRouteTx(ctx context.Context, tx pgx.Tx, in RouteInput) (uuid.UUID, error) {
+	p := authctx.Must(ctx)
+	if in.PropertyID == nil || in.Name == nil || strings.TrimSpace(*in.Name) == "" {
+		return uuid.Nil, apperr.Validation("property_id dan name wajib")
+	}
+	if !p.HasOnProperty("security.patrol_routes.create", *in.PropertyID) {
+		return uuid.Nil, apperr.Forbidden("")
+	}
+	var id uuid.UUID
+	if err := tx.QueryRow(ctx, `INSERT INTO patrol_routes (organization_id, property_id, name, description, estimated_minutes, checklist_template_id, created_by, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$7) RETURNING id`,
+		p.OrganizationID, *in.PropertyID, strings.TrimSpace(*in.Name), in.Description, in.EstimatedMinutes, in.ChecklistTemplateID, actorOrNil(p)).Scan(&id); err != nil {
+		return uuid.Nil, err
+	}
+	if in.Checkpoints != nil {
+		if err := s.setRouteCheckpoints(ctx, tx, id, *in.PropertyID, *in.Checkpoints); err != nil {
+			return uuid.Nil, err
+		}
+	}
+	_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "patrol_route", EntityID: &id, EntityLabel: *in.Name, After: in})
+	return id, nil
 }
 
 func (s *Service) setRouteCheckpoints(ctx context.Context, tx pgx.Tx, routeID, propertyID uuid.UUID, cps []RouteCheckpointInput) error {
@@ -425,13 +442,27 @@ func parseHHMM(s string) (time.Time, error) {
 }
 
 func (s *Service) CreateSchedule(ctx context.Context, in ScheduleInput) (*PatrolSchedule, error) {
+	var out *PatrolSchedule
+	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		id, err := s.CreateScheduleTx(ctx, tx, in)
+		if err != nil {
+			return err
+		}
+		out, err = s.getScheduleTx(ctx, tx, id)
+		return err
+	})
+	return out, err
+}
+
+// CreateScheduleTx: di dalam transaksi (seed / import); langsung generate patrol task horizon.
+func (s *Service) CreateScheduleTx(ctx context.Context, tx pgx.Tx, in ScheduleInput) (uuid.UUID, error) {
 	p := authctx.Must(ctx)
 	if in.RouteID == nil || in.Name == nil || in.StartTime == nil {
-		return nil, apperr.Validation("route_id, name, start_time wajib")
+		return uuid.Nil, apperr.Validation("route_id, name, start_time wajib")
 	}
 	st, err := parseHHMM(*in.StartTime)
 	if err != nil {
-		return nil, err
+		return uuid.Nil, err
 	}
 	dur := 60
 	if in.DurationMinutes != nil && *in.DurationMinutes > 0 {
@@ -446,31 +477,26 @@ func (s *Service) CreateSchedule(ctx context.Context, in ScheduleInput) (*Patrol
 		prio = *in.Priority
 	}
 	if !operations.Priorities[prio] {
-		return nil, apperr.Validation("priority tidak valid")
+		return uuid.Nil, apperr.Validation("priority tidak valid")
 	}
-	var out *PatrolSchedule
-	err = s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		route, err := s.getRouteTx(ctx, tx, *in.RouteID)
-		if err != nil {
-			return err
-		}
-		if !p.HasOnProperty("security.patrol.manage", route.PropertyID) {
-			return apperr.Forbidden("")
-		}
-		var id uuid.UUID
-		if err := tx.QueryRow(ctx, `INSERT INTO patrol_schedules (organization_id, property_id, route_id, name, start_time, duration_minutes, weekdays, responsible_team_id, default_assignee_user_id, priority, valid_from, valid_until, created_by, updated_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::date,$12::date,$13,$13) RETURNING id`,
-			p.OrganizationID, route.PropertyID, *in.RouteID, *in.Name, st.Format("15:04:05"), dur, wd, in.ResponsibleTeamID, in.DefaultAssigneeUserID, prio, nilIfEmpty(in.ValidFrom), nilIfEmpty(in.ValidUntil), p.UserID).Scan(&id); err != nil {
-			return err
-		}
-		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "patrol_schedule", EntityID: &id, EntityLabel: *in.Name, After: in})
-		if _, err := s.generateForScheduleTx(ctx, tx, id); err != nil {
-			return err
-		}
-		out, err = s.getScheduleTx(ctx, tx, id)
-		return err
-	})
-	return out, err
+	route, err := s.getRouteTx(ctx, tx, *in.RouteID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if !p.HasOnProperty("security.patrol.manage", route.PropertyID) {
+		return uuid.Nil, apperr.Forbidden("")
+	}
+	var id uuid.UUID
+	if err := tx.QueryRow(ctx, `INSERT INTO patrol_schedules (organization_id, property_id, route_id, name, start_time, duration_minutes, weekdays, responsible_team_id, default_assignee_user_id, priority, valid_from, valid_until, created_by, updated_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::date,$12::date,$13,$13) RETURNING id`,
+		p.OrganizationID, route.PropertyID, *in.RouteID, *in.Name, st.Format("15:04:05"), dur, wd, in.ResponsibleTeamID, in.DefaultAssigneeUserID, prio, nilIfEmpty(in.ValidFrom), nilIfEmpty(in.ValidUntil), actorOrNil(p)).Scan(&id); err != nil {
+		return uuid.Nil, err
+	}
+	_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "patrol_schedule", EntityID: &id, EntityLabel: *in.Name, After: in})
+	if _, err := s.generateForScheduleTx(ctx, tx, id); err != nil {
+		return uuid.Nil, err
+	}
+	return id, nil
 }
 
 func nilIfEmpty(s *string) *string {

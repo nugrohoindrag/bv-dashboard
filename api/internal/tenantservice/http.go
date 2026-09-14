@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/buildingvision/api/internal/iam"
 	"github.com/buildingvision/api/internal/operations"
@@ -31,6 +32,7 @@ func (h *Handler) Mount(r chi.Router) {
 	}
 	r.With(req("operations.work_orders.create")).Post("/service-requests/{id}/work-orders", h.woFromSR)
 	r.With(req("operations.tasks.create")).Post("/service-requests/{id}/tasks", h.taskFromSR)
+	r.With(req("platform.organizations.update")).Post("/service-requests/public-intake", h.enableIntake)
 	// sub-resource bersama via operations handler (comments, activities, links, attachments generic)
 	h.Ops.MountSubResources(r, "/service-requests", operations.ObjServiceRequest)
 }
@@ -188,6 +190,23 @@ func (h *Handler) woFromSR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, item)
+}
+
+func (h *Handler) enableIntake(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		PropertyID uuid.UUID `json:"property_id"`
+		Enabled    bool      `json:"enabled"`
+	}
+	if err := httpx.Decode(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	key, err := h.Svc.EnablePublicIntake(r.Context(), in.PropertyID, in.Enabled)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"intake_key": key, "enabled": in.Enabled})
 }
 
 func (h *Handler) taskFromSR(w http.ResponseWriter, r *http.Request) {

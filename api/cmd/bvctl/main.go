@@ -55,6 +55,27 @@ func main() {
 		if err := runSeed(ctx, adminURL, os.Args[2:]); err != nil {
 			fail(err)
 		}
+	case "reindex":
+		if err := runReindex(ctx, adminURL); err != nil {
+			fail(err)
+		}
+	case "import":
+		if err := runImport(ctx, adminURL, os.Args[2:]); err != nil {
+			fail(err)
+		}
+	case "openapi":
+		out := os.Stdout
+		if len(os.Args) > 2 {
+			fh, err := os.Create(os.Args[2])
+			if err != nil {
+				fail(err)
+			}
+			defer fh.Close()
+			out = fh
+		}
+		if err := runOpenAPI(out); err != nil {
+			fail(err)
+		}
 	case "keygen":
 		runKeygen()
 	default:
@@ -67,6 +88,9 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `bvctl <command>
   migrate [--status|--down]   jalankan migrasi (goose + River)
   seed [--demo]               seed katalog permission, org demo, role, equipment, SLA, SR categories
+  reindex                     backfill search index seluruh organization
+  import --org <slug> --type assets|locations --file x.csv [--property <id>] [--dry-run]   migrasi data (OD-008)
+  openapi [out.yaml]          generate OpenAPI 3.1 dari router + struct
   keygen                      generate Ed25519 keypair (PEM) untuk BV_JWT_PRIVATE_KEY`)
 }
 

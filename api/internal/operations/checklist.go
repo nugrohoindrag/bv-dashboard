@@ -58,35 +58,44 @@ type ChecklistTemplateInput struct {
 var itemTypes = map[string]bool{"ok_notok_na": true, "yes_no": true, "numeric": true, "text": true, "photo": true}
 
 func (s *Service) CreateChecklistTemplate(ctx context.Context, in ChecklistTemplateInput) (*ChecklistTemplate, error) {
-	p := authctx.Must(ctx)
-	if in.Name == nil || strings.TrimSpace(*in.Name) == "" {
-		return nil, apperr.Validation("name wajib")
-	}
 	var out *ChecklistTemplate
 	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		code, err := ids.NextPlain(ctx, tx, p.OrganizationID, ids.PrefixChecklist)
+		id, err := s.CreateChecklistTemplateTx(ctx, tx, in)
 		if err != nil {
 			return err
 		}
-		applies := []string{}
-		if in.AppliesTo != nil {
-			applies = *in.AppliesTo
-		}
-		var id uuid.UUID
-		if err := tx.QueryRow(ctx, `INSERT INTO checklist_templates (organization_id, code, name, description, domain, applies_to, created_by, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$7) RETURNING id`,
-			p.OrganizationID, code, strings.TrimSpace(*in.Name), in.Description, in.Domain, applies, p.UserID).Scan(&id); err != nil {
-			return err
-		}
-		if in.Items != nil {
-			if err := s.replaceTemplateItems(ctx, tx, id, 1, *in.Items); err != nil {
-				return err
-			}
-		}
-		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "checklist_template", EntityID: &id, EntityLabel: code, After: in})
 		out, err = s.getTemplateTx(ctx, tx, id)
 		return err
 	})
 	return out, err
+}
+
+// CreateChecklistTemplateTx: di dalam transaksi (seed / import).
+func (s *Service) CreateChecklistTemplateTx(ctx context.Context, tx pgx.Tx, in ChecklistTemplateInput) (uuid.UUID, error) {
+	p := authctx.Must(ctx)
+	if in.Name == nil || strings.TrimSpace(*in.Name) == "" {
+		return uuid.Nil, apperr.Validation("name wajib")
+	}
+	code, err := ids.NextPlain(ctx, tx, p.OrganizationID, ids.PrefixChecklist)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	applies := []string{}
+	if in.AppliesTo != nil {
+		applies = *in.AppliesTo
+	}
+	var id uuid.UUID
+	if err := tx.QueryRow(ctx, `INSERT INTO checklist_templates (organization_id, code, name, description, domain, applies_to, created_by, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$7) RETURNING id`,
+		p.OrganizationID, code, strings.TrimSpace(*in.Name), in.Description, in.Domain, applies, actorOrNil(p)).Scan(&id); err != nil {
+		return uuid.Nil, err
+	}
+	if in.Items != nil {
+		if err := s.replaceTemplateItems(ctx, tx, id, 1, *in.Items); err != nil {
+			return uuid.Nil, err
+		}
+	}
+	_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "checklist_template", EntityID: &id, EntityLabel: code, After: in})
+	return id, nil
 }
 
 func (s *Service) replaceTemplateItems(ctx context.Context, tx pgx.Tx, templateID uuid.UUID, version int, items []ChecklistTemplateItem) error {
