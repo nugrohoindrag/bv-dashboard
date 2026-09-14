@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+.env
+.env.*
+!.env.example
+api/bin/
+web/node_modules/
+web/dist/
+.DS_Store
+Thumbs.db
