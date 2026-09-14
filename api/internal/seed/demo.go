@@ -34,12 +34,13 @@ type DemoRefs struct {
 
 // SeedDemo (dalam tx yang sama dengan seed dasar): property hierarchy, teams, users per role.
 func SeedDemo(ctx context.Context, tx pgx.Tx, orgID, adminID uuid.UUID) error {
-	_, err := SeedDemoRefs(ctx, tx, orgID, adminID)
+	_, err := SeedDemoRefs(ctx, tx, orgID, adminID, true)
 	return err
 }
 
 // SeedDemoRefs: seperti SeedDemo tetapi mengembalikan referensi (untuk test & seed lanjutan).
-func SeedDemoRefs(ctx context.Context, tx pgx.Tx, orgID, adminID uuid.UUID) (*DemoRefs, error) {
+// withOps=false → hanya struktur (property, team, user, tenant) tanpa data operasional (dipakai integration test).
+func SeedDemoRefs(ctx context.Context, tx pgx.Tx, orgID, adminID uuid.UUID, withOps bool) (*DemoRefs, error) {
 	// Struktur dibuat di tx yang sama lewat SQL langsung agar atomic dengan seed dasar.
 	refs := &DemoRefs{OrgID: orgID, AdminID: adminID, Users: map[string]uuid.UUID{}, Teams: map[string]uuid.UUID{}}
 	sys := &authctx.Principal{UserID: adminID, OrganizationID: orgID, IsSystem: true, FullName: "Seed", Source: authctx.SourceSystem}
@@ -162,8 +163,10 @@ func SeedDemoRefs(ctx context.Context, tx pgx.Tx, orgID, adminID uuid.UUID) (*De
 		return nil, err
 	}
 
-	if err := SeedDemoOperations(ctx, tx, refs); err != nil {
-		return nil, err
+	if withOps {
+		if err := SeedDemoOperations(ctx, tx, refs); err != nil {
+			return nil, err
+		}
 	}
 	fmt.Printf("seed demo: property %s, %d users (password Demo12345!), 4 teams\n", refs.PropertyID, len(users))
 	return refs, nil

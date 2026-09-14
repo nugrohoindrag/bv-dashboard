@@ -96,7 +96,7 @@ func setup(t *testing.T) *env {
 		if err != nil {
 			return err
 		}
-		refs, err = seed.SeedDemoRefs(ctx, tx, orgA, adminID)
+		refs, err = seed.SeedDemoRefs(ctx, tx, orgA, adminID, false)
 		return err
 	}); err != nil {
 		t.Fatalf("seed org A: %v", err)
