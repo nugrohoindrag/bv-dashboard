@@ -34,15 +34,15 @@ Referensi: PRD P0 v1.0 · Technical Architecture v1.0 · Dashboard Design System
 - ✅ Findings (FND-, resolve/close, → WO / Task rework / Incident) & Incidents (INC-, report→assign→resolve→close, → WO)
 
 ## P0.3 Engineering
-- 🔄 sedang dikerjakan
-- ⏳ equipment, assets (AST-{CAT}-{SEQ}), qr_codes, /qr/{code}/resolve
-- ⏳ maintenance_plans, maintenance_schedules generator (idempotent), maintenance WO creation
-- ⏳ inspections → finding → WO
-- ⏳ asset history hook
+- ✅ equipment (kategori/tipe), assets (AST-{CAT}-{SEQ}, spesifikasi value/unit), qr_codes + /qr/{code}/resolve (validasi org+permission) + rotate
+- ✅ maintenance_plans (draft/published/archived), schedule generator (horizon 60 hari, idempotent, timezone property), maintenance WO creation (lead time, idempotent), skip schedule
+- ✅ inspections (INS-, task_type=inspection, result pass/fail dari checklist) → finding → WO
+- ✅ asset history (WO/task/schedule/activity gabungan) + hook maintenance WO ↔ schedule status
 - ⏳ web: Assets, Equipment, PM, Corrective, Inspections
-- ⏳ AT-004
+- ✅ AT-004 lulus (integration test)
 
 ## P0.4 Security + Housekeeping
+- 🔄 sedang dikerjakan
 - ⏳ patrol_routes, checkpoints, patrol_schedules, patrol_tasks, checkpoint_scans, generator
 - ⏳ incidents (INC-) report → assign → resolve → close → WO
 - ⏳ cleaning_schedules, cleaning_tasks, housekeeping_inspections, findings → rework/WO

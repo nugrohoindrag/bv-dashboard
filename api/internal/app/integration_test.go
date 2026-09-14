@@ -32,15 +32,15 @@ import (
 // Env: BV_TEST_ADMIN_DATABASE_URL (owner) — default postgres lokal; app memakai role bv_app agar RLS aktif.
 
 type env struct {
-	t       *testing.T
-	srv     *httptest.Server
-	app     *app.App
-	store   *storage.MemoryStorage
-	jobs    *jobs.MemoryEnqueuer
-	refs    *seed.DemoRefs
-	orgB    uuid.UUID
+	t         *testing.T
+	srv       *httptest.Server
+	app       *app.App
+	store     *storage.MemoryStorage
+	jobs      *jobs.MemoryEnqueuer
+	refs      *seed.DemoRefs
+	orgB      uuid.UUID
 	orgBAdmin string
-	tokens  map[string]string
+	tokens    map[string]string
 }
 
 func adminURL() string {

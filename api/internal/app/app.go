@@ -12,8 +12,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/buildingvision/api/internal/asset"
 	"github.com/buildingvision/api/internal/attachments"
 	"github.com/buildingvision/api/internal/audit"
+	"github.com/buildingvision/api/internal/engineering"
 	"github.com/buildingvision/api/internal/iam"
 	"github.com/buildingvision/api/internal/operations"
 	"github.com/buildingvision/api/internal/platform/apperr"
@@ -37,6 +39,10 @@ type App struct {
 	Property    *property.Service
 	Attachments *attachments.Service
 	Operations  *operations.Service
+
+	// modul domain (diisi DefaultExtensions)
+	Asset       *asset.Service
+	Engineering *engineering.Service
 
 	// modul lanjutan didaftarkan lewat Extensions (engineering, security, housekeeping, tenantservice, notification, overview, search, sync)
 	Extensions []Extension

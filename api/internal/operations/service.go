@@ -603,3 +603,15 @@ func (s *Service) List(ctx context.Context, objectType string, f ListFilter, pag
 	})
 	return out, next, err
 }
+
+// GetTx: detail lengkap di dalam transaksi yang sudah ada (dipakai modul domain).
+func (s *Service) GetTx(ctx context.Context, tx pgx.Tx, objectType string, id uuid.UUID) (*WorkItem, error) {
+	w, t, err := s.loadTx(ctx, tx, objectType, id, false)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.enrich(ctx, tx, w, t, true); err != nil {
+		return nil, err
+	}
+	return w, nil
+}
