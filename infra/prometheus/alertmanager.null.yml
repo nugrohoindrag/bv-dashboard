@@ -1,0 +1,8 @@
+# Dipakai bila TELEGRAM_BOT_TOKEN kosong: alert hanya tampil di UI Alertmanager/Grafana (tanpa notifikasi keluar).
+global:
+  resolve_timeout: 5m
+route:
+  receiver: "null"
+  group_by: [alertname]
+receivers:
+  - name: "null"

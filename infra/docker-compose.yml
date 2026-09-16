@@ -263,7 +263,9 @@ services:
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-0}
-    volumes: [./prometheus/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro]
+    volumes:
+      - ./prometheus/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./prometheus/alertmanager.null.yml:/etc/alertmanager/alertmanager.null.yml:ro
     logging: *logging
 
   node-exporter:
