@@ -122,10 +122,24 @@ jobs:
           cache-to: type=gha,mode=max
       - uses: docker/build-push-action@v6
         with:
-          context: web
+          context: .
+          file: web/Dockerfile
           push: true
           tags: |
             ghcr.io/nugrohoindrag/bv-web:${{ steps.ver.outputs.version }}
             ghcr.io/nugrohoindrag/bv-web:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: website/Dockerfile
+          push: true
+          build-args: |
+            VITE_APP_URL=${{ vars.BV_APP_URL || 'https://app.buildingvision.web.id' }}
+            VITE_SITE_URL=${{ vars.BV_SITE_URL || 'https://buildingvision.web.id' }}
+          tags: |
+            ghcr.io/nugrohoindrag/bv-website:${{ steps.ver.outputs.version }}
+            ghcr.io/nugrohoindrag/bv-website:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

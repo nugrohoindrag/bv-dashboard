@@ -8,7 +8,7 @@ Topologi: `infra/docker-compose.yml` (ADR-009). Server: `/opt/buildingvision` (c
 3. Isi `.env`: domain, `POSTGRES_PASSWORD`, kunci JWT (`go run ./cmd/bvctl keygen` di mesin dev → PEM ke `BV_JWT_PRIVATE_KEY`/`BV_JWT_PUBLIC_KEY`), kredensial S3/R2 untuk **pgBackRest repo di lokasi berbeda** (`infra/pgbackrest/pgbackrest.conf`), token Telegram alert.
 4. `docker compose up -d postgres minio minio-init && docker compose run --rm migrate` lalu **wajib** `BV_APP_DB_PASSWORD=… BV_WORKER_DB_PASSWORD=… ./scripts/set-db-passwords.sh` (migrasi membuat role dengan password dev).
 5. Seed org pertama: `docker compose run --rm -e BV_DATABASE_URL=postgres://postgres:$POSTGRES_PASSWORD@postgres:5432/buildingvision api /app/bvctl seed` (tanpa `--demo` di produksi), lalu buat Org Admin & property lewat Settings.
-6. `docker compose up -d` — Caddy mengambil sertifikat Let's Encrypt otomatis untuk `BV_DOMAIN`.
+6. `docker compose up -d` — stack inti (caddy, api ×2, worker, web, website, postgres, minio). Caddy mengambil sertifikat Let's Encrypt otomatis untuk `BV_DOMAIN` dan `BV_WEBSITE_DOMAIN` (+ `www.`). Observability & backup opsional: `docker compose --profile observability --profile backup up -d` (butuh RAM ≥ 8 GB / repo S3 pgBackRest).
 7. Inisialisasi stanza backup: `docker compose exec pgbackrest pgbackrest --stanza=bv stanza-create && docker compose exec pgbackrest pgbackrest --stanza=bv check`.
 8. Grafana: `https://<domain>/grafana` (ganti password admin), dashboard "BuildingVision — Operasional".
 

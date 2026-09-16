@@ -63,7 +63,7 @@
 }
 
 # Website publik (Website PRD v1.1): situs statis hasil prerender; /api → api (public endpoints: app-downloads, plans, signup, events).
-{$BV_WEBSITE_DOMAIN} {
+{$BV_WEBSITE_DOMAIN}, www.{$BV_WEBSITE_DOMAIN} {
 	encode zstd gzip
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"

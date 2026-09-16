@@ -1,5 +1,6 @@
 # BuildingVision — topologi pilot (TAD §11.2, ADR-009): Caddy → api (2 replika) + web statis, worker, Postgres 17 + pgBackRest,
-# MinIO, observability (otel-collector, Prometheus, Grafana, Loki, Promtail). Jalankan dari folder infra/: `docker compose up -d`.
+# MinIO. Opsional via profile: observability (otel-collector, Prometheus, Grafana, Loki, Promtail) dan backup (pgBackRest) —
+# `docker compose --profile observability --profile backup up -d`. Default `docker compose up -d` = stack inti (cukup untuk VPS 2 vCPU/4 GB).
 # Env: salin .env.example → .env. Untuk dev lokal ringan pakai docker-compose.dev.yml (postgres, minio, mailpit saja).
 name: buildingvision
 
@@ -79,7 +80,7 @@ services:
   web:
     # Image web menyalin dist/ ke volume yang disajikan Caddy utama (SPA statis, ADR-008).
     image: ghcr.io/nugrohoindrag/bv-web:${BV_VERSION:-latest}
-    build: { context: ../web }
+    build: { context: .., dockerfile: web/Dockerfile }
     restart: "no"
     entrypoint: ["sh", "-c", "rm -rf /srv-out/* && cp -r /srv/. /srv-out/ && echo web dist synced"]
     volumes: [web-dist:/srv-out]
@@ -170,6 +171,7 @@ services:
     logging: *logging
 
   pgbackrest:
+    profiles: ["backup"]
     # Backup: full harian 02:00, incremental tiap 6 jam, WAL archiving kontinu ke object storage lokasi berbeda (TAD §11.6).
     # Container ini berbagi volume data Postgres (read) dan menjalankan cron; archive-push dijalankan dari container postgres
     # lewat socket/stanza yang sama (repo S3), sehingga pgbackrest harus terpasang di image postgres pada produksi — lihat docs/runbooks/backup-restore.md.
@@ -223,6 +225,7 @@ services:
 
   # ---------- Observability (TAD §11.5) ----------
   otel-collector:
+    profiles: ["observability"]
     image: otel/opentelemetry-collector-contrib:0.123.0
     restart: unless-stopped
     command: ["--config=/etc/otelcol/config.yaml"]
@@ -230,6 +233,7 @@ services:
     logging: *logging
 
   prometheus:
+    profiles: ["observability"]
     image: prom/prometheus:v3.3.0
     restart: unless-stopped
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d", "--web.enable-lifecycle"]
@@ -240,6 +244,7 @@ services:
     logging: *logging
 
   alertmanager:
+    profiles: ["observability"]
     image: prom/alertmanager:v0.28.1
     restart: unless-stopped
     command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
@@ -250,6 +255,7 @@ services:
     logging: *logging
 
   node-exporter:
+    profiles: ["observability"]
     image: prom/node-exporter:v1.9.1
     restart: unless-stopped
     pid: host
@@ -258,6 +264,7 @@ services:
     logging: *logging
 
   postgres-exporter:
+    profiles: ["observability"]
     image: prometheuscommunity/postgres-exporter:v0.17.1
     restart: unless-stopped
     environment:
@@ -267,6 +274,7 @@ services:
     logging: *logging
 
   loki:
+    profiles: ["observability"]
     image: grafana/loki:3.4.3
     restart: unless-stopped
     command: ["-config.file=/etc/loki/config.yaml"]
@@ -276,6 +284,7 @@ services:
     logging: *logging
 
   promtail:
+    profiles: ["observability"]
     image: grafana/promtail:3.4.3
     restart: unless-stopped
     command: ["-config.file=/etc/promtail/config.yaml"]
@@ -287,6 +296,7 @@ services:
     logging: *logging
 
   grafana:
+    profiles: ["observability"]
     image: grafana/grafana:11.6.1
     restart: unless-stopped
     environment:
