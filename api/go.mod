@@ -1,6 +1,6 @@
 module github.com/buildingvision/api
 
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
@@ -65,7 +65,7 @@ require (
 	github.com/xuri/efp v0.0.1 // indirect
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/image v0.38.0 // indirect
+	golang.org/x/image v0.43.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
