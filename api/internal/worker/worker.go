@@ -50,7 +50,12 @@ func New(a *app.App, log *slog.Logger) (*Worker, error) {
 	river.AddWorker(workers, &mwoCreateWorker{a: a, log: log})
 	river.AddWorker(workers, &patrolGenWorker{a: a, log: log})
 	river.AddWorker(workers, &cleaningGenWorker{a: a, log: log})
+	river.AddWorker(workers, &billingSweepWorker{a: a, log: log})
+	river.AddWorker(workers, &visitorExpireWorker{a: a, log: log})
+	river.AddWorker(workers, &srAutoCloseWorker{a: a, log: log})
+	river.AddWorker(workers, &trialSweepWorker{a: a, log: log})
 	river.AddWorker(workers, &idemCleanupWorker{a: a})
+	river.AddWorker(workers, &bvroomsSweepWorker{a: a, log: log})
 
 	client, err := river.NewClient(riverpgxv5.New(a.DB.Pool), &river.Config{
 		Queues: map[string]river.QueueConfig{
@@ -321,3 +326,68 @@ func (w *idemCleanupWorker) Work(ctx context.Context, _ *river.Job[jobs.Idempote
 }
 
 var _ = authctx.System
+
+// ---------- P1 sweeps ----------
+
+type billingSweepWorker struct {
+	river.WorkerDefaults[jobs.BillingSweepArgs]
+	a   *app.App
+	log *slog.Logger
+}
+
+func (w *billingSweepWorker) Work(ctx context.Context, _ *river.Job[jobs.BillingSweepArgs]) error {
+	return forEachOrg(ctx, w.a, w.log, "billing.sweep", func(ctx context.Context, org uuid.UUID) (int, error) {
+		return 0, w.a.Billing.Sweep(ctx, org)
+	})
+}
+
+type visitorExpireWorker struct {
+	river.WorkerDefaults[jobs.VisitorExpireArgs]
+	a   *app.App
+	log *slog.Logger
+}
+
+func (w *visitorExpireWorker) Work(ctx context.Context, _ *river.Job[jobs.VisitorExpireArgs]) error {
+	return forEachOrg(ctx, w.a, w.log, "visitor.expire", w.a.Visitor.ExpireSweep)
+}
+
+type srAutoCloseWorker struct {
+	river.WorkerDefaults[jobs.ServiceRequestAutoCloseArgs]
+	a   *app.App
+	log *slog.Logger
+}
+
+func (w *srAutoCloseWorker) Work(ctx context.Context, _ *river.Job[jobs.ServiceRequestAutoCloseArgs]) error {
+	return forEachOrg(ctx, w.a, w.log, "service_request.auto_close", w.a.TenantApp.AutoCloseSweep)
+}
+
+// trialSweepWorker: siklus hidup trial (Website PRD §31–§32) — lintas organization dalam satu sweep.
+type trialSweepWorker struct {
+	river.WorkerDefaults[jobs.TrialSweepArgs]
+	a   *app.App
+	log *slog.Logger
+}
+
+func (w *trialSweepWorker) Work(ctx context.Context, _ *river.Job[jobs.TrialSweepArgs]) error {
+	start := time.Now()
+	n, err := w.a.Growth.Sweep(ctx)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		w.log.Info("trial.sweep", "affected", n, "took", time.Since(start))
+	}
+	metrics.MarkSweep("trial.sweep")
+	return nil
+}
+
+// bvroomsSweepWorker: booking BVRooms hangus lewat batas bayar, refresh cache listing, Web Push tertunda (Requirements v0.2 §4.2).
+type bvroomsSweepWorker struct {
+	river.WorkerDefaults[jobs.BVRoomsSweepArgs]
+	a   *app.App
+	log *slog.Logger
+}
+
+func (w *bvroomsSweepWorker) Work(ctx context.Context, _ *river.Job[jobs.BVRoomsSweepArgs]) error {
+	return forEachOrg(ctx, w.a, w.log, "bvrooms.sweep", w.a.BVRooms.Sweep)
+}

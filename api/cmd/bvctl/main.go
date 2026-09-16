@@ -10,6 +10,7 @@ import (
 	"time"
 
 	migrations "github.com/buildingvision/api/db"
+	"github.com/buildingvision/api/internal/bvrooms"
 	"github.com/buildingvision/api/internal/platform/config"
 )
 
@@ -72,6 +73,10 @@ func main() {
 		if err := runSeed(ctx, adminURL, os.Args[2:]); err != nil {
 			fail(err)
 		}
+	case "demo":
+		if err := runDemo(ctx, cfg, os.Args[2:]); err != nil {
+			fail(err)
+		}
 	case "reindex":
 		if err := runReindex(ctx, adminURL); err != nil {
 			fail(err)
@@ -93,6 +98,12 @@ func main() {
 		if err := runOpenAPI(out); err != nil {
 			fail(err)
 		}
+	case "vapid-keygen":
+		priv, pub, err := bvrooms.GenerateVAPIDKeys()
+		if err != nil {
+			fail(err)
+		}
+		fmt.Printf("BV_VAPID_PUBLIC_KEY=%s\nBV_VAPID_PRIVATE_KEY=%s\n", pub, priv)
 	case "keygen":
 		runKeygen()
 	default:
@@ -105,10 +116,13 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `bvctl <command>
   migrate [--status|--down]   jalankan migrasi (goose + River)
   seed [--demo]               seed katalog permission, org demo, role, equipment, SLA, SR categories
+  demo seed|reset|verify|status [--profile hotel,apartment,office] [--reseed] [--json]
+                              Demo Seed Database: 3 environment demo (Hotel/Apartment/Office) — docs/demo/BuildingVision-Demo-Guide.md
   reindex                     backfill search index seluruh organization
   import --org <slug> --type assets|locations --file x.csv [--property <id>] [--dry-run]   migrasi data (OD-008)
   openapi [out.yaml]          generate OpenAPI 3.1 dari router + struct
   keygen                      generate Ed25519 keypair (PEM) untuk BV_JWT_PRIVATE_KEY
+  vapid-keygen                generate kunci VAPID Web Push BVRooms (BV_VAPID_PUBLIC_KEY / BV_VAPID_PRIVATE_KEY)
   healthcheck [url]           GET url (default /ready lokal), exit 0 bila 200 — untuk Docker HEALTHCHECK`)
 }
 

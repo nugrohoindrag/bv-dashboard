@@ -5,6 +5,8 @@ import { AppShell } from "@/components/shell/AppShell";
 import { DetailSkeleton } from "@/components/bv/common";
 import { useAuth } from "@/lib/auth";
 import { LoginPage } from "@/features/auth/LoginPage";
+import { SignupPage } from "@/features/growth/SignupPage";
+import { VerifyEmailPage } from "@/features/growth/VerifyEmailPage";
 
 const Overview = lazy(() => import("@/features/overview/OverviewPage"));
 const WorkItemList = lazy(() => import("@/features/operations/WorkItemListPage"));
@@ -26,6 +28,30 @@ const PropertyPage = lazy(() => import("@/features/property/LocationsPage"));
 const LocationDetail = lazy(() => import("@/features/property/LocationDetailPage"));
 const TenantList = lazy(() => import("@/features/tenant/TenantListPage"));
 const Settings = lazy(() => import("@/features/settings/SettingsPage"));
+const TenantRelationDashboard = lazy(() => import("@/features/tenant-relation/TenantRelationDashboardPage"));
+const TenantUsers = lazy(() => import("@/features/tenant-relation/TenantUsersPage"));
+const TenantFeedback = lazy(() => import("@/features/tenant-relation/FeedbackPage"));
+const Announcements = lazy(() => import("@/features/tenant-relation/AnnouncementsPage"));
+const Facilities = lazy(() => import("@/features/booking/FacilitiesPage"));
+const Bookings = lazy(() => import("@/features/booking/BookingsPage"));
+const Visitors = lazy(() => import("@/features/security/VisitorsPage"));
+const Invoices = lazy(() => import("@/features/billing/InvoicesPage"));
+const Payments = lazy(() => import("@/features/billing/PaymentsPage"));
+const Vendors = lazy(() => import("@/features/vendor/VendorsPage"));
+const Inventory = lazy(() => import("@/features/inventory/InventoryPage"));
+const HotelReservations = lazy(() => import("@/features/hotel/HotelReservationsPage"));
+const HotelRooms = lazy(() => import("@/features/hotel/HotelRoomsPage"));
+const HotelCalendar = lazy(() => import("@/features/hotel/HotelCalendarPage"));
+const Reception = lazy(() => import("@/features/hotel/ReceptionPage"));
+const UnitListings = lazy(() => import("@/features/commercial/UnitListingsPage"));
+const SalesLeads = lazy(() => import("@/features/commercial/SalesLeadsPage"));
+const SaleReservations = lazy(() => import("@/features/commercial/SaleReservationsPage"));
+const RentalListings = lazy(() => import("@/features/commercial/RentalListingsPage"));
+const RentalReservations = lazy(() => import("@/features/commercial/RentalReservationsPage"));
+const RentalCalendar = lazy(() => import("@/features/commercial/RentalCalendarPage"));
+const CommercialIndex = lazy(() => import("@/features/commercial/CommercialIndex"));
+const Reports = lazy(() => import("@/features/reports/ReportsPage"));
+const OnboardingPage = lazy(() => import("@/features/growth/OnboardingPage"));
 
 function Protected() {
   const { principal, loading } = useAuth();
@@ -44,10 +70,15 @@ export function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        {/* Self-serve free trial (Website PRD §24–§25): Start Free Trial → Create Account → Verify Email */}
+        <Route path="/signup" element={<SignupPage />} />
+        <Route path="/verify-email" element={<VerifyEmailPage />} />
         <Route element={<Protected />}>
           <Route element={<AppShell />}>
             <Route index element={<Navigate to="/overview" replace />} />
             <Route path="/overview" element={<Page><Overview /></Page>} />
+            {/* Onboarding wizard + checklist (Website PRD §26–§30) */}
+            <Route path="/onboarding" element={<Page><OnboardingPage /></Page>} />
             {/* Operations */}
             <Route path="/operations" element={<Navigate to="/operations/work-orders" replace />} />
             <Route path="/operations/tasks" element={<Page><WorkItemList objectType="task" /></Page>} />
@@ -76,6 +107,48 @@ export function App() {
             <Route path="/security/patrol" element={<Page><Patrol /></Page>} />
             <Route path="/security/patrol/:tab" element={<Page><Patrol /></Page>} />
             <Route path="/security/incidents" element={<Page><IncidentList security /></Page>} />
+            <Route path="/security/visitors" element={<Page><Visitors /></Page>} />
+            <Route path="/security/visitors/:id" element={<Page><Visitors /></Page>} />
+            {/* Booking (generic Booking = Facility Booking; PRD §21) */}
+            <Route path="/booking" element={<Navigate to="/booking/bookings" replace />} />
+            <Route path="/booking/facilities" element={<Page><Facilities /></Page>} />
+            <Route path="/booking/bookings" element={<Page><Bookings /></Page>} />
+            <Route path="/booking/bookings/:id" element={<Page><Bookings /></Page>} />
+            {/* Billing (PRD §23; NC §34) */}
+            <Route path="/billing" element={<Navigate to="/billing/invoices" replace />} />
+            <Route path="/billing/invoices" element={<Page><Invoices /></Page>} />
+            <Route path="/billing/invoices/:id" element={<Page><Invoices /></Page>} />
+            <Route path="/billing/payments" element={<Page><Payments /></Page>} />
+            <Route path="/billing/payments/:id" element={<Page><Payments /></Page>} />
+            {/* Vendor Management & Inventory (PRD §24–§25) */}
+            <Route path="/vendors" element={<Page><Vendors /></Page>} />
+            <Route path="/vendors/:id" element={<Page><Vendors /></Page>} />
+            <Route path="/inventory" element={<Page><Inventory /></Page>} />
+            {/* Commercial (NC §71): Hotel Booking Management (profile hotel) */}
+            <Route path="/commercial" element={<Page><CommercialIndex /></Page>} />
+            {/* Commercial (NC §71): Apartment Unit Sales & Rental Management (profile apartment) */}
+            <Route path="/commercial/sales" element={<Navigate to="/commercial/sales/listings" replace />} />
+            <Route path="/commercial/sales/listings" element={<Page><UnitListings /></Page>} />
+            <Route path="/commercial/sales/listings/:id" element={<Page><UnitListings /></Page>} />
+            <Route path="/commercial/sales/leads" element={<Page><SalesLeads /></Page>} />
+            <Route path="/commercial/sales/leads/:id" element={<Page><SalesLeads /></Page>} />
+            <Route path="/commercial/sales/reservations" element={<Page><SaleReservations /></Page>} />
+            <Route path="/commercial/sales/reservations/:id" element={<Page><SaleReservations /></Page>} />
+            <Route path="/commercial/rental" element={<Navigate to="/commercial/rental/listings" replace />} />
+            <Route path="/commercial/rental/listings" element={<Page><RentalListings /></Page>} />
+            <Route path="/commercial/rental/listings/:id" element={<Page><RentalListings /></Page>} />
+            <Route path="/commercial/rental/reservations" element={<Page><RentalReservations /></Page>} />
+            <Route path="/commercial/rental/reservations/:id" element={<Page><RentalReservations /></Page>} />
+            <Route path="/commercial/rental/calendar" element={<Page><RentalCalendar /></Page>} />
+            <Route path="/commercial/hotel" element={<Navigate to="/commercial/hotel/reservations" replace />} />
+            <Route path="/commercial/hotel/reservations" element={<Page><HotelReservations /></Page>} />
+            <Route path="/commercial/hotel/reservations/:id" element={<Page><HotelReservations /></Page>} />
+            <Route path="/commercial/hotel/rooms" element={<Page><HotelRooms /></Page>} />
+            <Route path="/commercial/hotel/calendar" element={<Page><HotelCalendar /></Page>} />
+            <Route path="/reception" element={<Page><Reception /></Page>} />
+            {/* Reports (PRD §26) */}
+            <Route path="/reports" element={<Page><Reports /></Page>} />
+            <Route path="/reports/:name" element={<Page><Reports /></Page>} />
             {/* Housekeeping */}
             <Route path="/housekeeping" element={<Navigate to="/housekeeping/cleaning" replace />} />
             <Route path="/housekeeping/cleaning" element={<Page><WorkItemList objectType="task" fixedType="cleaning" title="Cleaning" /></Page>} />
@@ -85,6 +158,15 @@ export function App() {
             <Route path="/property" element={<Navigate to="/property/properties" replace />} />
             <Route path="/property/:type" element={<Page><PropertyPage /></Page>} />
             <Route path="/property/locations/:id" element={<Page><LocationDetail /></Page>} />
+            {/* Tenant Relation (modul operasional mandatory, PRD v1.3 §3.2) */}
+            <Route path="/tenant-relation" element={<Page><TenantRelationDashboard /></Page>} />
+            <Route path="/tenant-relation/service-requests" element={<Page><ServiceRequestList /></Page>} />
+            <Route path="/tenant-relation/service-requests/:id" element={<Page><ServiceRequestDetail /></Page>} />
+            <Route path="/tenant-relation/tenant-users" element={<Page><TenantUsers /></Page>} />
+            <Route path="/tenant-relation/tenant-users/:id" element={<Page><TenantUsers /></Page>} />
+            <Route path="/tenant-relation/feedback" element={<Page><TenantFeedback /></Page>} />
+            <Route path="/tenant-relation/announcements" element={<Page><Announcements /></Page>} />
+            <Route path="/tenant-relation/announcements/:id" element={<Page><Announcements /></Page>} />
             {/* Tenant */}
             <Route path="/tenant" element={<Navigate to="/tenant/tenants" replace />} />
             <Route path="/tenant/tenants" element={<Page><TenantList /></Page>} />

@@ -6,9 +6,14 @@ import path from "node:path";
 // TAD §9.1 / ADR-008: React SPA (Vite), tanpa SSR; proxy /api ke backend Go saat dev.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  resolve: { alias: { "@": path.resolve(import.meta.dirname, "src") } },
+  resolve: {
+    alias: { "@": path.resolve(import.meta.dirname, "src") },
+    // @buildingvision/ui adalah symlink (file:../packages/ui); paksa satu salinan react/motion dari web/node_modules.
+    dedupe: ["react", "react-dom", "motion"],
+  },
   server: {
     port: 5173,
+    fs: { allow: [path.resolve(import.meta.dirname, ".."), path.resolve(import.meta.dirname)] }, // packages/ui (font, css) di luar root web
     proxy: { "/api": { target: process.env.BV_API_URL || "http://localhost:8080", changeOrigin: true }, "/public": { target: process.env.BV_API_URL || "http://localhost:8080", changeOrigin: true } },
   },
   build: {

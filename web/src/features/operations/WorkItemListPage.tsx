@@ -2,7 +2,7 @@
 // Dipakai ulang untuk Corrective Maintenance, Inspections, Cleaning, dst lewat prop fixedType.
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/primitives";
@@ -61,7 +61,7 @@ export default function WorkItemListPage({ objectType, fixedType, title, houseke
       <PageHeader
         title={title ?? (objectType === "task" ? t("nav.tasks") : t("nav.work_orders"))}
         subtitle={total !== undefined ? t("label.showing", { n: `${rows.length}/${total}` }) : undefined}
-        actions={canCreate && <Button onClick={() => setCreateOpen(true)}><Plus /> {objectType === "task" ? t("action.create_task") : t("action.create_work_order")}</Button>}
+        actions={canCreate && <Button onClick={() => setCreateOpen(true)}><Icon name="add" size={16} /> {objectType === "task" ? t("action.create_task") : t("action.create_work_order")}</Button>}
       >
         <FilterBar
           spec={{
@@ -90,7 +90,7 @@ export default function WorkItemListPage({ objectType, fixedType, title, houseke
         onRowClick={(r) => `/operations/${resource}/${r.id}`}
         loading={list.isLoading}
         isFiltered={f.isFiltered}
-        empty={{ message: objectType === "task" ? t("empty.tasks") : t("empty.work_orders"), cta: canCreate ? <Button onClick={() => setCreateOpen(true)}><Plus /> {objectType === "task" ? t("action.create_task") : t("action.create_work_order")}</Button> : undefined }}
+        empty={{ message: objectType === "task" ? t("empty.tasks") : t("empty.work_orders"), cta: canCreate ? <Button onClick={() => setCreateOpen(true)}><Icon name="add" size={16} /> {objectType === "task" ? t("action.create_task") : t("action.create_work_order")}</Button> : undefined }}
         hasMore={list.hasNextPage}
         onLoadMore={() => list.fetchNextPage()}
         loadingMore={list.isFetchingNextPage}

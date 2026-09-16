@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/buildingvision/api/internal/audit"
+	"github.com/buildingvision/api/internal/iam/catalog"
 	"github.com/buildingvision/api/internal/platform/apperr"
 	"github.com/buildingvision/api/internal/platform/authctx"
 	"github.com/buildingvision/api/internal/platform/httpx"
@@ -36,8 +37,11 @@ func (s *Service) Authenticate(next http.Handler) http.Handler {
 		p.IP = httpx.ClientIP(r)
 		p.UserAgent = r.UserAgent()
 		p.Source = authctx.SourceWeb
-		if claims.Src == "mobile" {
+		switch claims.Src {
+		case "mobile":
 			p.Source = authctx.SourceMobile
+		case authctx.ClientTenantApp:
+			p.Source = authctx.SourceTenantApp
 		}
 		next.ServeHTTP(w, r.WithContext(authctx.With(r.Context(), p)))
 	})
@@ -88,6 +92,29 @@ func (s *Service) RequireAny(perms ...string) func(http.Handler) http.Handler {
 			}
 			s.logDenied(r.Context(), strings.Join(perms, "|"))
 			httpx.WriteError(w, r, apperr.Forbidden(""))
+		})
+	}
+}
+
+// RequireInternalAdmin: hanya role admin_internal pada organization internal BuildingVision (Website PRD §18–§19).
+// Permission saja tidak cukup (organization_admin memiliki "*"), sehingga role + flag organization dicek eksplisit.
+func (s *Service) RequireInternalAdmin(perm string) func(http.Handler) http.Handler {
+	if !s.Catalog.Exists(perm) {
+		panic("iam.RequireInternalAdmin: permission tidak ada di katalog: " + perm)
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p, ok := authctx.From(r.Context())
+			if !ok {
+				httpx.WriteError(w, r, apperr.Unauthorized(""))
+				return
+			}
+			if !p.IsInternalAdmin || !p.Has(perm) {
+				s.logDenied(r.Context(), catalog.RoleAdminInternal+":"+perm)
+				httpx.WriteError(w, r, apperr.Forbidden("Memerlukan role "+catalog.RoleAdminInternal))
+				return
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
 }

@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { QrCode, RefreshCw } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import { QRCodeSVG } from "qrcode.react";
 import { PageHeader } from "@/components/shell/AppShell";
 import { Button, Card, CardContent, CardHeader, CardTitle, ConfirmDialog, Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/primitives";
@@ -108,7 +108,7 @@ export default function AssetDetailPage() {
                   { label: "Catatan", value: a.notes },
                 ]} />
               </CardContent></Card>
-              <Card><CardHeader><CardTitle><QrCode className="mr-1 inline h-4 w-4" />QR Code</CardTitle>{can("engineering.assets.update") && <Button variant="ghost" size="sm" onClick={() => setRotateOpen(true)}><RefreshCw /> Rotate</Button>}</CardHeader><CardContent>
+              <Card><CardHeader><CardTitle><Icon name="qr_code_2" size={16} className="mr-1 inline" />QR Code</CardTitle>{can("engineering.assets.update") && <Button variant="ghost" size="sm" onClick={() => setRotateOpen(true)}><Icon name="refresh" size={16} /> Rotate</Button>}</CardHeader><CardContent>
                 {a.qr_code ? (
                   <div className="space-y-2">
                     <div className="rounded-md bg-muted p-3 text-center font-mono text-xs break-all">{a.qr_code}</div>

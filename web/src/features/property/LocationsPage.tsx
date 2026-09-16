@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight, Plus } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shell/AppShell";
 import { Button, Checkbox, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect, Textarea } from "@/components/ui/primitives";
@@ -41,7 +41,7 @@ export default function LocationsPage() {
   );
   return (
     <div>
-      <PageHeader title={`${t("nav.property")} · ${t(`nav.${type}`)}`} actions={can(lt === "property" ? "property.properties.create" : "property.locations.create") && <Button onClick={() => setEdit("new")}><Plus /> Tambah {typeLabel[lt]}</Button>}>
+      <PageHeader title={`${t("nav.property")} · ${t(`nav.${type}`)}`} actions={can(lt === "property" ? "property.properties.create" : "property.locations.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Tambah {typeLabel[lt]}</Button>}>
         <div className="flex items-center gap-2">
           <Input className="w-72" placeholder={`Cari ${typeLabel[lt].toLowerCase()}…`} value={q} onChange={(e) => setQ(e.target.value)} />
           {parentId && <Button variant="ghost" size="sm" onClick={() => setParentId(null)}>Reset induk</Button>}
@@ -79,7 +79,7 @@ function TreeNodeRow({ node, depth, selected, onSelect, onOpen, allowTypes }: { 
   return (
     <li>
       <div className={cn("flex items-center gap-1 rounded px-1 py-0.5 hover:bg-muted", selected === node.id && "bg-brand-50 text-brand-700")} style={{ paddingLeft: depth * 12 + 4 }}>
-        <button type="button" className="h-4 w-4 shrink-0 text-muted-foreground" onClick={() => setOpen(!open)} aria-label={open ? "Tutup" : "Buka"}>{kids.length > 0 ? open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" /> : null}</button>
+        <button type="button" className="h-4 w-4 shrink-0 text-muted-foreground" onClick={() => setOpen(!open)} aria-label={open ? "Tutup" : "Buka"}>{kids.length > 0 ? open ? <Icon name="expand_more" size={16} /> : <Icon name="chevron_right" size={16} /> : null}</button>
         <button type="button" className={cn("min-w-0 flex-1 truncate text-left", !selectable && "text-muted-foreground")} onClick={() => selectable && onSelect?.(node)} onDoubleClick={() => onOpen?.(node)} title={node.path_text}>
           <span className="mr-1 text-[10px] uppercase text-muted-foreground">{node.location_type.slice(0, 3)}</span>{node.name}
         </button>
@@ -89,8 +89,15 @@ function TreeNodeRow({ node, depth, selected, onSelect, onOpen, allowTypes }: { 
   );
 }
 
+// Onboarding Brief §6: pilih profile saat Create Property (Hotel / Apartment / Office)
+const PROFILE_OPTIONS = [
+  { code: "hotel", label: "Hotel", icon: "hotel", desc: "Hotel, kamar tamu, dan operasi hospitality" },
+  { code: "apartment", label: "Apartment", icon: "apartment", desc: "Gedung hunian dan layanan penghuni" },
+  { code: "office", label: "Office", icon: "business", desc: "Gedung perkantoran dan layanan tenant" },
+] as const;
+
 const DETAIL_FIELDS: Record<string, { key: string; label: string; type?: "number" | "text"; required?: boolean; options?: string[] }[]> = {
-  property: [{ key: "timezone", label: "Timezone (IANA)", required: true }, { key: "property_type", label: "Tipe property", options: ["office", "mall", "apartment", "mixed_use", "hotel", "industrial", "other"] }, { key: "address", label: "Alamat" }, { key: "city", label: "Kota" }],
+  property: [{ key: "timezone", label: "Timezone (IANA)", required: true }, { key: "property_type", label: "Tipe property (deskriptif)", options: ["office", "mall", "apartment", "mixed_use", "hotel", "industrial", "other"] }, { key: "address", label: "Alamat" }, { key: "city", label: "Kota" }],
   building: [{ key: "building_type", label: "Tipe building" }, { key: "total_floors", label: "Jumlah lantai", type: "number" }],
   tower: [{ key: "tower_type", label: "Tipe tower" }],
   floor: [{ key: "floor_number", label: "Nomor lantai", type: "number", required: true }, { key: "floor_label", label: "Label lantai (mis. LG, M)" }],
@@ -114,10 +121,12 @@ export function LocationDialog({ locationType, item, defaultParent, onClose, onS
   const update = useUpdate<{ id: string; version: number } & Record<string, unknown>>("locations");
   const submit = async () => {
     if (!name.trim()) return toast.error(new Error("Nama wajib"));
+    if (locationType === "property" && !item && !details.profile) return toast.error(new Error("Property Profile wajib dipilih (Hotel / Apartment / Office)"));
     if (locationType !== "property" && !parentId) return toast.error(new Error("Induk wajib dipilih"));
     for (const f of fields) if (f.required && !details[f.key]) return toast.error(new Error(`${f.label} wajib`));
     const d: Record<string, unknown> = {};
     for (const f of fields) if (details[f.key] !== undefined && details[f.key] !== "") d[f.key] = f.type === "number" ? Number(details[f.key]) : details[f.key];
+    if (locationType === "property" && !item && details.profile) d.profile = details.profile;
     if (notes) d.notes = notes;
     try {
       if (item) await update.mutateAsync({ id: item.id, version: item.version, name: name.trim(), sort_order: Number(sortOrder), is_active: isActive, details: d });
@@ -134,6 +143,23 @@ export function LocationDialog({ locationType, item, defaultParent, onClose, onS
       <DialogContent side="right" title={item ? `Edit ${typeLabel[locationType]} · ${item.name}` : `Tambah ${typeLabel[locationType]}`}>
         <div className="space-y-4">
           <Field label="Nama" required><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
+          {locationType === "property" && (
+            <Field label="Property Profile" required help={item ? "Perubahan profile hanya lewat Settings → Property Profile (aksi administratif)." : "Menentukan capability, terminologi, dan workflow default. Wajib dipilih sebelum property aktif."}>
+              <div className="grid grid-cols-3 gap-2">
+                {PROFILE_OPTIONS.map((o) => {
+                  const selected = (details.profile ?? "") === o.code;
+                  return (
+                    <button key={o.code} type="button" disabled={!!item} onClick={() => setDetails({ ...details, profile: o.code })}
+                      className={cn("flex flex-col items-start gap-1 rounded-[var(--radius-md)] border p-3 text-left transition-colors disabled:cursor-not-allowed", selected ? "border-primary bg-primary-soft" : "border-border hover:bg-surface-container")}
+                      aria-pressed={selected}>
+                      <span className="inline-flex items-center gap-1.5 text-sm font-semibold"><Icon name={o.icon} size={18} /> {o.label}</span>
+                      <span className="text-xs text-muted-foreground">{o.desc}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+          )}
           {locationType !== "property" && !item && (
             <Field label={`Induk (${parentOf[locationType].map((x) => typeLabel[x]).join(" / ")})`} required>
               {propertyId ? <div className="max-h-56 overflow-y-auto rounded-md border border-border p-1"><TreeView propertyId={propertyId} selected={parentId} onSelect={(n) => setParentId(n.id)} allowTypes={parentOf[locationType]} /></div> : <p className="text-sm text-muted-foreground">Pilih property di header.</p>}

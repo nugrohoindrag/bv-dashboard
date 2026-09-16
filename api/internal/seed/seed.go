@@ -11,6 +11,7 @@ import (
 	"github.com/buildingvision/api/internal/iam"
 	"github.com/buildingvision/api/internal/platform/db"
 	"github.com/buildingvision/api/internal/platform/ids"
+	"github.com/buildingvision/api/internal/profile"
 )
 
 func EnsureOrganization(ctx context.Context, d *db.DB, name, slug string) (uuid.UUID, bool, error) {
@@ -115,7 +116,8 @@ func SeedSRCategories(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) error {
 			return err
 		}
 	}
-	return nil
+	// P1: kategori tenant PRD §11 (profile-aware, dengan ikon) — idempotent
+	return profile.SeedCategoriesTx(ctx, tx, orgID)
 }
 
 // seedNotificationRules: tabel PRD §17.1 (+ sync.conflict OD-004) sebagai rule global.
@@ -154,6 +156,69 @@ func SeedNotificationRules(ctx context.Context, q db.Querier) error {
 		{"maintenance_schedule.due", "property_domain_supervisor:engineering", "maintenance_due", "warning", 720},
 		{"sync.conflict", "assignee_team_supervisor", "sync_conflict", "warning", 0},
 		{"export.ready", "requester", "export_ready", "info", 0},
+		// ---- P1 (PRD v1.3 §20 Notifications & Inbox; §32) ----
+		{"service_request.created", "tenant_user", "ticket_created", "success", 0},
+		{"service_request.created", "property_domain_supervisor:tenant_relation", "service_request_received", "info", 0},
+		{"service_request.acknowledged", "tenant_user", "ticket_status", "info", 0},
+		{"service_request.assigned", "tenant_user", "ticket_status", "info", 0},
+		{"service_request.started", "tenant_user", "ticket_status", "info", 0},
+		{"service_request.waiting_for_tenant", "tenant_user", "ticket_need_response", "warning", 0},
+		{"service_request.resolved", "tenant_user", "ticket_resolved", "success", 0},
+		{"service_request.closed", "tenant_user", "ticket_closed", "success", 0},
+		{"service_request.auto_closed", "tenant_user", "ticket_closed", "info", 0},
+		{"service_request.cancelled", "tenant_user", "ticket_status", "info", 0},
+		{"service_request.reopened", "assignee", "service_request_reopened", "warning", 0},
+		{"service_request.reopened", "property_domain_supervisor:tenant_relation", "service_request_reopened", "warning", 0},
+		{"service_request.message", "tenant_user", "ticket_message", "info", 0},
+		{"service_request.message", "assignee", "service_request_message", "info", 0},
+		{"service_request.message", "property_domain_supervisor:tenant_relation", "service_request_message", "info", 0},
+		{"service_request.feedback", "property_domain_supervisor:tenant_relation", "service_request_feedback", "info", 0},
+		{"tenant_user.registered", "property_domain_supervisor:tenant_relation", "tenant_account_pending", "info", 0},
+		{"tenant_user.approved", "tenant_user", "tenant_account_approved", "success", 0},
+		{"tenant_user.rejected", "tenant_user", "tenant_account_rejected", "warning", 0},
+		{"tenant_user.suspended", "tenant_user", "tenant_account_suspended", "warning", 0},
+		{"announcement.published", "tenant_property_users", "announcement", "info", 0},
+		// Facility Booking (PRD §21) & Visitor (PRD §22)
+		{"booking.created", "property_domain_supervisor:tenant_relation", "booking_received", "info", 0},
+		{"booking.confirmed", "tenant_user", "booking_confirmed", "success", 0},
+		{"booking.rejected", "tenant_user", "booking_rejected", "warning", 0},
+		{"booking.cancelled", "tenant_user", "booking_cancelled", "info", 0},
+		{"booking.cancelled", "property_domain_supervisor:tenant_relation", "booking_cancelled", "info", 0},
+		{"visitor.registered", "property_domain_supervisor:security", "visitor_registered", "info", 0},
+		{"visitor.approved", "tenant_user", "visitor_approved", "success", 0},
+		{"visitor.denied", "tenant_user", "visitor_denied", "warning", 0},
+		{"visitor.checked_in", "tenant_user", "visitor_arrived", "info", 0},
+		{"visitor.checked_out", "tenant_user", "visitor_left", "info", 0},
+		// Billing & Payment (PRD §23)
+		{"invoice.issued", "tenant_user", "invoice_issued", "info", 0},
+		{"invoice.due_soon", "tenant_user", "invoice_due_soon", "warning", 720},
+		{"invoice.overdue", "tenant_user", "invoice_overdue", "critical", 1440},
+		{"invoice.paid", "tenant_user", "invoice_paid", "success", 0},
+		{"payment.paid", "tenant_user", "payment_received", "success", 0},
+		{"payment.paid", "property_domain_supervisor:finance", "payment_received", "success", 0},
+		{"payment.failed", "tenant_user", "payment_failed", "warning", 0},
+		{"payment.initiated", "property_domain_supervisor:finance", "payment_pending", "info", 0},
+		// Vendor & Inventory (PRD §24–§25)
+		{"work_order.vendor_assigned", "assignee_team_supervisor", "work_order_vendor_assigned", "info", 0},
+		{"inventory.low_stock", "property_domain_supervisor:engineering", "inventory_low_stock", "warning", 720},
+		// Hotel Booking (PRD §3.9)
+		{"hotel_reservation.created", "property_domain_supervisor:tenant_relation", "reservation_received", "info", 0},
+		{"hotel_reservation.checked_out", "property_domain_supervisor:housekeeping", "room_turnover", "info", 0},
+		{"hotel_room.status_changed", "property_domain_supervisor", "room_status_changed", "warning", 0}, // domain dari payload (housekeeping: dirty / engineering: out_of_order)
+		// Apartment Unit Sales & Rental (PRD §3.10)
+		{"unit_sales_lead.created", "assignee", "sales_lead_assigned", "info", 0},
+		{"unit_sales_lead.created", "property_domain_supervisor:management", "sales_inquiry_received", "info", 0},
+		{"unit_sale_reservation.created", "property_domain_supervisor:management", "unit_reserved", "info", 0},
+		{"unit_sale_reservation.sold", "property_domain_supervisor:management", "unit_sold", "success", 0},
+		{"unit_sale_reservation.handed_over", "property_domain_supervisor:tenant_relation", "unit_handed_over", "info", 0},
+		{"unit_rental_reservation.created", "property_domain_supervisor:management", "rental_inquiry_received", "info", 0},
+		{"unit_rental_reservation.confirmed", "property_domain_supervisor:management", "rental_reserved", "info", 0},
+		{"unit_rental_reservation.confirmed", "property_domain_supervisor:finance", "rental_reserved", "info", 0},
+		{"unit_rental_reservation.activated", "property_domain_supervisor:tenant_relation", "rental_activated", "info", 0},
+		{"unit_rental_reservation.activated", "tenant_user", "rental_activated", "success", 0},
+		{"unit_rental_reservation.completed", "property_domain_supervisor:housekeeping", "rental_completed", "info", 0},
+		{"unit_rental_reservation.completed", "tenant_user", "rental_completed", "info", 0},
+		{"unit_rental_reservation.cancelled", "property_domain_supervisor:management", "rental_cancelled", "warning", 0},
 	}
 	if _, err := q.Exec(ctx, `DELETE FROM notification_rules WHERE organization_id IS NULL`); err != nil {
 		return err
@@ -192,5 +257,65 @@ func SeedOrganization(ctx context.Context, tx pgx.Tx, iamSvc *iam.Service, orgID
 	if err := SeedSRCategories(ctx, tx, orgID); err != nil {
 		return uuid.Nil, err
 	}
+	if err := SeedPaymentProviders(ctx, tx, orgID); err != nil {
+		return uuid.Nil, err
+	}
 	return CreateUser(ctx, tx, orgID, adminEmail, "Organization Admin", adminPass, "organization_admin", nil)
+}
+
+// SeedPaymentProviders: provider default P1 (TD-P1-007) — manual aktif; mock_gateway nonaktif sampai secret diatur.
+func SeedPaymentProviders(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `INSERT INTO payment_providers (organization_id, code, name, is_active, methods, config) VALUES
+		($1,'manual','Transfer / Tunai (verifikasi staf)',true,'{transfer,cash}','{"instructions":"Transfer ke rekening building management dan konfirmasi ke Tenant Relation."}'),
+		($1,'mock_gateway','Mock Gateway (uji coba)',false,'{va,qris,ewallet}','{}')
+		ON CONFLICT DO NOTHING`, orgID)
+	return err
+}
+
+// SyncExistingOrganizations: upgrade path — role sistem & kategori default untuk organization yang sudah ada
+// (katalog permission bertambah di P1). Idempotent; dipanggil `bvctl seed`.
+func SyncExistingOrganizations(ctx context.Context, d *db.DB, iamSvc *iam.Service) (int, error) {
+	ids, err := d.ListOrganizationIDs(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, orgID := range ids {
+		err := d.WithOrgTx(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
+			if err := iamSvc.SeedSystemRoles(ctx, tx, orgID); err != nil {
+				return err
+			}
+			if err := profile.SeedCategoriesTx(ctx, tx, orgID); err != nil {
+				return err
+			}
+			return SeedPaymentProviders(ctx, tx, orgID)
+		})
+		if err != nil {
+			return 0, fmt.Errorf("sync org %s: %w", orgID, err)
+		}
+	}
+	return len(ids), nil
+}
+
+// SeedInternalOrganization: organization internal BuildingVision (organizations.is_internal = true) dengan satu user
+// admin_internal untuk mengelola App Downloads (Website PRD §16–§19). Idempotent: organization/user yang sudah ada dilewati.
+func SeedInternalOrganization(ctx context.Context, d *db.DB, iamSvc *iam.Service, email, password string) error {
+	orgID, created, err := EnsureOrganization(ctx, d, "BuildingVision Internal", "buildingvision-internal")
+	if err != nil {
+		return err
+	}
+	if _, err := d.Pool.Exec(ctx, `UPDATE organizations SET is_internal = true, signup_source = 'seed' WHERE id = $1`, orgID); err != nil {
+		return err
+	}
+	return d.WithOrgTx(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
+		if err := iamSvc.SeedSystemRoles(ctx, tx, orgID); err != nil { // termasuk admin_internal karena is_internal = true
+			return err
+		}
+		var exists bool
+		_ = tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE organization_id = $1 AND lower(email) = lower($2) AND deleted_at IS NULL)`, orgID, email).Scan(&exists)
+		if exists || (!created && email == "") {
+			return nil
+		}
+		_, err := CreateUser(ctx, tx, orgID, email, "Admin Internal", password, "admin_internal", nil)
+		return err
+	})
 }

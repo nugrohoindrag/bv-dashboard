@@ -106,6 +106,9 @@ type WorkItem struct {
 	ActualCost            *Money     `json:"actual_cost,omitempty"`
 	PartsUsage            *string    `json:"parts_usage,omitempty"`
 	VendorReference       *string    `json:"vendor_reference,omitempty"`
+	VendorID              *uuid.UUID `json:"vendor_id,omitempty"` // P1 Vendor Work Order
+	VendorName            *string    `json:"vendor_name,omitempty"`
+	VendorNotes           *string    `json:"vendor_notes,omitempty"`
 	ReopenCount           *int       `json:"reopen_count,omitempty"`
 	RequesterUserID       *uuid.UUID `json:"requester_user_id,omitempty"`
 	MaintenanceScheduleID *uuid.UUID `json:"maintenance_schedule_id,omitempty"`

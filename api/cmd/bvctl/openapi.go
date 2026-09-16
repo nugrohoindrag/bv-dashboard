@@ -19,6 +19,7 @@ import (
 	"github.com/buildingvision/api/internal/asset"
 	"github.com/buildingvision/api/internal/attachments"
 	"github.com/buildingvision/api/internal/audit"
+	"github.com/buildingvision/api/internal/bvrooms"
 	"github.com/buildingvision/api/internal/engineering"
 	"github.com/buildingvision/api/internal/exports"
 	"github.com/buildingvision/api/internal/housekeeping"
@@ -67,6 +68,15 @@ func runOpenAPI(w io.Writer) error {
 		"SearchResult": search.Result{}, "Export": exports.Export{},
 		"OverviewToday": overview.Today{}, "AttentionItem": overview.AttentionItem{}, "TodaysOperations": overview.TodaysOperations{}, "WorkloadRow": overview.WorkloadRow{}, "BuildingState": overview.BuildingState{}, "TenantRequestsPanel": overview.TenantRequestsPanel{},
 		"SyncBundle": bvsync.Bundle{}, "SyncPushInput": bvsync.PushInput{}, "SyncPushOutput": bvsync.PushOutput{}, "SyncConflict": bvsync.Conflict{},
+		// BVRooms (Requirements v0.2)
+		"BVRoomsAppConfig": bvrooms.AppConfig{}, "BVRoomsOTPRequestInput": bvrooms.OTPRequestInput{}, "BVRoomsOTPRequestResult": bvrooms.OTPRequestResult{}, "BVRoomsOTPVerifyInput": bvrooms.OTPVerifyInput{}, "BVRoomsAuthResult": bvrooms.AuthResult{}, "BVRoomsRegisterInput": bvrooms.RegisterInput{},
+		"BVRoomsCustomer": bvrooms.Customer{}, "BVRoomsUpdateMeInput": bvrooms.UpdateMeInput{}, "BVRoomsPropertyCard": bvrooms.PropertyCard{}, "BVRoomsPropertyDetail": bvrooms.PropertyDetail{}, "BVRoomsPhotoGallery": bvrooms.PhotoGallery{}, "BVRoomsTypeOffer": bvrooms.TypeOffer{}, "BVRoomsCalendarDay": bvrooms.CalendarDay{}, "BVRoomsBanner": bvrooms.Banner{},
+		"BVRoomsCreateBookingInput": bvrooms.CreateBookingInput{}, "BVRoomsBooking": bvrooms.Booking{}, "BVRoomsBookingCard": bvrooms.BookingCard{}, "BVRoomsGuestInput": bvrooms.GuestInput{}, "BVRoomsCancelInput": bvrooms.CancelInput{}, "BVRoomsReviewInput": bvrooms.ReviewInput{}, "BVRoomsReview": bvrooms.Review{},
+		"BVRoomsPaymentOption": bvrooms.PaymentOption{}, "BVRoomsCreatePaymentReq": bvrooms.CreatePaymentReq{}, "BVRoomsPayment": bvrooms.Payment{}, "BVRoomsProofPresignInput": bvrooms.ProofPresignInput{}, "BVRoomsProofPresignResult": bvrooms.ProofPresignResult{},
+		"BVRoomsNotification": bvrooms.Notification{}, "BVRoomsPushSubscriptionInput": bvrooms.PushSubscriptionInput{},
+		"BVRoomsListing": bvrooms.Listing{}, "BVRoomsListingInput": bvrooms.ListingInput{}, "BVRoomsPhotoPresignInput": bvrooms.PhotoPresignInput{}, "BVRoomsAdminPhoto": bvrooms.AdminPhoto{}, "BVRoomsAddon": bvrooms.Addon{}, "BVRoomsAddonInput": bvrooms.AddonInput{},
+		"BVRoomsUnitType": bvrooms.UnitType{}, "BVRoomsUnitTypeInput": bvrooms.UnitTypeInput{}, "BVRoomsUnitRentalInput": bvrooms.UnitRentalInput{}, "BVRoomsPromotion": bvrooms.Promotion{}, "BVRoomsPromotionInput": bvrooms.PromotionInput{}, "BVRoomsAdminBanner": bvrooms.AdminBanner{}, "BVRoomsBannerInput": bvrooms.BannerInput{},
+		"BVRoomsAdminActionInput": bvrooms.AdminActionInput{}, "BVRoomsVerifyInput": bvrooms.VerifyInput{}, "BVRoomsAdminCustomer": bvrooms.AdminCustomer{},
 	}
 	names := make([]string, 0, len(types))
 	for n := range types {

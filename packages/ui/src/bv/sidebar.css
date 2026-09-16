@@ -1,0 +1,84 @@
+/**
+ * BuildingVision, the console sidebar shell.
+ *
+ * A panel in the brand fill, flush left, and the active group cut out of it as
+ * a tab in the page ground, so the open section reads as joined to the
+ * content it opens. The two concave corners that make the tab look cut out
+ * rather than pasted on are ordinary solid fills: a square of page ground at
+ * the panel edge, with a quarter-circle of panel fill laid over it. No
+ * gradient, no translucency, nothing the palette does not already name.
+ *
+ * Colours come from the `--bv-sidebar-*` tokens in `bv/palette.css`. The tab
+ * is `--color-background` on purpose: it must be the exact ground the content
+ * column sits on, or the join shows.
+ *
+ * Import once at the console root, after the palette:
+ * import '@buildingvision/ui/bv/sidebar.css';
+ */
+
+.bv-sidebar {
+  --bv-sidebar-tab-r: var(--radius-md);
+
+  box-sizing: border-box;
+  height: 100vh;
+  /* Flush to the window's left edge; only the edge facing the content is
+     rounded, the way the active tab curves into it. */
+  border-radius: 0 var(--radius-xl) var(--radius-xl) 0;
+  background-color: var(--bv-sidebar-fill);
+  color: var(--bv-sidebar-ink);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 20;
+  transition: width 0.22s cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* The active group, cut out of the panel and joined to the content column.
+   Right edge flush with the panel, left edge a pill. */
+.bv-sidebar__tab {
+  position: relative;
+  background-color: var(--color-background);
+  color: var(--color-primary);
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+}
+
+.bv-sidebar__corner {
+  position: absolute;
+  right: 0;
+  width: var(--bv-sidebar-tab-r);
+  height: var(--bv-sidebar-tab-r);
+  background-color: var(--color-background);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.bv-sidebar__corner::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-color: var(--bv-sidebar-fill);
+}
+
+.bv-sidebar__corner--top {
+  top: calc(-1 * var(--bv-sidebar-tab-r));
+}
+
+.bv-sidebar__corner--top::after {
+  border-bottom-right-radius: 100%;
+}
+
+.bv-sidebar__corner--bottom {
+  bottom: calc(-1 * var(--bv-sidebar-tab-r));
+}
+
+.bv-sidebar__corner--bottom::after {
+  border-top-right-radius: 100%;
+}
+
+/* The nav scrolls on its own; a thin ink-toned bar rather than the UA grey,
+   which would sit as a light stripe on the blue. */
+.bv-sidebar__nav {
+  scrollbar-width: thin;
+  scrollbar-color: var(--bv-sidebar-fill-raised) transparent;
+}

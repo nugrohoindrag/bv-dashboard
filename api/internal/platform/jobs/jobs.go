@@ -106,6 +106,29 @@ type IdempotencyCleanupArgs struct{}
 
 func (IdempotencyCleanupArgs) Kind() string { return "idempotency.cleanup" }
 
+// P1 sweeps: tagihan (overdue/due soon/payment expired), tamu kedaluwarsa, auto-close Service Request resolved.
+type BillingSweepArgs struct{}
+
+func (BillingSweepArgs) Kind() string { return "billing.sweep" }
+
+type VisitorExpireArgs struct{}
+
+func (VisitorExpireArgs) Kind() string { return "visitor.expire" }
+
+type ServiceRequestAutoCloseArgs struct{}
+
+// TrialSweepArgs: siklus hidup trial (Website PRD §31–§32): ending soon, expired, pengingat setup.
+type TrialSweepArgs struct{}
+
+func (TrialSweepArgs) Kind() string { return "trial.sweep" }
+
+func (ServiceRequestAutoCloseArgs) Kind() string { return "service_request.auto_close" }
+
+// BVRoomsSweepArgs: booking BVRooms yang lewat batas bayar → hangus; refresh min_rate_cache & popularity (Requirements v0.2 §4.2).
+type BVRoomsSweepArgs struct{}
+
+func (BVRoomsSweepArgs) Kind() string { return "bvrooms.sweep" }
+
 // ---------- Enqueuer ----------
 
 // Enqueuer dipakai service untuk enqueue dalam transaksi (outbox).
@@ -194,6 +217,11 @@ func PeriodicJobs() []*river.PeriodicJob {
 		mk(6*time.Hour, PatrolTaskGenerateArgs{}),
 		mk(6*time.Hour, CleaningTaskGenerateArgs{}),
 		mk(1*time.Hour, IdempotencyCleanupArgs{}),
+		mk(15*time.Minute, BillingSweepArgs{}),
+		mk(15*time.Minute, VisitorExpireArgs{}),
+		mk(30*time.Minute, ServiceRequestAutoCloseArgs{}),
+		mk(1*time.Hour, TrialSweepArgs{}),
+		mk(1*time.Minute, BVRoomsSweepArgs{}),
 	}
 }
 

@@ -6,8 +6,7 @@
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
+    /* unused-locals ditangani oxlint; mirror design system (packages/ui) tidak boleh diedit dan punya import tak terpakai */
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
     "isolatedModules": true,
@@ -15,7 +14,16 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "types": ["vite/client", "vitest/globals"],
-    "paths": { "@/*": ["./src/*"] }
+    "paths": {
+      "@/*": ["./src/*"],
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
+      "react/jsx-dev-runtime": ["./node_modules/@types/react/jsx-dev-runtime"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react-dom/client": ["./node_modules/@types/react-dom/client"],
+      "motion": ["./node_modules/motion"],
+      "motion/react": ["./node_modules/motion/dist/react"]
+    }
   },
   "include": ["src"]
 }

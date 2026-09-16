@@ -120,3 +120,9 @@ func IsUniqueViolation(err error) bool {
 }
 
 func IsNoRows(err error) bool { return errors.Is(err, pgx.ErrNoRows) }
+
+// IsExclusionViolation: EXCLUDE constraint (mis. anti double-booking) — SQLSTATE 23P01.
+func IsExclusionViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23P01"
+}

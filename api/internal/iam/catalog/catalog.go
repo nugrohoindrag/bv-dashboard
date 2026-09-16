@@ -128,9 +128,27 @@ func domainOf(roleCode string) string {
 		return "security"
 	case strings.HasPrefix(roleCode, "housekeeping"):
 		return "housekeeping"
+	case strings.HasPrefix(roleCode, "tenant_relation"), roleCode == "receptionist":
+		return "tenant_relation"
+	case strings.HasPrefix(roleCode, "finance"):
+		return "finance"
+	case strings.HasPrefix(roleCode, "tenant_"):
+		return "tenant" // akun Mobile Tenant (bukan staf)
 	case roleCode == "organization_admin":
 		return "admin"
+	case roleCode == RoleAdminInternal:
+		return "internal" // staf internal BuildingVision (Website PRD §18) — hanya organization is_internal
 	default:
 		return "management"
 	}
 }
+
+// IsTenantRole: role untuk akun Mobile Tenant (TD-P1-003) — tidak boleh login ke dashboard/staff app.
+func IsTenantRole(roleCode string) bool { return domainOf(roleCode) == "tenant" }
+
+// RoleAdminInternal: role internal BuildingVision (Website PRD §18 "admin-internal"; NC snake_case).
+// Tidak di-seed ke organization pelanggan; hanya ke organization dengan organizations.is_internal = true.
+const RoleAdminInternal = "admin_internal"
+
+// IsInternalRole: role yang hanya boleh ada di organization internal.
+func IsInternalRole(roleCode string) bool { return domainOf(roleCode) == "internal" }

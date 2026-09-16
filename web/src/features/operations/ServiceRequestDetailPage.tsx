@@ -15,6 +15,7 @@ import { fmtDateTime } from "@/lib/format";
 import type { ServiceRequest } from "@/api/types";
 import { AssignDialog, CreateWorkItemDialog, TransitionActions } from "./dialogs";
 import { CommentsPanel, EvidenceSections, RelatedList } from "./WorkItemDetailPage";
+import { TenantMessagesPanel } from "@/features/tenant-relation/TenantMessagesPanel";
 
 export default function ServiceRequestDetailPage() {
   const { id } = useParams();
@@ -52,6 +53,7 @@ export default function ServiceRequestDetailPage() {
                   <TabsTrigger value="evidence">{t("label.evidence")} ({s.attachment_count})</TabsTrigger>
                   <TabsTrigger value="activity">{t("label.activity")}</TabsTrigger>
                   <TabsTrigger value="related">{t("label.related")} ({s.links.length})</TabsTrigger>
+                  {can("tenant_relation.messages.view") && <TabsTrigger value="messages" badge={s.unread_tenant_messages || undefined}>Pesan Tenant{s.message_count ? ` (${s.message_count})` : ""}</TabsTrigger>}
                 </TabsList>
                 <TabsContent value="detail" className="space-y-4 pt-4">
                   <Card><CardContent className="pt-4">
@@ -66,13 +68,17 @@ export default function ServiceRequestDetailPage() {
                 </TabsContent>
                 <TabsContent value="activity" className="pt-4"><AsyncState query={activities}>{(acts) => <ActivityTimeline items={acts} objectLabel="Service Request" attachmentsById={attById} />}</AsyncState></TabsContent>
                 <TabsContent value="related" className="pt-4"><RelatedList links={s.links} /></TabsContent>
+                {can("tenant_relation.messages.view") && <TabsContent value="messages" className="pt-4"><TenantMessagesPanel srId={s.id} terminal={["closed", "cancelled"].includes(s.status)} channel={s.channel} /></TabsContent>}
               </Tabs>
             </div>
             <div className="col-span-4 space-y-4">
               <Card><CardHeader><CardTitle>{t("label.tenant")} / Pemohon</CardTitle></CardHeader><CardContent>
                 <KeyValue items={[
                   { label: t("label.tenant"), value: s.tenant_id ? <Link to={`/tenant/tenants/${s.tenant_id}`} className="text-brand-600 hover:underline">{s.tenant_name}</Link> : "—" },
-                  { label: "Pemohon", value: s.requester_name ?? "—" },
+                  { label: "Pemohon", value: <>{s.requester_name ?? "—"}{s.channel === "tenant_app" && <span className="ml-1 rounded bg-primary-soft px-1.5 text-[10px] font-semibold text-primary">Tenant App</span>}</> },
+                  ...(s.area_scope ? [{ label: "Lingkup", value: s.area_scope === "unit" ? "Unit tenant" : s.area_scope === "common_area" ? "Common area" : "Area lain" }] : []),
+                  ...(s.reopen_count ? [{ label: "Reopen", value: `${s.reopen_count}×` }] : []),
+                  ...(s.feedback ? [{ label: "CSAT", value: `${s.feedback.rating}/5${s.feedback.comment ? ` — ${s.feedback.comment}` : ""}` }] : []),
                   { label: "Telepon", value: s.requester_phone ?? "—" },
                   { label: t("label.location"), value: <LocationPath pathText={s.location.path_text} locationId={s.location.id} linkTo={(lid) => `/property/locations/${lid}`} /> },
                 ]} />

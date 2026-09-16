@@ -1,0 +1,218 @@
+{
+ "hero-towers": {
+  "alt": "Glass office towers seen from street level",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRrQAAABXRUJQVlA4IKgAAACwBACdASoYABAAPu1iqU2ppaOiMAgBMB2JYwCdAywTnAsdeOcvM88wOfisjZAoAPlho85w1pWlZ45yxxnK+ZRAi+JS4gSMUKk6rtx7vJNK38cWCGUEhdNdhchF9VHAfPHiXo1klx//Oy+EGJVAODIJ4kN3T1/iojCesqrjCbdmdGlhzbkdFaFyPf7a8xwAobq2MfcpRbXuuWVALGaqguFqSuVvV7FowAA="
+ },
+ "modern-building": {
+  "alt": "Modern building facade against a bright sky",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRoIAAABXRUJQVlA4IHYAAABQBACdASoYABAAPu1iqU2ppaOiMAgBMB2JZQAAYf/2vcWOdflQ5GYq+OEAAP7ItRX0haTXLske201cJ7oDmcObnWtLj9SO3KzhajqArNpIF5yn2EYF/R9O07KD+kImQBYXVuz1IuDVNaBP+/vGHguuflGVDAAA"
+ },
+ "apartment-exterior": {
+  "alt": "Apartment building exterior at dusk",
+  "width": 1600,
+  "height": 2133,
+  "lqip": "data:image/webp;base64,UklGRuYAAABXRUJQVlA4INoAAABwBgCdASoYACAAPu1kp02ppaMiMBgMATAdiWIAnTLT/9voGsxZdnmT/qoTiuvgSSe4RbNzMI4QvjU7cFAA957BHWnsDqp4CsEsDXEtJi8P1L7jR+l4Qum/Z/HRutJgmJL1tjYDF3iI2/qqez97uhGZV0csSfC2zlkbi9ABRsN3WSc5KzG41bMDY0MmdPbPZw+QjKyfkqe6jCtCORMXtGDW4IAmZv+UwVjGGHMf3VuAN65RMnBkqtegf7UylFgYdPs0GeFGkZQLq1yJbengJ4fjM/Rdolm3nkAAAA=="
+ },
+ "apartment-living": {
+  "alt": "Bright apartment living room with a red chair",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRqgAAABXRUJQVlA4IJwAAADwAwCdASoYABAAPu1kqU2ppaOiMAgBMB2JQBOgBFHuRQ2Yyu2uS12AAPi/1cUBccDMN9iwpEXO8f9+ajqoemneTWYWHzvdCIvcgaloAYHr/CwGRdfC99NdKB4iZAJf2c5vHng+DsCdiwLLTnUODdShUKvEJ23Nrs+SnHHPXtKM8fNgFCPIDn2W0Xc+x8y2r89AxjBekYEyP9Ci4AA="
+ },
+ "apartment-lounge": {
+  "alt": "Apartment lounge with large windows",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRo4AAABXRUJQVlA4IIIAAAAwBACdASoYABAAPu1iqU2ppaOiMAgBMB2JYwC06CPtoohd/ls7chJHsUAA/pDtdVaiqAPsWcSvyH0Rczr4lGxwpGbvtqGUt+3zAVaw14qJvuiUUVGxqC28nkBkH8dJ/0NDlvzGPJnJgH6txnRBBOsEEmQMaxn2YLAlv15Uhqc5igAA"
+ },
+ "apartment-kitchen": {
+  "alt": "Clean apartment kitchen with bar stools",
+  "width": 1600,
+  "height": 2400,
+  "lqip": "data:image/webp;base64,UklGRiABAABXRUJQVlA4IBQBAABQBwCdASoYACQAPu1ysVOppqSipWgBMB2JYwDHFSB4k9/dihxWFcxMB9Mh9EAG4jaZC/19L8TFhjsno6Ft16INbxyAAP72AdKsCKBL6jt/5KIMs5XqC5rX5C4n1bYPnkcAXi7xa9CTpyDq+1b/yos+NgrnjUNDo1UxLuREc+rkUywRtubj2q+i6FKZ2Dfo27OWXm8B0rMdL3d9MKGoB3CZNidZG3IMR+6je4aXyTbUiqwTaK0aru5QzbFN7JYalNiJFC+lYdPoeRw9yFYo0uKizHXdMo3hu2v7XyWt9m79JHFGuUsq5BVs8QFFCwiZBv+Bm1ZL3s5iVTcrWftA///IxfOgGWd2+iNSbgS8ARP8nuCAAAA="
+ },
+ "house-keys": {
+  "alt": "House keys on a wooden table",
+  "width": 1600,
+  "height": 1201,
+  "lqip": "data:image/webp;base64,UklGRqYAAABXRUJQVlA4IJoAAABwBACdASoYABIAPu1oqk8ppiOiMBgIATAdiUAW3SdwHdb8Nk57+qR6Pp0wAAD4WvkMdHIAtbi03B3D9J44nbIABmUteIJmqzd6eqhPVrXWYDd3nddftGXr+HaUnXWlL+sSV1JuRX52AaP+dTUVgZVOCvmJesZvGADCrWtHVANPAwuUznumQHX0Xd1tzfwncV3jzwoZV/3SAAAA"
+ },
+ "hotel-pool": {
+  "alt": "Hotel pool deck with loungers",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRroAAABXRUJQVlA4IK4AAAAQBQCdASoYABAAPu1iqU2ppaOiMAgBMB2JQBOmUAXoJngYDIMI8n8qac/VWsvhq9qAAP7nicRFvffjFm1zqkjPHuNi+1edEn4kIzRVwBNIT1FMslZowkTlFXQCkxuGzdbqBI5KqsOlsq+WEbgzUEVu2L7tI6LNrOdXssREz88qIbXAy77A3aXj+KSARGCqXQN10/1KSSLxXbsIYfwxNjRN8cBjsBhfZYrTjtcAAAA="
+ },
+ "hotel-exterior": {
+  "alt": "Hotel exterior with palm trees at sunset",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRqQAAABXRUJQVlA4IJgAAADwAwCdASoYABAAPu1iqU2ppaOiMAgBMB2JQBdgBHtezqVyD1WBQK3AAN5UPy64k7gXvHVkYyG4imUABZ2Olp7fHDie6pezJTntNzdAdiH55XYwr7OIaGWEG6MkEmoApmCibg0j8akVICBVe25d69RVb+Z+a1Xh8Zq75F3ppa/iIbeUrDKg4yi7wLSn3n0gqpDIbsuywDAAAA=="
+ },
+ "hotel-room": {
+  "alt": "Hotel bedroom with white linen",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRqYAAABXRUJQVlA4IJoAAABQBACdASoYABAAPu1kqU2ppaOiMAgBMB2JQBOiP/wGzI0RKItf2LaSoxQAAP6xjarclRv85eeG/1oNgJrENna/+aVEcrnXEKMPaKhVUsKOUMPkKUAfDq60c5WM4Rwds6k/sjeBtwQ8wVXagJu+AMOKc+iqaY0yOY0HEeDouGoMVl/CC23h24+chc7x73dbvER0NJZKMDZISBAA"
+ },
+ "hotel-suite": {
+  "alt": "Hotel suite with a view",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRpwAAABXRUJQVlA4IJAAAAAQBACdASoYABAAPu1iqU2ppaQiMAgBMB2JQBdgBBmnPocAcGfpNrlOUAD9m1jj8QSYqdYVdMwfKQlLGYDZU1Do7+tU8h1V93sXiHJtzo3mKJZw8kNz400VtOAOJir0G+YpURDFbvp/XV4fmKl/YH+bkXfwKAzZQidXcCD3zghiqxMrQ6Bd3HYflRo44NdwQAA="
+ },
+ "banquet-hall": {
+  "alt": "Hotel banquet hall set for an event",
+  "width": 1600,
+  "height": 1034,
+  "lqip": "data:image/webp;base64,UklGRrQAAABXRUJQVlA4IKgAAAAwBACdASoYAA8APu1iqU2ppaOiMAgBMB2JaACdMoMYA0l4+izphmpjOZAA/njp9OGqgFetb6giZ2JCvpzW0us8JudsEevDQon6k3LGJphRvJ34Ol1NinCxpPHJtTYMkbAlpC+fYZf52mi8zjgxkCMGWImHWesbHosuUcFVwyromqmoQQERTSUwwPvDI7LbHSuA6Qccecr4S+uwDG9E1Q9goarKiIfRUAA="
+ },
+ "office-window": {
+  "alt": "Office workspace by a large window",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRp4AAABXRUJQVlA4IJIAAAAwBACdASoYABAAPu1iqU2ppaOiMAgBMB2JZwAAXGlxZsG6Ao4cRQEIyQgA+UilyFVYrg+i6dAuMdthH7hX4+StdsNZK5KA69rl+tGOgtWV8y4fcc/M/59A2zmgtUUysUnqWFvPFyvYylc0+8WVd9v6iPOJdo+3CTJ319913YkvzkWYHey41xC/PrzykV+HEAg4AA=="
+ },
+ "open-office": {
+  "alt": "Open plan office floor",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRrQAAABXRUJQVlA4IKgAAADQBACdASoYABAAPu1iqU2ppaOiMAgBMB2JZQDE6f/jeBcKjVK/1esOEe2qe5ongAD+vnufnzcIxGKYqou6rUfakKIRo2CKZEV/K/feMSri0QJ3vGwJYE4FziEc7p/7Dm5tDy72oX8WQad+97e4dDYhbBJsMGkpVEcAEAI2hI8QlZOGOIBiXhfdjRs3Vn/yv2jkj10zBs0X1LtVCJg2ID2k3TwY/0pAAAA="
+ },
+ "office-interior": {
+  "alt": "Office interior with a kitchen area",
+  "width": 1600,
+  "height": 1068,
+  "lqip": "data:image/webp;base64,UklGRoYAAABXRUJQVlA4IHoAAAAwBACdASoYABAAPu1iqU2ppaOiMAgBMB2JZQCzgCGZskuThRu+LB8f1wAA8qIUlk39ltnZV0iZZCOz4q5LN6ST658epjPHCSaavjnIZwJRXdQDcsA8L9GTlNQo8DNiR2SLQx7Bm/f5IxUzAqrvmjAQNHKmTE0oHoAAAA=="
+ },
+ "meeting-room": {
+  "alt": "Meeting room with leather chairs",
+  "width": 1600,
+  "height": 1065,
+  "lqip": "data:image/webp;base64,UklGRrYAAABXRUJQVlA4IKoAAACwBACdASoYABAAPu1iqU2ppaOiMAgBMB2JZACdAYxs0AwyndSo6m5XIwlz14yAAPzjHqrHu/gi4iyeDDnyte1y2dzWmXx3zjd6dCMhqOIGoSCbsTXDHN0PM9RdPZ5cH0sglA8vmWCuhmHLBJuKtIYDG+KMOBbSNDIUUVmvDN1p+PX/c6LF2Jny2tOcc2LM9a/3pIOAwiWLds9iXBpuYgBOA8smbtFQ3DwAAA=="
+ },
+ "office-team": {
+  "alt": "Team working together in an office",
+  "width": 1600,
+  "height": 1200,
+  "lqip": "data:image/webp;base64,UklGRuAAAABXRUJQVlA4INQAAAAwBQCdASoYABIAPu1srFEppaQiqAqpMB2JQBahG1fADymBWoML3a7Q7/or8qgKOZHu0AD811rzjUvRkxQbLnOfSsC2RoJJ7XHfl6yfhMfPGtxpkJiFsncfID808FCq8Mp5HOS149P9vbI3KGh9PD2a5Z0JLtbhEI145PMMoHn4ov5Mwv125sWixBt0+FW+8pR7pctHSHDC8grSSY7hs+W02iwiMPeSGEUamklOwQj/sBInsmo/lH2UTUBV4/liKSCpVB7V+zUfj4WSVUfsZLEe5AAAAA=="
+ },
+ "cleaning-window": {
+  "alt": "Housekeeper cleaning a window",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRnwAAABXRUJQVlA4IHAAAADwAwCdASoYABAAPu1iqU2ppaOiMAgBMB2JZQDKABeX4hgF1+UD+TgQAOD9PT74S1kek9mzn7tqARgTVXKpkwqE2B1wL/oOHsXkca4rTuPQlHDCyuaC3K9Z9cEkS/JOKxuRJ7VdMu5CKiXFPgG8XAAA"
+ },
+ "vacuum": {
+  "alt": "Vacuum cleaner on a carpet",
+  "width": 1600,
+  "height": 1200,
+  "lqip": "data:image/webp;base64,UklGRuQAAABXRUJQVlA4INgAAACwBQCdASoYABIAPu1ur1IppiQiqAgBMB2JZQC/8AgOXIMuKbl+hEkZHIO4i2TGiaWKEiMQgwAA9okoNqPtcHA0vD03GjsFKvLnLSGk3U24B71NKsW8xYt18S1BV6eIt1/J76UZeDTcvbsXrxT2a2qVOoc+Cpza9G/i94q+3yZxSnOVIRjwHbezbiC+aAw4Bi3szJN4Qs4cNZsmih/Mij2rYbN1g/jRhxhYOAjGvpBa0hWfvSKpALkFArDKgXhhZHy67dikLB/6CSJx0UMORX+C94Wv+DOkAAA="
+ },
+ "clean-bathroom": {
+  "alt": "Spotless bathroom",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRrQAAABXRUJQVlA4IKgAAABwBACdASoYABAAPu1iqU2ppaOiMAgBMB2JYwDCgYv+yZe4+mv4RgeuvgRyQAD+1FITnXQVqHDqOnE3ftVBvLbC3XYVBrhbZf16BpNEzs+PXC9Pp4P3veNOiTXVAujGLfPzI06my/d7zDS4svQTEY6OkMkgL9derJJ5YRPXYb2d3Rvtbn31lokjxmMTpzLO1fZDhayh5xAdr/7J4bndA1LcJopnO1bswAA="
+ },
+ "electrician": {
+  "alt": "Electrician in a hard hat working on a panel",
+  "width": 1600,
+  "height": 1068,
+  "lqip": "data:image/webp;base64,UklGRpIAAABXRUJQVlA4IIYAAAAQBACdASoYABAAPu1iqU2ppaOiMAgBMB2JZACsEf/gJy/8qKLOcEXkUAD+TPGdtKa/Wk9v4AIkajDWJqSCFRa8OlmNTmqVwvja983mY0zty+cnbvBUSEf6qEj3JaFzORVzkNz5nZCct/YA6twOFK+S6o7Eu8E90s+ejHdyUNAHizRzy704AA=="
+ },
+ "technician": {
+  "alt": "Technician inspecting equipment with a headlamp",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRr4AAABXRUJQVlA4ILIAAABwBACdASoYABAAPu1iqU2ppaOiMAgBMB2JQBb3MYdUuVN/f8K7zXgVJyaAAAD+6HvwtKdHCOJpfoGPtYx8O8NFgHSToDmhKEyuPWs7P9zEedhlgKmpZrhYiffTMpPjNcS0o/+x4MmXikujqVTEzAbmzG+/9wPsjvrMV7i0vodlAbPhG/8csz7RfV9ys23E1PmzNINxH3aRvWzNBV4xFZYXI0p82sNdQEg/QY6HKUImWAAA"
+ },
+ "engineer-plans": {
+  "alt": "Engineer reviewing technical drawings",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRqwAAABXRUJQVlA4IKAAAAAwBACdASoYABAAPu1iqU2ppaOiMAgBMB2JaAAD5RGLUzbpYFIzo9Gy7AAA/cEVzN/c6Mwn4Rl/kMsYU1ZbHR0sw9IGKPPBtaWS8/lbuCq+zyqRsWNzoIJ1Qcz3q+E1z/Eaqd7gvEAMCkTm8qFO3/9BIp5C5fatmMeGOjxVsyD06/BX3thTGJFyXYc64eyfX1qsCSvpcEIfy4iQmb7UAAAA"
+ },
+ "server-room": {
+  "alt": "Technician in a server room",
+  "width": 1600,
+  "height": 1068,
+  "lqip": "data:image/webp;base64,UklGRpwAAABXRUJQVlA4IJAAAADQAwCdASoYABAAPu1iqU2ppaOiMAgBMB2JZACsAB2S1+DnY1oWWrgA/ujyl/vzxOd3Na/VjddFcpvkxioMrOV4M2OKnH66o4kbIuLH2JzIlHc/N+eepTp3truM1E77OSR3YEOjxNpMOSCLUdxaI+LGHWxouCXLciS3lrAovcy+FVk8hbsaNqSb4rabYkYAAAA="
+ },
+ "cctv": {
+  "alt": "Wall of security cameras",
+  "width": 1600,
+  "height": 1076,
+  "lqip": "data:image/webp;base64,UklGRogAAABXRUJQVlA4IHwAAADwAwCdASoYABAAPu1iqU2ppaOiMAgBMB2JaQAASosovFrv3aykX638AP0qFrPI+ScBKUNlDShwjxiX1QxHrPT1JuxOdCy5s0jLj73ra8Y2U5vWzziA1tq/tFk4PzIK7w3FUMbBkHZxk0uHU1wLlpurHV96rtYrf+5e6f4A"
+ },
+ "property-manager": {
+  "alt": "Property manager standing in an office",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRrQAAABXRUJQVlA4IKgAAAAQBACdASoYABAAPu1iqU2ppaQiMAgBMB2JZgCw/f/gL66v+vFvqUTAAAD+o1iwDcqPsYh7bOmWg7PPOOJeWaqlAuFeN0SIbKTwnAga1m2e7bDjQs+z2lZy6VfeHKMz7dTJGOQVNR7JKypfnqHcvHfw5ITNrCr7w046SXBGCzRx1BEFvv8lUfY0B0bsuOkVE5Qhr62tunW49tHTN/JuMEXB+X37lfYAAAA="
+ },
+ "two-people-laptop": {
+  "alt": "Two people discussing work at a laptop",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRqoAAABXRUJQVlA4IJ4AAACwAwCdASoYABAAPu1iqU2ppaOiMAgBMB2JYgDE2YyAsJvZe8FjMAD+7yj64qKP6t83o4go4BgvnygpbvtBNlP1sW5GNTvfRGkrAdMlZS4WOKBOSMD16b7JlV8NvcVzAdvu5RH2TH3cjgPNr+aeAZhFRRDhsLxRw+OikiVgO9vrUMjTXdyVnGPnEbyOqs0XX7Bs46g6/HvqcpTFd1miAA=="
+ },
+ "team-meeting": {
+  "alt": "Team meeting at a long table",
+  "width": 1600,
+  "height": 1050,
+  "lqip": "data:image/webp;base64,UklGRsQAAABXRUJQVlA4ILgAAACwBACdASoYABAAPu1iqU2ppaOiMAgBMB2JQBWA05m1CW48dEmwCQGlX1YCAVQAAP6B669V1IfAhjyzDefOoSCwNVBO00r2koUIjV/nFqiWXX4QMG3Y5m1pZFQyzKMHK8Yvle9xHyDi0SJ/vkhcuwIxX4Fsh3nGsEpL43MLZb80/XW74Cn586jxAkSreQdV3H3yyG5MuL6ePdpXYgdTMJeDWiABb93vzrNHmGrUcUxEKlZxfz43oAAA"
+ },
+ "boardroom": {
+  "alt": "Presentation in a boardroom",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRtYAAABXRUJQVlA4IMoAAACQBACdASoYABAAPu1iqU2ppaOiMAgBMB2JZgCdAYt8uhVMWP+KVo+wLjl+zmAA/uYDYjscMS5sZ+40BxaLftngQy97wcDVS40C2cDym/Js28g8d4LT1deG+CB8kvrnTTAdNnn07fS8mBQAlz2+0ZVg+CllRX9gTJqgIQ+BYAwW78rhTvZhe0yYt480ViwgB2YEaJJQCsoLTdFkrt9DU6bd7J3el0/5P+LcBgHCKQHaTOiLVxpcyE5gtjcCTQtYdjIzhwG5umqFLaAA"
+ },
+ "checking-plans": {
+  "alt": "Supervisor reviewing a work log",
+  "width": 1600,
+  "height": 900,
+  "lqip": "data:image/webp;base64,UklGRrAAAABXRUJQVlA4IKQAAAAQBACdASoYAA0APu1iqk2ppaQiMAgBMB2JQBdgMZPP0SxBusBJFRXNQAD+7MO2qXOeajAdc6MsUXf/xH0oYwjHc1neRH+QzArP0UGOGT6Z+NCarMpLn3F/CR68dX48so0zmzDrphPSLdGY+pOwP0bELb5xK801mD99F79unXZdBsvlarn2neLJepQlESTZDh3rtAeDXu5PH0QlFar6+bbX9doUAA=="
+ },
+ "site-workers": {
+  "alt": "Workers in safety vests on site",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRpoAAABXRUJQVlA4II4AAABwBACdASoYABAAPu1iqU2ppaOiMAgBMB2JZwDCgYxstrqwvuZHnJ8t/4eeAAD+v7oIAPeGhsvsucsjewMW+JSI3wSgP1YwASIJN6QTmja0se71ZKdHMKktxUTmODyQvqy2g2jo/99IHHmSo+DJvlVAtI94uhYIkqdhXfQmntFbiDzkeE3h4pE0fA8GAAAA"
+ },
+ "devices-table": {
+  "alt": "Phones and laptops on a shared table",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRtAAAABXRUJQVlA4IMQAAADQBACdASoYABAAPu1iqU2ppaOiMAgBMB2JZACxAQAFPgL2Kqge/qSpFH53tYDQAAD8tBLfPkH73URIFIsslSGJg9BJfsGPFekG8JBV9hXht9MGoVRvdRr/leSqf13H8eJZnSGOD297WSBZtz9WPH7iMaLcrfMRX438cN+og5wHLtcRniD/mmiBlF0LkpLJ69PFZ1aA6+Ht9J0qO1O9fA/AfOo/7Q3py0EyBNYt0TVE7izdkVGzR5pZZhR1XlY4K8GQgAAA"
+ },
+ "laptop-dashboard": {
+  "alt": "Laptop showing an analytics dashboard",
+  "width": 1600,
+  "height": 1140,
+  "lqip": "data:image/webp;base64,UklGRrQAAABXRUJQVlA4IKgAAABQBQCdASoYABEAPu1srFEppaQiqAqpMB2JYwDG9A94Y2LO1o9oKsxWkSyB7OgD+KD7PQAA+kKBJXWrFHrDLqgnFKXUbYYMuxmmsq71dTKojBdeOMZ6GK6TfM3+2SO7Hc7ws68WGkrzBUcJlF6LU0vs8ws/H4STfitBRuCmJfZYyPdyZ+cVsD/R8d9j+RzsIgP14LCrih/HK7qQLkGTQaRN3gpFGgKUAAA="
+ },
+ "planning-board": {
+  "alt": "Team planning with sticky notes",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRsQAAABXRUJQVlA4ILgAAADwAwCdASoYABAAPu1iqk2ppaQiMAgBMB2JYwAD5mHURFB7JfrQG5jgAP7tZqQMZEBz25xFWsw4qf56neTJzSs+w9+Rf22qdvy69AdoSVV4zScA2d0fPkLKAs4/1HidP37rg3cXTp1sp0CSwUezyALDTWIAYbneb8kl4IRZL69fj2+6YhO11Rmvj8keWrq50xOZ3O7VwwQkkrztzY87ZU81ea5MAhtnr/8wTfGWyMHnQdDNrS5JFwAA"
+ },
+ "office-workers": {
+  "alt": "People working in a busy office",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRp4AAABXRUJQVlA4IJIAAABQBACdASoYABAAPu1iqU2ppaOiMAgBMB2JZwDKACIjfdn4lDL6yjW5bgAAAP7u55IhukGO1JwT7Vpm77uhKu4lCpWrfvcUW+wFDc3nEhbfB3Uo/+dZ8h15KGiYzl0H3y1CIh1E1JxIp0bCotUnSzcBaS7mHi71k0Umkbb7/Ds/282ZTWDluuZyHg38ql8gbwAAAA=="
+ },
+ "phone-laptop": {
+  "alt": "Person using a laptop and phone",
+  "width": 1600,
+  "height": 1067,
+  "lqip": "data:image/webp;base64,UklGRtQAAABXRUJQVlA4IMgAAAAwBACdASoYABAAPu1iqU2ppaOiMAgBMB2JaACsAB9O+bsGzhaxq/l1NAAA/uq7Pz2TSmhnQx5LUCRDo/lWcXiYEyXRrqbOXr752a+8FXEPGkWSLPbfc3Mxu+aydD7IraNlBklWAlqNMW0mHt3BmERLMqV+/7kQ0B7jJVoX94DCxkVt+r7tzHKlJFm99VfNvM+G6LXrnQhJV4K5M+rn0f8K/uBhEKv7O9xa5pGVv0MAmlQB50Ia/cp031VOH+Gz0+mI/tgYJIAAAA=="
+ }
+}

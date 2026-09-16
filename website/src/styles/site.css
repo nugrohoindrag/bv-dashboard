@@ -1,0 +1,110 @@
+/*
+ * Website BuildingVision: Tailwind v4 di atas token design system (packages/ui tokens.css + bv/palette.css).
+ * Sama seperti dashboard, setiap nama warna Tailwind adalah alias ke token `--md-sys-color-*` (tidak ada warna literal),
+ * sehingga website, dashboard, Staff App, dan Tenant PWA berbagi satu identitas teal. Website hanya memakai tema terang.
+ * Urutan impor (entry): bv/fonts.css → tokens.css → bv/palette.css → site.css.
+ */
+@import "tailwindcss";
+
+@theme {
+  --color-primary: var(--md-sys-color-primary);
+  --color-primary-strong: var(--md-sys-color-primary-strong);
+  --color-on-primary: var(--md-sys-color-on-primary);
+  --color-primary-container: var(--md-sys-color-primary-container);
+  --color-on-primary-container: var(--md-sys-color-on-primary-container);
+  --color-primary-soft: var(--md-sys-color-primary-soft);
+  --color-secondary: var(--md-sys-color-secondary);
+  --color-on-secondary: var(--md-sys-color-on-secondary);
+  --color-secondary-container: var(--md-sys-color-secondary-container);
+  --color-on-secondary-container: var(--md-sys-color-on-secondary-container);
+  --color-tertiary: var(--md-sys-color-tertiary);
+  --color-on-tertiary: var(--md-sys-color-on-tertiary);
+  --color-tertiary-container: var(--md-sys-color-tertiary-container);
+  --color-on-tertiary-container: var(--md-sys-color-on-tertiary-container);
+
+  --color-background: var(--md-sys-color-background);
+  --color-on-background: var(--md-sys-color-on-background);
+  --color-surface: var(--md-sys-color-surface);
+  --color-on-surface: var(--md-sys-color-on-surface);
+  --color-on-surface-variant: var(--md-sys-color-on-surface-variant);
+  --color-surface-variant: var(--md-sys-color-surface-variant);
+  --color-surface-container-lowest: var(--md-sys-color-surface-container-lowest);
+  --color-surface-container-low: var(--md-sys-color-surface-container-low);
+  --color-surface-container: var(--md-sys-color-surface-container);
+  --color-surface-container-high: var(--md-sys-color-surface-container-high);
+  --color-surface-container-highest: var(--md-sys-color-surface-container-highest);
+  --color-outline: var(--md-sys-color-outline);
+  --color-outline-variant: var(--md-sys-color-outline-variant);
+  --color-border: var(--md-sys-color-border);
+  --color-inverse-surface: var(--md-sys-color-inverse-surface);
+  --color-inverse-on-surface: var(--md-sys-color-inverse-on-surface);
+
+  --color-success: var(--md-sys-color-success);
+  --color-on-success: var(--md-sys-color-on-success);
+  --color-success-container: var(--md-sys-color-success-container);
+  --color-on-success-container: var(--md-sys-color-on-success-container);
+  --color-warning: var(--md-sys-color-warning);
+  --color-on-warning: var(--md-sys-color-on-warning);
+  --color-warning-container: var(--md-sys-color-warning-container);
+  --color-on-warning-container: var(--md-sys-color-on-warning-container);
+  --color-error: var(--md-sys-color-error);
+  --color-on-error: var(--md-sys-color-on-error);
+  --color-error-container: var(--md-sys-color-error-container);
+  --color-on-error-container: var(--md-sys-color-on-error-container);
+  --color-info: var(--md-sys-color-info);
+  --color-on-info: var(--md-sys-color-on-info);
+  --color-info-container: var(--md-sys-color-info-container);
+  --color-on-info-container: var(--md-sys-color-on-info-container);
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Roboto Flex", "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+    scroll-behavior: smooth;
+  }
+  html, body {
+    overflow-x: hidden;
+  }
+  body {
+    background: var(--md-sys-color-background);
+    color: var(--md-sys-color-on-surface);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+  :focus-visible {
+    outline: 2px solid var(--md-sys-color-primary);
+    outline-offset: 2px;
+  }
+}
+
+/* Latar hero: gradien lembut dari primary-soft ke background (tanpa warna literal) */
+.bv-hero-bg {
+  background: radial-gradient(60% 80% at 80% 0%, var(--md-sys-color-primary-container) 0%, transparent 60%), linear-gradient(180deg, var(--md-sys-color-primary-soft) 0%, var(--md-sys-color-background) 100%);
+}
+.bv-band {
+  background: linear-gradient(135deg, var(--md-sys-color-primary) 0%, var(--md-sys-color-primary-strong) 100%);
+  color: var(--md-sys-color-on-primary);
+}
+/* Mockup layar produk: frame ringan */
+.bv-frame {
+  box-shadow: 0 24px 60px -24px color-mix(in srgb, var(--md-sys-color-on-surface) 35%, transparent);
+}
+.icon {
+  font-family: "Material Symbols Rounded";
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  display: inline-block;
+  vertical-align: middle;
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings: "FILL" 0, "wght" 500, "GRAD" 0, "opsz" 24;
+}
+.icon-fill { font-variation-settings: "FILL" 1, "wght" 500, "GRAD" 0, "opsz" 24; }

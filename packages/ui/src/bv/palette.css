@@ -1,0 +1,256 @@
+/**
+ * BuildingVision, Product Palette
+ *
+ * THE single palette for every BuildingVision dashboard surface. It replaces the
+ * Morphic lime/green reference palette (`tokens/colors.css`) and supersedes the
+ * accent presets in `tokens/themes.css`: BuildingVision ships one identity.
+ *
+ * Why this file and not an edit to colors.css: `packages/ui/src/tokens` is a
+ * byte-for-byte mirror of `D:\Design System` and may not be modified. This file
+ * lives in the BuildingVision layer, loads *after* the mirror, and re-points the
+ * same `--md-sys-color-*` tokens, so every `--color-*` contract alias resolves
+ * onto these values for free.
+ *
+ * Import ONCE at the app root, immediately after the token layer:
+ *   import '@buildingvision/ui/tokens.css';
+ *   import '@buildingvision/ui/bv/palette.css';
+ *
+ * ---------------------------------------------------------------------------
+ * THE BRAND, from design-tokens/tokens.json (the same source the Staff App
+ * and the Tenant PWA draw from), so all three products share one teal:
+ *
+ *   #E6F6F5 brand-50   #C2EAE7 brand-100   #14A69E brand-500
+ *   #0E9187 brand-600  #0B776F brand-700   #064540 brand-900
+ *
+ * TEAL IS AN ACCENT, NOT THE PAGE. `background` and every `surface-container-*`
+ * step are the neutral greys of the token file (#F5F7FA page, white cards);
+ * the teal lives only in primary / secondary / tertiary / chart / hero / sidebar.
+ *
+ * TWO BRAND STEPS CANNOT CARRY SMALL TEXT, and the palette respects that:
+ *   - brand-600 #0E9187 reads 3.88:1 under white and brand-500 #14A69E 3.01:1,
+ *     both under the 4.5:1 body-text needs. `primary` is therefore brand-700
+ *     #0B776F (5.41:1 under white, 5.04:1 on the page), which works as a fill
+ *     with white text and as a text colour on the page. brand-500/600 are kept
+ *     for chart marks and the sidebar's raised band, where they carry no text.
+ *   - On the dark side the ratio inverts: the lifted teal #5FD3C6 (10.6:1 on
+ *     the near-black page) is the accent and carries brand-900 as foreground.
+ *
+ * SEMANTIC STATES ARE NOT BRAND (PRD §25.1 brand ≠ status). success / warning /
+ * critical / info keep the token file's own hues; the 600 step is darkened where
+ * it failed AA as text (success-600 3.30:1 → #15803D 5.02:1; warning-600 3.19:1
+ * → #B45309 5.02:1). `critical` in the token file is `error` here.
+ *
+ * Selector specificity is deliberate: the dark block is `:root[data-theme=…]`
+ * (0,2,0) so it outranks the unused `[data-theme][data-accent]` presets.
+ */
+
+/* ========================================================================= */
+/* LIGHT */
+/* ========================================================================= */
+:root {
+  color-scheme: light;
+
+  /* Primary, brand-700. 5.41:1 under white as a fill, 5.04:1 as text on the page. */
+  --md-sys-color-primary: #0B776F;
+  --md-sys-color-primary-strong: #0B776F;
+  --md-sys-color-on-primary: #FFFFFF;
+  --md-sys-color-primary-container: #C2EAE7; /* brand-100 */
+  --md-sys-color-on-primary-container: #064540; /* brand-900, 8.39:1 */
+  --md-sys-color-primary-soft: #E6F6F5; /* brand-50 */
+
+  /* Secondary, the teal pulled toward slate for supporting emphasis */
+  --md-sys-color-secondary: #3F6663; /* derived, 6.4:1 under white */
+  --md-sys-color-on-secondary: #FFFFFF;
+  --md-sys-color-secondary-container: #DCE8E7; /* derived */
+  --md-sys-color-on-secondary-container: #14302E; /* derived */
+
+  /* Tertiary rides info blue (token info-600), the product's second accent */
+  --md-sys-color-tertiary: #2563EB;
+  --md-sys-color-on-tertiary: #FFFFFF;
+  --md-sys-color-tertiary-container: #DBEAFE;
+  --md-sys-color-on-tertiary-container: #1E40AF;
+
+  /* Semantic data states, meaning not brand */
+  --md-sys-color-success: #15803D; /* derived from success-600, 5.02:1 */
+  --md-sys-color-on-success: #FFFFFF;
+  --md-sys-color-success-container: #DCFCE7; /* success-100 */
+  --md-sys-color-on-success-container: #14532D; /* derived, 8.6:1 */
+  --md-sys-color-warning: #B45309; /* derived from warning-600, 5.02:1 */
+  --md-sys-color-on-warning: #FFFFFF;
+  --md-sys-color-warning-container: #FEF3C7; /* warning-100 */
+  --md-sys-color-on-warning-container: #92400E; /* warning-700, 6.37:1 */
+  --md-sys-color-error: #DC2626; /* critical-600, 4.83:1 */
+  --md-sys-color-on-error: #FFFFFF;
+  --md-sys-color-error-container: #FEE2E2; /* critical-100 */
+  --md-sys-color-on-error-container: #991B1B; /* critical-700, 6.80:1 */
+  --md-sys-color-info: #2563EB; /* info-600, 5.17:1 */
+  --md-sys-color-on-info: #FFFFFF;
+  --md-sys-color-info-container: #DBEAFE; /* info-100 */
+  --md-sys-color-on-info-container: #1E40AF; /* info-700, 7.15:1 */
+
+  /* Surfaces, the token file's neutral ladder: #F5F7FA page, white cards */
+  --md-sys-color-background: #F5F7FA; /* surface.background */
+  --md-sys-color-on-background: #111827; /* surface.foreground */
+  --md-sys-color-surface: #FFFFFF; /* surface.card */
+  --md-sys-color-on-surface: #111827; /* neutral-900, 17.7:1 */
+  --md-sys-color-on-surface-variant: #4B5563; /* neutral-600, 7.56:1 */
+  --md-sys-color-surface-variant: #F3F4F6; /* neutral-100 */
+  /* TEXT CONTRACT: on-surface / on-surface-variant are AA through -high;
+     -highest is a non-text surface (tracks, skeletons, state layers). */
+  --md-sys-color-surface-container-lowest: #FFFFFF;
+  --md-sys-color-surface-container-low: #F9FAFB; /* neutral-50 */
+  --md-sys-color-surface-container: #F5F7FA;
+  --md-sys-color-surface-container-high: #EEF1F4; /* derived */
+  --md-sys-color-surface-container-highest: #E5E7EB; /* neutral-200 */
+
+  /* Outline: neutral-500 is the control boundary (4.83:1); neutral-400 tones
+     icons and tertiary text; border is the only hairline weight. */
+  --md-sys-color-outline: #6B7280; /* neutral-500 */
+  --md-sys-color-outline-variant: #9CA3AF; /* neutral-400 */
+  --md-sys-color-border: #E5E7EB; /* neutral-200 */
+
+  /* Data visualisation, the one place the brand reads as colour, not a dot */
+  --md-sys-color-chart-primary: #0E9187; /* brand-600 */
+  --md-sys-color-chart-secondary: #2563EB; /* info-600 */
+  --md-sys-color-chart-tertiary: #5FD3C6; /* derived */
+  --md-sys-color-chart-quaternary: #3F6663; /* derived */
+  --md-sys-color-chart-neutral: #9CA3AF; /* neutral-400 */
+  --md-sys-color-chart-grid: rgba(17, 24, 39, 0.08);
+  --md-sys-color-chart-axis: #6B7280;
+  --md-sys-color-chart-area-from: rgba(14, 145, 135, 0.22);
+  --md-sys-color-chart-area-to: rgba(14, 145, 135, 0);
+
+  /* Hero card (mirror HeroCard). bv/BuildingHero bypasses the gradient for a
+     solid primary fill; these keep the mirror's own HeroCard on-brand. */
+  --hero-banner-bg: linear-gradient(135deg, #E6F6F5 0%, #C2EAE7 45%, #7FD6CE 100%);
+  --hero-banner-text: #064540;
+  --hero-banner-subtext: #0B776F;
+  --hero-banner-pill-bg: #0B776F;
+  --hero-banner-pill-text: #FFFFFF;
+  --hero-banner-pill-icon: #C2EAE7;
+  --hero-banner-tag-bg: rgba(11, 119, 111, 0.12);
+  --hero-banner-tag-text: #064540;
+  --hero-banner-blob-1: rgba(11, 119, 111, 0.07);
+  --hero-banner-blob-2: rgba(255, 255, 255, 0.38);
+  --hero-banner-arc: rgba(20, 166, 158, 0.22);
+
+  /* Inverse & scrim, neutral */
+  --md-sys-color-inverse-surface: #1F2937; /* neutral-800 */
+  --md-sys-color-inverse-on-surface: #F9FAFB;
+  --md-sys-color-inverse-primary: #5FD3C6;
+  --md-sys-color-scrim: rgba(17, 24, 39, 0.42);
+
+  /* Logo (bv/BuildingVisionLogo tone="auto"): the roof mark in brand gradient
+     ends, the wordmark in ink. */
+  --bv-logo-mark: #0E9187;
+  --bv-logo-mark-2: #5FD3C6;
+  --bv-logo-word: #111827;
+  --bv-logo-tagline: #4B5563;
+
+  /* Sidebar (bv/sidebar.css): a floating panel in primary teal, the same in
+     both themes, so the active tab cut out of it in the page ground reads
+     clearly on either. Ink 5.41:1, muted ink 4.6:1 on the fill. */
+  --bv-sidebar-fill: #0B776F; /* brand-700 */
+  --bv-sidebar-fill-raised: #0E9187; /* brand-600, a tonal band, not a text ground */
+  --bv-sidebar-ink: #FFFFFF;
+  --bv-sidebar-ink-muted: #C2EAE7; /* brand-100 */
+}
+
+/* ========================================================================= */
+/* DARK, semantic colour only; geometry is untouched */
+/* ========================================================================= */
+:root[data-theme='dark'],
+:root.dark {
+  color-scheme: dark;
+
+  /* brand-700 reads under 3:1 on near-black, so the accent is the same hue
+     lifted to 10.6:1; brand-900 comes back as the foreground on it. */
+  --md-sys-color-primary: #5FD3C6; /* derived */
+  --md-sys-color-primary-strong: #5FD3C6;
+  --md-sys-color-on-primary: #06302C; /* derived, 9.5:1 */
+  --md-sys-color-primary-container: #0B776F; /* brand-700, a fill not a page */
+  --md-sys-color-on-primary-container: #C2EAE7; /* brand-100 */
+  --md-sys-color-primary-soft: #0F2A28; /* derived */
+
+  --md-sys-color-secondary: #A7C9C6; /* derived */
+  --md-sys-color-on-secondary: #0F2A28;
+  --md-sys-color-secondary-container: #2C4C49; /* derived */
+  --md-sys-color-on-secondary-container: #DCE8E7;
+
+  --md-sys-color-tertiary: #60A5FA;
+  --md-sys-color-on-tertiary: #172554;
+  --md-sys-color-tertiary-container: #1E3A8A;
+  --md-sys-color-on-tertiary-container: #DBEAFE;
+
+  --md-sys-color-success: #4ADE80; /* 10.6:1 */
+  --md-sys-color-on-success: #052E16;
+  --md-sys-color-success-container: #14532D;
+  --md-sys-color-on-success-container: #DCFCE7;
+  --md-sys-color-warning: #FBBF24; /* 11.1:1 */
+  --md-sys-color-on-warning: #422006;
+  --md-sys-color-warning-container: #78350F;
+  --md-sys-color-on-warning-container: #FEF3C7;
+  --md-sys-color-error: #F87171; /* 6.7:1 */
+  --md-sys-color-on-error: #450A0A;
+  --md-sys-color-error-container: #7F1D1D;
+  --md-sys-color-on-error-container: #FEE2E2;
+  --md-sys-color-info: #60A5FA; /* 7.3:1 */
+  --md-sys-color-on-info: #172554;
+  --md-sys-color-info-container: #1E3A8A;
+  --md-sys-color-on-info-container: #DBEAFE;
+
+  /* Neutral near-black page; the teal stays confined to the accents */
+  --md-sys-color-background: #0F1419;
+  --md-sys-color-on-background: #F3F4F6;
+  --md-sys-color-surface: #161C24;
+  --md-sys-color-on-surface: #F3F4F6;
+  --md-sys-color-on-surface-variant: #A8B0BC; /* 7.5:1 through -high */
+  --md-sys-color-surface-variant: #1E2630;
+
+  --md-sys-color-surface-container-lowest: #0F1419;
+  --md-sys-color-surface-container-low: #131920;
+  --md-sys-color-surface-container: #1B222B;
+  --md-sys-color-surface-container-high: #232B35;
+  --md-sys-color-surface-container-highest: #2B3440;
+
+  --md-sys-color-outline: #9CA3AF;
+  --md-sys-color-outline-variant: #2B3440;
+  --md-sys-color-border: #2B3440;
+
+  --md-sys-color-chart-primary: #5FD3C6;
+  --md-sys-color-chart-secondary: #60A5FA;
+  --md-sys-color-chart-tertiary: #A7C9C6;
+  --md-sys-color-chart-quaternary: #14A69E;
+  --md-sys-color-chart-neutral: #9CA3AF;
+  --md-sys-color-chart-grid: rgba(243, 244, 246, 0.08);
+  --md-sys-color-chart-axis: #9CA3AF;
+  --md-sys-color-chart-area-from: rgba(95, 211, 198, 0.22);
+  --md-sys-color-chart-area-to: rgba(95, 211, 198, 0);
+
+  --hero-banner-bg: linear-gradient(135deg, #06302C 0%, #0B5A54 55%, #0E9187 100%);
+  --hero-banner-text: #F3F4F6;
+  --hero-banner-subtext: #A7E3DD;
+  --hero-banner-pill-bg: #5FD3C6;
+  --hero-banner-pill-text: #06302C;
+  --hero-banner-pill-icon: #06302C;
+  --hero-banner-tag-bg: rgba(243, 244, 246, 0.14);
+  --hero-banner-tag-text: #F3F4F6;
+  --hero-banner-blob-1: rgba(95, 211, 198, 0.12);
+  --hero-banner-blob-2: rgba(243, 244, 246, 0.06);
+  --hero-banner-arc: rgba(95, 211, 198, 0.2);
+
+  --md-sys-color-inverse-surface: #F3F4F6;
+  --md-sys-color-inverse-on-surface: #111827;
+  --md-sys-color-inverse-primary: #0B776F;
+  --md-sys-color-scrim: rgba(0, 0, 0, 0.6);
+
+  --bv-logo-mark: #5FD3C6;
+  --bv-logo-mark-2: #14A69E;
+  --bv-logo-word: #F3F4F6;
+  --bv-logo-tagline: #A8B0BC;
+
+  --bv-sidebar-fill: #0B776F;
+  --bv-sidebar-fill-raised: #0E9187;
+  --bv-sidebar-ink: #FFFFFF;
+  --bv-sidebar-ink-muted: #C2EAE7;
+}

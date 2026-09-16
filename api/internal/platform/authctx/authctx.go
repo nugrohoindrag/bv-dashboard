@@ -12,11 +12,16 @@ import (
 type Source string
 
 const (
-	SourceWeb    Source = "web"
-	SourceMobile Source = "mobile"
-	SourceSystem Source = "system"
-	SourceSync   Source = "sync"
+	SourceWeb       Source = "web"
+	SourceMobile    Source = "mobile"
+	SourceSystem    Source = "system"
+	SourceSync      Source = "sync"
+	SourceTenantApp Source = "tenant_app" // Mobile Tenant (P1)
+	SourceBVRooms   Source = "bvrooms"    // customer BVRooms (bukan users; UserID = bvrooms_customers.id)
 )
+
+// ClientTenantApp: nilai `client` login/refresh untuk Mobile Tenant (TD-P1-003).
+const ClientTenantApp = "tenant_app"
 
 // PropertyGrant: permission set yang dimiliki user pada satu property (nil PropertyID = seluruh org).
 type PropertyGrant struct {
@@ -35,6 +40,8 @@ type Principal struct {
 	LeadTeamIDs       []uuid.UUID
 	Grants            []PropertyGrant
 	Source            Source
+	IsTenant          bool // akun Mobile Tenant (role tenant_user/tenant_admin) — tidak pernah punya permission staf
+	IsInternalAdmin   bool // role admin_internal pada organization is_internal (Website PRD §18) — dicek server-side
 	RequestID         string
 	IP                string
 	UserAgent         string

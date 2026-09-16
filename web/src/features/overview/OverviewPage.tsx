@@ -13,10 +13,13 @@ import { fmtDateTime, fmtNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { AttentionItem, BuildingState, MaintenanceSchedule, OverviewToday, TenantRequestsPanel, TodaysOperations, WorkloadRow } from "@/api/types";
 import { AssignDialog } from "@/features/operations/dialogs";
+import { BuildingHero } from "@buildingvision/ui/bv";
+import { useOnboarding } from "@/lib/growth";
+import { ChecklistView } from "@/features/growth/OnboardingPage";
 
 export default function OverviewPage() {
   const { t } = useTranslation();
-  const { propertyId, properties } = useAuth();
+  const { propertyId, properties, can } = useAuth();
   const q = { property_id: propertyId ?? undefined };
   const today = useOverview<OverviewToday>("today", q);
   const [domain, setDomain] = useState("");
@@ -37,14 +40,39 @@ export default function OverviewPage() {
     else nav(it.deep_link);
   };
 
+  // Onboarding checklist (Website PRD §28): tampil untuk organization trial sampai selesai/disembunyikan
+  const onboarding = useOnboarding(can("platform.organizations.view"));
+  const ob = onboarding.data;
+  const showChecklist = !!ob && ob.trial?.is_trial_org && !ob.dismissed && ob.completed < ob.total;
+
+  const canCreateWO = can("operations.work_orders.create");
+  const canCreateTask = can("operations.tasks.create");
+  const canReportIncident = can("operations.incidents.create");
+  const overdueTotal = d?.overdue.value ?? 0;
+  const slaRiskTotal = d?.sla_risk.value ?? 0;
+
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between">
-        <div>
-          <h1 className="text-display font-bold">{t("overview.today")}</h1>
-          <p className="text-sm text-muted-foreground">{propName} · {fmtDateTime(new Date())}</p>
-        </div>
-      </div>
+      {showChecklist && ob && <ChecklistView data={ob} compact onChanged={() => onboarding.refetch()} />}
+      {/* Hero: banner solid primary (DS Guideline §2.3), identitas property + kondisi operasional hari ini */}
+      <BuildingHero
+        propertyName={propName}
+        context={fmtDateTime(new Date())}
+        liveLabel="Live"
+        headline={L ? "…" : `${fmtNumber(d?.open_work_orders.value ?? 0)} Work Order terbuka`}
+        headlineSuffix={L ? undefined : `${fmtNumber(d?.tenant_requests.value ?? 0)} Service Request · ${fmtNumber(d?.incidents.value ?? 0)} Incident`}
+        badge={{ icon: overdueTotal > 0 ? "warning" : "verified", label: overdueTotal > 0 ? `${fmtNumber(overdueTotal)} Overdue` : "Tanpa overdue" }}
+        stats={[
+          { label: "Overdue", value: L ? "–" : fmtNumber(overdueTotal), tone: overdueTotal > 0 ? "error" : "default" },
+          { label: "SLA Risk", value: L ? "–" : fmtNumber(slaRiskTotal), tone: slaRiskTotal > 0 ? "warning" : "default" },
+          { label: "PM Due 7 hari", value: L ? "–" : fmtNumber(d?.pm_due.value ?? 0) },
+        ]}
+        actions={[
+          ...(canCreateWO ? [{ label: "Buat Work Order", icon: "add_task", onClick: () => nav("/operations/work-orders?new=1") }] : []),
+          ...(canCreateTask ? [{ label: "Buat Task", icon: "playlist_add", onClick: () => nav("/operations/tasks?new=1") }] : []),
+          ...(canReportIncident ? [{ label: "Lapor Incident", icon: "emergency_home", onClick: () => nav("/operations/incidents?new=1") }] : []),
+        ]}
+      />
 
       {/* Row 1: TodayCounter × 6 */}
       <div className="grid grid-cols-3 gap-4 2xl:grid-cols-6">
@@ -77,7 +105,7 @@ export default function OverviewPage() {
         <Card className="col-span-4">
           <CardHeader>
             <CardTitle>{t("overview.tenant_requests")}</CardTitle>
-            <Link to="/operations/service-requests" className="text-sm text-brand-600 hover:underline">{t("action.view")}</Link>
+            <Link to="/operations/service-requests" className="text-sm font-semibold text-primary hover:underline">{t("action.view")}</Link>
           </CardHeader>
           <CardContent>
             <AsyncState query={tenant} skeleton={<PanelSkeleton rows={4} />}>

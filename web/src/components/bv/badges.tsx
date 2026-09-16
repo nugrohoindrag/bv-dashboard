@@ -1,25 +1,39 @@
 // StatusBadge / PriorityBadge / SeverityBadge / AssetStatusBadge / FlagBadge (DS §2.2, §4.1)
 // Warna & label dari status-map (generated) — tidak menerima warna manual.
+import type * as React from "react";
+import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
-import { AlarmClock, AlertTriangle, ArrowDown, ArrowUp, CloudCheck, CloudOff, CloudUpload, GitMerge, ImageOff, Minus, Timer, TimerOff, type LucideIcon } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
+import { toneColor, toneContainer, toneOnColor, toneOnContainer, type Tone } from "@buildingvision/ui/bv";
 import { Badge } from "@/components/ui/primitives";
 import { statusDef, type ObjectType, type Semantic, type Variant } from "@/lib/status-map";
-import { cn } from "@/lib/utils";
 
-const icons: Record<string, LucideIcon> = { "alarm-clock": AlarmClock, timer: Timer, "timer-off": TimerOff, "image-off": ImageOff, "arrow-down": ArrowDown, minus: Minus, "arrow-up": ArrowUp, "alert-triangle": AlertTriangle, "cloud-upload": CloudUpload, "cloud-check": CloudCheck, "cloud-off": CloudOff, "git-merge": GitMerge };
+// nama ikon status-map (lucide) → Material Symbols Rounded (satu keluarga ikon, DS Guideline §2.6)
+const icons: Record<string, string> = { "alarm-clock": "alarm", timer: "timer", "timer-off": "timer_off", "image-off": "hide_image", "arrow-down": "arrow_downward", minus: "remove", "arrow-up": "arrow_upward", "alert-triangle": "warning", "cloud-upload": "cloud_upload", "cloud-check": "cloud_done", "cloud-off": "cloud_off", "git-merge": "merge_type" };
 
+const semanticTone: Record<Semantic, Tone> = { success: "success", warning: "warning", critical: "error", info: "info", neutral: "neutral" };
+
+/** Pasangan warna solid (container + on-container) per semantic; `solid` memakai fill penuh + on-color (status aktif). */
+export function semanticStyle(semantic: Semantic, variant: Variant): React.CSSProperties {
+  const tone = semanticTone[semantic];
+  if (variant === "solid") return { backgroundColor: toneColor[tone], color: toneOnColor[tone] };
+  if (variant === "outline") return { backgroundColor: "transparent", color: "var(--color-on-surface-variant)", boxShadow: "inset 0 0 0 1px var(--color-border)" };
+  return { backgroundColor: toneContainer[tone], color: toneOnContainer[tone] };
+}
+/** Kompat: kelas Tailwind (alias token) untuk kode yang masih memakai className. */
 export function semanticClass(semantic: Semantic, variant: Variant): string {
-  if (variant === "solid") return `bg-${semantic} text-white`;
-  if (variant === "outline") return "border border-neutral-300 bg-transparent text-neutral-text";
-  return `bg-${semantic}-soft text-${semantic}-text`;
+  const t = semanticTone[semantic];
+  if (variant === "solid") return t === "neutral" ? "bg-outline text-surface" : `bg-${t} text-on-${t}`;
+  if (variant === "outline") return "border border-border bg-transparent text-on-surface-variant";
+  return t === "neutral" ? "bg-surface-container-high text-on-surface-variant" : `bg-${t}-container text-on-${t}-container`;
 }
 
 export function StatusBadge({ objectType, status, className }: { objectType: ObjectType; status: string; className?: string }) {
   const { t } = useTranslation();
   const def = statusDef(objectType, status);
-  if (!def) return <Badge className={cn("bg-neutral-soft text-neutral-text", className)}>{status}</Badge>;
+  if (!def) return <Badge className={className}>{status}</Badge>;
   return (
-    <Badge dot={def.variant === "solid"} className={cn(semanticClass(def.semantic, def.variant), className)}>
+    <Badge dot={def.variant === "solid"} className={className} style={semanticStyle(def.semantic, def.variant)}>
       {t(`status.${objectType}.${status}`, { defaultValue: def.label_id })}
     </Badge>
   );
@@ -29,10 +43,10 @@ function LevelBadge({ group, level, prefix, className }: { group: "priority" | "
   const { t } = useTranslation();
   const def = statusDef(group, level);
   if (!def) return null;
-  const Icon = def.icon ? icons[def.icon] : undefined;
+  const icon = def.icon ? icons[def.icon] : undefined;
   return (
-    <Badge className={cn(semanticClass(def.semantic, def.variant), className)} title={`${group === "priority" ? "Prioritas" : "Severity"}: ${def.label_id}`}>
-      {Icon && <Icon className="h-3 w-3" aria-hidden />}
+    <Badge className={className} style={semanticStyle(def.semantic, def.variant)} title={`${group === "priority" ? "Prioritas" : "Severity"}: ${def.label_id}`}>
+      {icon && <Icon name={icon} size={12} aria-hidden />}
       {prefix}
       {t(`status.${group}.${level}`, { defaultValue: def.label_id })}
     </Badge>
@@ -46,10 +60,10 @@ export type Flag = "overdue" | "sla_risk" | "sla_breach" | "evidence_incomplete"
 export function FlagBadge({ flag, className }: { flag: Flag; className?: string }) {
   const def = statusDef("flags", flag);
   if (!def) return null;
-  const Icon = def.icon ? icons[def.icon] : undefined;
+  const icon = def.icon ? icons[def.icon] : undefined;
   return (
-    <Badge className={cn(semanticClass(def.semantic, def.variant), className)}>
-      {Icon && <Icon className="h-3 w-3" aria-hidden />}
+    <Badge className={className} style={semanticStyle(def.semantic, def.variant)}>
+      {icon && <Icon name={icon} size={12} aria-hidden />}
       {def.label_id}
     </Badge>
   );
@@ -69,10 +83,10 @@ export function FlagBadges({ flags, className }: { flags?: string[]; className?:
 export function SyncStateBadge({ state }: { state: "pending" | "synced" | "failed" | "conflict" }) {
   const def = statusDef("sync_state", state);
   if (!def) return null;
-  const Icon = def.icon ? icons[def.icon] : undefined;
+  const icon = def.icon ? icons[def.icon] : undefined;
   return (
-    <Badge className={semanticClass(def.semantic, def.variant)}>
-      {Icon && <Icon className="h-3 w-3" aria-hidden />}
+    <Badge style={semanticStyle(def.semantic, def.variant)}>
+      {icon && <Icon name={icon} size={12} aria-hidden />}
       {def.label_id}
     </Badge>
   );

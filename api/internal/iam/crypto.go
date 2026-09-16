@@ -120,6 +120,10 @@ func NewTokenSigner(privPEM, pubPEM string, ttl time.Duration) (*TokenSigner, er
 
 func (s *TokenSigner) TTL() time.Duration { return s.ttl }
 
+// Keys mengekspos pasangan kunci untuk signer lain yang memakai issuer berbeda (token customer BVRooms);
+// token tersebut tidak pernah diterima Authenticate karena issuer diverifikasi.
+func (s *TokenSigner) Keys() (ed25519.PrivateKey, ed25519.PublicKey) { return s.priv, s.pub }
+
 func (s *TokenSigner) Sign(userID, orgID, sessionID uuid.UUID, ver int, src string, now time.Time) (string, time.Time, error) {
 	exp := now.Add(s.ttl)
 	claims := Claims{

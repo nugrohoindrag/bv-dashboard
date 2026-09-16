@@ -1,7 +1,7 @@
 // Service Requests (PRD §18): daftar dengan SLA, tenant, kategori; aksi cepat acknowledge/assign; export.
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/primitives";
@@ -47,7 +47,7 @@ export default function ServiceRequestListPage() {
   );
   return (
     <div>
-      <PageHeader title={t("nav.service_requests")} actions={can("tenant.service_requests.create") && <Button onClick={() => setCreateOpen(true)}><Plus /> {t("action.create_service_request")}</Button>}>
+      <PageHeader title={t("nav.service_requests")} actions={can("tenant.service_requests.create") && <Button onClick={() => setCreateOpen(true)}><Icon name="add" size={16} /> {t("action.create_service_request")}</Button>}>
         <FilterBar
           spec={{
             status: Object.entries(statusMap.service_request).map(([value, d]) => ({ value, label: d.label_id })),

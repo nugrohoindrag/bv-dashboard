@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Plus, Play, SprayCan } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shell/AppShell";
 import { Button, Checkbox, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect } from "@/components/ui/primitives";
@@ -45,9 +45,9 @@ export default function CleaningSchedulePage() {
         subtitle="Cleaning task dibuat otomatis (H-1) dari jadwal aktif; jam mengikuti timezone property."
         actions={
           <>
-            {can("housekeeping.cleaning.manage") && <Button variant="secondary" onClick={() => setAdhoc(true)}><SprayCan /> Cleaning ad-hoc</Button>}
-            {can("housekeeping.cleaning_schedules.update") && <Button variant="secondary" loading={generate.isPending} onClick={() => generate.mutateAsync().then((r) => toast.success(`${r.generated} cleaning task dibuat`)).catch(toast.error)}><Play /> Generate</Button>}
-            {can("housekeeping.cleaning_schedules.create") && <Button onClick={() => setEdit("new")}><Plus /> Buat Jadwal</Button>}
+            {can("housekeeping.cleaning.manage") && <Button variant="secondary" onClick={() => setAdhoc(true)}><Icon name="cleaning_services" size={16} /> Cleaning ad-hoc</Button>}
+            {can("housekeeping.cleaning_schedules.update") && <Button variant="secondary" loading={generate.isPending} onClick={() => generate.mutateAsync().then((r) => toast.success(`${r.generated} cleaning task dibuat`)).catch(toast.error)}><Icon name="play_arrow" size={16} /> Generate</Button>}
+            {can("housekeeping.cleaning_schedules.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Buat Jadwal</Button>}
           </>
         }
       />

@@ -1,7 +1,7 @@
 // Users (PRD §22.2): daftar, buat/edit user, role per property, team, aktif/nonaktif, reset password.
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Button, Checkbox, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect } from "@/components/ui/primitives";
 import { DataGrid } from "@/components/bv/datagrid";
@@ -38,7 +38,7 @@ export default function UsersSection() {
         <Input className="w-64" placeholder="Cari nama / email…" value={q} onChange={(e) => setQ(e.target.value)} />
         <NativeSelect className="w-48" value={role} onChange={(e) => setRole(e.target.value)}><option value="">Role: {t("label.all")}</option>{(roles.data ?? []).map((r) => <option key={r.id} value={r.code}>{r.name}</option>)}</NativeSelect>
         <NativeSelect className="w-36" value={active} onChange={(e) => setActive(e.target.value)}><option value="">Status: {t("label.all")}</option><option value="true">Aktif</option><option value="false">Nonaktif</option></NativeSelect>
-        <span className="ml-auto">{can("iam.users.create") && <Button onClick={() => setEdit("new")}><Plus /> Tambah User</Button>}</span>
+        <span className="ml-auto">{can("iam.users.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Tambah User</Button>}</span>
       </div>
       <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => { if (can("iam.users.update")) setEdit(r); }} loading={list.isLoading} isFiltered={!!q || !!role || !!active} empty={{ message: "Belum ada user." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} rowActions={(r) => [...(can("iam.users.update") ? [{ label: "Edit", onSelect: () => setEdit(r) }] : []), ...(can("iam.users.reset_password") ? [{ label: "Reset password", onSelect: () => setReset(r) }] : [])]} />
       {edit && <UserDialog item={edit === "new" ? null : edit} roles={roles.data ?? []} onClose={() => setEdit(null)} />}

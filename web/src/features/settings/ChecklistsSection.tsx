@@ -1,7 +1,7 @@
 // Checklist Templates (PRD §11): builder item (ok_notok_na · yes_no · numeric · text · photo), section, wajib/foto, publish → versi baru, archive.
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Button, Checkbox, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect, Textarea } from "@/components/ui/primitives";
 import { DataGrid } from "@/components/bv/datagrid";
@@ -40,7 +40,7 @@ export default function ChecklistsSection() {
       <div className="flex items-center gap-2">
         <NativeSelect className="w-40" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option><option value="draft">Draft</option><option value="published">Published</option><option value="archived">Archived</option></NativeSelect>
         <NativeSelect className="w-40" value={domain} onChange={(e) => setDomain(e.target.value)}><option value="">Domain: {t("label.all")}</option>{["engineering", "security", "housekeeping"].map((d) => <option key={d} value={d}>{d}</option>)}</NativeSelect>
-        <span className="ml-auto">{can("operations.checklists.create") && <Button onClick={() => setEdit("new")}><Plus /> Buat Template</Button>}</span>
+        <span className="ml-auto">{can("operations.checklists.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Buat Template</Button>}</span>
       </div>
       <DataGrid
         columns={columns}
@@ -99,7 +99,7 @@ function TemplateDialog({ item, onClose }: { item: ChecklistTemplate | null; onC
           <Field label={t("label.description")}><Textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} disabled={readOnly} /></Field>
           <Field label="Berlaku untuk"><div className="flex flex-wrap gap-3">{APPLIES.map((a) => <label key={a} className="flex items-center gap-1.5 text-sm"><Checkbox checked={form.applies_to.includes(a)} disabled={readOnly} onCheckedChange={() => setForm((f) => ({ ...f, applies_to: f.applies_to.includes(a) ? f.applies_to.filter((x) => x !== a) : [...f.applies_to, a] }))} /> {a}</label>)}</div></Field>
           <div>
-            <div className="mb-2 flex items-center justify-between"><span className="text-sm font-medium">Item ({form.items.length})</span>{!readOnly && <Button size="sm" variant="secondary" onClick={addItem}><Plus /> Tambah item</Button>}</div>
+            <div className="mb-2 flex items-center justify-between"><span className="text-sm font-medium">Item ({form.items.length})</span>{!readOnly && <Button size="sm" variant="secondary" onClick={addItem}><Icon name="add" size={16} /> Tambah item</Button>}</div>
             <div className="space-y-2">
               {form.items.map((x, i) => (
                 <div key={i} className="rounded-md border border-border p-2">
@@ -108,9 +108,9 @@ function TemplateDialog({ item, onClose }: { item: ChecklistTemplate | null; onC
                     <Input className="col-span-5" placeholder="Label item" value={x.label} onChange={(e) => setItem(i, { label: e.target.value })} disabled={readOnly} />
                     <NativeSelect className="col-span-3" value={x.item_type} onChange={(e) => setItem(i, { item_type: e.target.value as ChecklistTemplateItem["item_type"] })} disabled={readOnly}>{ITEM_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>
                     <div className="col-span-2 flex justify-end gap-0.5">
-                      <Button size="icon-sm" variant="ghost" aria-label="Naik" disabled={readOnly} onClick={() => move(i, -1)}><ArrowUp /></Button>
-                      <Button size="icon-sm" variant="ghost" aria-label="Turun" disabled={readOnly} onClick={() => move(i, 1)}><ArrowDown /></Button>
-                      <Button size="icon-sm" variant="ghost" aria-label="Hapus" disabled={readOnly} onClick={() => setForm((f) => ({ ...f, items: f.items.filter((_, j) => j !== i) }))}><Trash2 /></Button>
+                      <Button size="icon-sm" variant="ghost" aria-label="Naik" disabled={readOnly} onClick={() => move(i, -1)}><Icon name="arrow_upward" size={16} /></Button>
+                      <Button size="icon-sm" variant="ghost" aria-label="Turun" disabled={readOnly} onClick={() => move(i, 1)}><Icon name="arrow_downward" size={16} /></Button>
+                      <Button size="icon-sm" variant="ghost" aria-label="Hapus" disabled={readOnly} onClick={() => setForm((f) => ({ ...f, items: f.items.filter((_, j) => j !== i) }))}><Icon name="delete" size={16} /></Button>
                     </div>
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-4 text-xs">

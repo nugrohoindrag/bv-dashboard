@@ -1,7 +1,7 @@
 // Incidents (PRD §14): daftar dengan severity, kategori, lokasi; Report Incident; export. Prop security → default incident_type security.
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/primitives";
@@ -46,7 +46,7 @@ export default function IncidentListPage({ security }: { security?: boolean }) {
   );
   return (
     <div>
-      <PageHeader title={security ? "Security Incidents" : t("nav.incidents")} actions={can("operations.incidents.create") && <Button onClick={() => setCreateOpen(true)}><Plus /> {t("action.report_incident")}</Button>}>
+      <PageHeader title={security ? "Security Incidents" : t("nav.incidents")} actions={can("operations.incidents.create") && <Button onClick={() => setCreateOpen(true)}><Icon name="add" size={16} /> {t("action.report_incident")}</Button>}>
         <FilterBar
           spec={{
             status: Object.entries(statusMap.incident).map(([value, d]) => ({ value, label: d.label_id })),

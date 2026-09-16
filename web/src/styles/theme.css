@@ -1,56 +1,113 @@
-/* Design System v1.0 §7.2 — Tailwind v4 CSS-first config + alias variabel shadcn ke token BuildingVision */
+/*
+ * Tailwind v4 di atas design system Morphic/Nexus (packages/ui) + palet BuildingVision (bv/palette.css).
+ *
+ * Tailwind di sini HANYA untuk utilitas layout/tipografi. Setiap nama warna Tailwind adalah alias ke token
+ * `--md-sys-color-*` yang di-repoint palette.css, sehingga `bg-surface`, `text-on-surface-variant`,
+ * `border-border`, `bg-primary` mengikuti tema (light/dark) dan tidak ada warna literal di kode produk
+ * (Design System Guideline §2.1). Nama lama (card, muted, muted-foreground, critical, brand-*) dipertahankan
+ * sebagai alias agar kode fitur yang ada tetap benar; kode baru memakai nama kontrak DS.
+ *
+ * Radius TIDAK didefinisikan di sini: design system sudah menetapkan `--radius-xs..xl/hero/pill` di :root
+ * (elevation.css) dan utilitas `rounded-*` Tailwind membacanya langsung, jadi bentuk selalu mengikuti DS.
+ *
+ * Urutan impor di main.tsx: tokens.css → bv/palette.css → fonts/table-header/mirror-fixes/layout/sidebar → theme.css.
+ */
 @import "tailwindcss";
-@import "./tokens.css";
 
 @theme {
-  --color-brand-50: var(--bv-brand-50);
-  --color-brand-100: var(--bv-brand-100);
-  --color-brand-500: var(--bv-brand-500);
-  --color-brand-600: var(--bv-brand-600);
-  --color-brand-700: var(--bv-brand-700);
-  --color-brand-900: var(--bv-brand-900);
+  /* --- kontrak DS (nama identik dengan tokens/contract.css) --- */
+  --color-primary: var(--md-sys-color-primary);
+  --color-primary-strong: var(--md-sys-color-primary-strong);
+  --color-on-primary: var(--md-sys-color-on-primary);
+  --color-primary-container: var(--md-sys-color-primary-container);
+  --color-on-primary-container: var(--md-sys-color-on-primary-container);
+  --color-primary-soft: var(--md-sys-color-primary-soft);
+  --color-secondary: var(--md-sys-color-secondary);
+  --color-on-secondary: var(--md-sys-color-on-secondary);
+  --color-secondary-container: var(--md-sys-color-secondary-container);
+  --color-on-secondary-container: var(--md-sys-color-on-secondary-container);
+  --color-tertiary: var(--md-sys-color-tertiary);
+  --color-on-tertiary: var(--md-sys-color-on-tertiary);
+  --color-tertiary-container: var(--md-sys-color-tertiary-container);
+  --color-on-tertiary-container: var(--md-sys-color-on-tertiary-container);
 
-  /* semantic — dipakai sebagai bg-success, text-critical, border-warning (brand ≠ status) */
-  --color-success: var(--bv-success-600);
-  --color-success-soft: var(--bv-success-100);
-  --color-success-text: var(--bv-success-700);
-  --color-warning: var(--bv-warning-600);
-  --color-warning-soft: var(--bv-warning-100);
-  --color-warning-text: var(--bv-warning-700);
-  --color-critical: var(--bv-critical-600);
-  --color-critical-soft: var(--bv-critical-100);
-  --color-critical-text: var(--bv-critical-700);
-  --color-info: var(--bv-info-600);
-  --color-info-soft: var(--bv-info-100);
-  --color-info-text: var(--bv-info-700);
-  --color-neutral: var(--bv-neutral-500);
-  --color-neutral-soft: var(--bv-neutral-100);
-  --color-neutral-text: var(--bv-neutral-700);
-  --color-neutral-300: var(--bv-neutral-300);
+  --color-background: var(--md-sys-color-background);
+  --color-on-background: var(--md-sys-color-on-background);
+  --color-surface: var(--md-sys-color-surface);
+  --color-on-surface: var(--md-sys-color-on-surface);
+  --color-on-surface-variant: var(--md-sys-color-on-surface-variant);
+  --color-surface-variant: var(--md-sys-color-surface-variant);
+  --color-surface-container-lowest: var(--md-sys-color-surface-container-lowest);
+  --color-surface-container-low: var(--md-sys-color-surface-container-low);
+  --color-surface-container: var(--md-sys-color-surface-container);
+  --color-surface-container-high: var(--md-sys-color-surface-container-high);
+  --color-surface-container-highest: var(--md-sys-color-surface-container-highest);
+  --color-outline: var(--md-sys-color-outline);
+  --color-outline-variant: var(--md-sys-color-outline-variant);
+  --color-border: var(--md-sys-color-border);
+  --color-inverse-surface: var(--md-sys-color-inverse-surface);
+  --color-inverse-on-surface: var(--md-sys-color-inverse-on-surface);
+  --color-scrim: var(--md-sys-color-scrim);
 
-  --color-background: var(--bv-surface-background);
-  --color-card: var(--bv-surface-card);
-  --color-foreground: var(--bv-surface-foreground);
-  --color-muted: var(--bv-neutral-100);
-  --color-muted-foreground: var(--bv-neutral-500);
-  --color-border: var(--bv-neutral-200);
-  --color-primary: var(--bv-brand-600);
-  --color-primary-foreground: #ffffff;
-  --color-destructive: var(--bv-critical-600);
-  --color-ring: var(--bv-brand-500);
-  --color-sidebar: var(--bv-surface-sidebar);
-  --color-sidebar-foreground: var(--bv-surface-sidebar-foreground);
-  --color-sidebar-accent: var(--bv-brand-600);
+  --color-success: var(--md-sys-color-success);
+  --color-on-success: var(--md-sys-color-on-success);
+  --color-success-container: var(--md-sys-color-success-container);
+  --color-on-success-container: var(--md-sys-color-on-success-container);
+  --color-warning: var(--md-sys-color-warning);
+  --color-on-warning: var(--md-sys-color-on-warning);
+  --color-warning-container: var(--md-sys-color-warning-container);
+  --color-on-warning-container: var(--md-sys-color-on-warning-container);
+  --color-error: var(--md-sys-color-error);
+  --color-on-error: var(--md-sys-color-on-error);
+  --color-error-container: var(--md-sys-color-error-container);
+  --color-on-error-container: var(--md-sys-color-on-error-container);
+  --color-info: var(--md-sys-color-info);
+  --color-on-info: var(--md-sys-color-on-info);
+  --color-info-container: var(--md-sys-color-info-container);
+  --color-on-info-container: var(--md-sys-color-on-info-container);
 
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
-  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04);
-  --shadow-popover: 0 8px 24px rgb(0 0 0 / 0.08);
-  --shadow-modal: 0 24px 48px rgb(0 0 0 / 0.16);
+  /* --- alias lama (kode fitur yang ada) → token DS --- */
+  --color-card: var(--md-sys-color-surface);
+  --color-foreground: var(--md-sys-color-on-surface);
+  --color-muted: var(--md-sys-color-surface-container);
+  --color-muted-foreground: var(--md-sys-color-on-surface-variant);
+  --color-primary-foreground: var(--md-sys-color-on-primary);
+  --color-destructive: var(--md-sys-color-error);
+  --color-ring: var(--md-sys-color-primary);
+  --color-critical: var(--md-sys-color-error);
+  --color-critical-soft: var(--md-sys-color-error-container);
+  --color-critical-text: var(--md-sys-color-on-error-container);
+  --color-success-soft: var(--md-sys-color-success-container);
+  --color-success-text: var(--md-sys-color-on-success-container);
+  --color-warning-soft: var(--md-sys-color-warning-container);
+  --color-warning-text: var(--md-sys-color-on-warning-container);
+  --color-info-soft: var(--md-sys-color-info-container);
+  --color-info-text: var(--md-sys-color-on-info-container);
+  --color-neutral: var(--md-sys-color-outline);
+  --color-neutral-soft: var(--md-sys-color-surface-container-high);
+  --color-neutral-text: var(--md-sys-color-on-surface-variant);
+  --color-neutral-200: var(--md-sys-color-border);
+  --color-neutral-300: var(--md-sys-color-outline-variant);
+  --color-neutral-400: var(--md-sys-color-outline-variant);
+  --color-neutral-500: var(--md-sys-color-outline);
+  --color-neutral-900: var(--md-sys-color-on-surface);
+  --color-brand-50: var(--md-sys-color-primary-soft);
+  --color-brand-100: var(--md-sys-color-primary-container);
+  --color-brand-500: var(--md-sys-color-primary);
+  --color-brand-600: var(--md-sys-color-primary);
+  --color-brand-700: var(--md-sys-color-primary-strong);
+  --color-brand-900: var(--md-sys-color-on-primary-container);
+  --color-white: var(--md-sys-color-on-primary);
+  --color-sidebar: var(--bv-sidebar-fill);
+  --color-sidebar-foreground: var(--bv-sidebar-ink);
+  --color-sidebar-accent: var(--bv-sidebar-fill-raised);
+
+  --font-sans: var(--md-sys-typescale-font-family);
+  --font-mono: var(--md-sys-typescale-font-family-numeric);
+
+  --shadow-card: var(--md-sys-elevation-level1);
+  --shadow-popover: var(--md-sys-elevation-level3);
+  --shadow-modal: var(--md-sys-elevation-level5);
 
   --text-display: 28px;
   --text-display--line-height: 36px;
@@ -62,43 +119,32 @@
   --text-h3--line-height: 24px;
   --text-body: 14px;
   --text-body--line-height: 20px;
+  --text-body-strong: 14px;
+  --text-body-strong--line-height: 20px;
   --text-sm: 13px;
   --text-sm--line-height: 18px;
   --text-xs: 12px;
   --text-xs--line-height: 16px;
 }
 
-/* safelist kelas semantic dinamis (StatusBadge, cva) — DS §7.4 */
-@source inline("bg-success bg-warning bg-critical bg-info bg-neutral bg-success-soft bg-warning-soft bg-critical-soft bg-info-soft bg-neutral-soft text-success-text text-warning-text text-critical-text text-info-text text-neutral-text text-success text-warning text-critical text-info text-neutral border-success border-warning border-critical border-info border-neutral-300 bg-success/10 bg-warning/10 bg-critical/10 bg-info/10");
+/* safelist kelas semantic dinamis (StatusBadge, tone map) */
+@source inline("bg-success bg-warning bg-error bg-info bg-neutral bg-success-container bg-warning-container bg-error-container bg-info-container bg-surface-container-high text-on-success-container text-on-warning-container text-on-error-container text-on-info-container text-on-surface-variant text-success text-warning text-error text-info bg-critical bg-critical-soft text-critical-text text-critical bg-success-soft text-success-text bg-warning-soft text-warning-text bg-info-soft text-info-text bg-neutral-soft text-neutral-text border-l-success border-l-warning border-l-error border-l-info border-l-critical");
 
-:root {
-  --background: var(--bv-surface-background);
-  --card: var(--bv-surface-card);
-  --foreground: var(--bv-surface-foreground);
-  --muted: var(--bv-neutral-100);
-  --muted-foreground: var(--bv-neutral-500);
-  --border: var(--bv-neutral-200);
-  --primary: var(--bv-brand-600);
-  --primary-foreground: #ffffff;
-  --destructive: var(--bv-critical-600);
-  --ring: var(--bv-brand-500);
-  --sidebar: #0f172a;
-  --sidebar-foreground: #cbd5e1;
-  --sidebar-accent: var(--bv-brand-600);
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--md-sys-color-background);
+    color: var(--md-sys-color-on-background);
+    font-family: var(--md-sys-typescale-font-family);
+    font-size: 14px;
+    line-height: 20px;
+    font-feature-settings: "tnum" 1, "lnum" 1; /* angka tabular (DS §2.7) */
+    -webkit-font-smoothing: antialiased;
+  }
+  *:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
 }
 
-html, body, #root { height: 100%; }
-body {
-  margin: 0;
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 20px;
-  font-feature-settings: "tnum"; /* angka tabular (DS §2.3) */
-  -webkit-font-smoothing: antialiased;
-}
-*:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .tnum { font-variant-numeric: tabular-nums; }
 @media (max-width: 1279px) { .bv-narrow-banner { display: block; } }
 @media (min-width: 1280px) { .bv-narrow-banner { display: none; } }

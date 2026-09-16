@@ -1,32 +1,39 @@
-# React + TypeScript + Vite
+# BuildingVision Web (Dashboard)
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React 19 SPA (Vite, TypeScript) untuk Property Manager / Building Manager / supervisor. UI dibangun di atas design system
+**Morphic / Nexus** (mirror di [`../packages/ui`](../packages/ui), sistem yang sama dengan Factory Vision) dengan palet
+**teal BuildingVision** — satu identitas dengan Staff App dan Tenant PWA.
 
-Currently, two official plugins are available:
+Aturan UI: [docs/DESIGN-SYSTEM-GUIDELINE.md](docs/DESIGN-SYSTEM-GUIDELINE.md) (wajib dibaca sebelum menyentuh UI).
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Menjalankan
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm ci --legacy-peer-deps       # @buildingvision/ui = file:../packages/ui (symlink)
+npm run dev                     # http://localhost:5173, proxy /api & /public → BV_API_URL (default :8080)
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Login demo: lihat README monorepo. Tema terang/gelap: toggle di top bar (tersimpan di `localStorage bv.theme`).
+
+## Perintah
+
+| Area | Perintah |
+|---|---|
+| Typecheck / lint / test / build | `npm run typecheck` · `npm run lint` · `npm test` · `npm run build` |
+| Design system mirror + ikon | `npm run ds:check` (jalankan `npm run ds:pull` / `npm run fonts:vendor` di `../packages/ui`) |
+| Token status map dari contracts | `npm run gen` (menulis `src/lib/status-map.ts`; warna kini dari `packages/ui/src/bv/palette.css`) |
+
+## Struktur
+
+```text
+src/
+├── app/App.tsx              # router + auth guard
+├── components/shell/        # AppShell (sidebar panel teal ala konsol FV, top bar, tema), GlobalSearch, NotificationInbox
+├── components/ui/primitives.tsx  # Button/Card/Dialog/Tabs/Field/... = kompat API di atas komponen DS + token
+├── components/bv/           # DataGrid (.bv-table), badges (tone pair), cards (SurfaceCard rail), pickers, timeline, checklist
+├── features/                # overview (BuildingHero + KPI), operations, engineering, security, housekeeping, property, tenant, assets, settings
+├── styles/theme.css         # Tailwind v4: HANYA layout; nama warna = alias token DS
+└── lib/                     # api client, auth, format Indonesia, status-map (GENERATED)
+```
+
+Impor CSS di `main.tsx` berurutan: `tokens.css` → `bv/palette.css` → `bv/*.css` → `styles/theme.css`.

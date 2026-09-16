@@ -1,12 +1,12 @@
 // ActivityTimeline (DS §4.5): {User} {Action} {Object} di-render dari action + payload; ikon per jenis; sumber sebagai chip.
-import { ArrowRightLeft, Camera, CheckSquare, CloudUpload, Flag, GitMerge, MessageSquare, PlayCircle, RefreshCw, Sparkles, UserCheck, XCircle, type LucideIcon } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import { Badge } from "@/components/ui/primitives";
 import { fmtDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { Activity } from "@/api/types";
 import { statusDef, type ObjectType } from "@/lib/status-map";
 
-const iconFor: Record<string, LucideIcon> = { created: Sparkles, status_changed: ArrowRightLeft, assigned: UserCheck, unassigned: UserCheck, commented: MessageSquare, attachment_added: Camera, checklist_item_answered: CheckSquare, checklist_completed: CheckSquare, checklist_started: CheckSquare, checkpoint_scanned: CheckSquare, checkpoint_missed: XCircle, finding_created: Flag, resolved: CheckSquare, reopened: RefreshCw, cancelled: XCircle, evidence_recorded_offline: CloudUpload, late_evidence: CloudUpload, clock_skew: CloudUpload, sync_conflict_acknowledged: GitMerge, overdue_flagged: PlayCircle };
+const iconFor: Record<string, string> = { created: "auto_awesome", status_changed: "swap_horiz", assigned: "how_to_reg", unassigned: "how_to_reg", commented: "chat_bubble", attachment_added: "photo_camera", checklist_item_answered: "check_box", checklist_completed: "check_box", checklist_started: "check_box", checkpoint_scanned: "check_box", checkpoint_missed: "cancel", finding_created: "flag", resolved: "check_box", reopened: "refresh", cancelled: "cancel", evidence_recorded_offline: "cloud_upload", late_evidence: "cloud_upload", clock_skew: "cloud_upload", sync_conflict_acknowledged: "merge_type", overdue_flagged: "play_circle" };
 
 function statusLabel(objectType: string, s?: string | null): string {
   if (!s) return "";
@@ -82,21 +82,21 @@ export function ActivityTimeline({ items, objectLabel, attachmentsById }: { item
   return (
     <ol className="relative ml-2 border-l border-border pl-5">
       {items.map((a) => {
-        const Icon = iconFor[a.action] ?? ArrowRightLeft;
+        const icon = iconFor[a.action] ?? "swap_horiz";
         const attId = a.payload?.attachment_id as string | undefined;
         const att = attId && attachmentsById?.[attId];
         const isSync = a.source === "sync" || a.action.startsWith("evidence_") || a.action === "late_evidence";
         return (
           <li key={a.id} className="relative pb-5 last:pb-0">
-            <span className={cn("absolute -left-[29px] flex h-6 w-6 items-center justify-center rounded-full border border-border bg-card", isSync && "border-warning text-warning-text")}>
-              <Icon className="h-3.5 w-3.5" aria-hidden />
+            <span className={cn("absolute -left-[29px] flex h-6 w-6 items-center justify-center rounded-full border border-border bg-surface text-on-surface-variant", isSync && "border-warning text-warning")}>
+              <Icon name={icon} size={14} aria-hidden />
             </span>
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
               <time className="tnum text-xs text-muted-foreground" dateTime={a.occurred_at}>{fmtDateTime(a.occurred_at)}</time>
               <span className="text-body">{describeActivity(a, objectLabel)}</span>
-              <Badge className="bg-neutral-soft text-neutral-text">{a.source}{a.payload?.gps_status === "captured" ? " · GPS ✓" : ""}</Badge>
+              <Badge>{a.source}{a.payload?.gps_status === "captured" ? " · GPS ✓" : ""}</Badge>
             </div>
-            {a.action === "commented" && a.payload?.excerpt ? <p className="mt-1 rounded-md bg-muted px-3 py-2 text-sm">{String(a.payload.excerpt)}</p> : null}
+            {a.action === "commented" && a.payload?.excerpt ? <p className="mt-1 rounded-[var(--radius-sm)] bg-surface-container px-3 py-2 text-sm">{String(a.payload.excerpt)}</p> : null}
             {a.payload?.reason ? <p className="mt-1 text-sm text-muted-foreground">Alasan: {String(a.payload.reason)}</p> : null}
             {att && (att.thumb_url || att.url) && (
               <a href={att.url} target="_blank" rel="noreferrer" className="mt-2 inline-block">

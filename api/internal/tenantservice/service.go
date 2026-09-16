@@ -45,29 +45,65 @@ type Category struct {
 	DefaultPriority string     `json:"default_priority"`
 	DefaultTeamID   *uuid.UUID `json:"default_team_id"`
 	IsActive        bool       `json:"is_active"`
+	Icon            *string    `json:"icon"`
+	Profiles        []string   `json:"profiles"`
+	TenantVisible   bool       `json:"tenant_visible"`
+	PropertyID      *uuid.UUID `json:"property_id"`
 }
 
-func (s *Service) ListCategories(ctx context.Context) ([]Category, error) {
+// CategoryFilter: profile-aware (PRD §3.11 "service/request categories" per profile; kategori override per property).
+type CategoryFilter struct {
+	PropertyID *uuid.UUID
+	TenantOnly bool
+	IncludeAll bool // tanpa filter profile (untuk settings)
+}
+
+func (s *Service) ListCategories(ctx context.Context, f CategoryFilter) ([]Category, error) {
 	var out []Category
 	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT id, code, name, default_domain, default_priority, default_team_id, is_active FROM service_request_categories WHERE is_active ORDER BY sort_order, name`)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var c Category
-			if err := rows.Scan(&c.ID, &c.Code, &c.Name, &c.DefaultDomain, &c.DefaultPriority, &c.DefaultTeamID, &c.IsActive); err != nil {
-				return err
-			}
-			out = append(out, c)
-		}
-		return rows.Err()
+		var err error
+		out, err = s.ListCategoriesTx(ctx, tx, f)
+		return err
 	})
 	if out == nil {
 		out = []Category{}
 	}
 	return out, err
+}
+
+func (s *Service) ListCategoriesTx(ctx context.Context, tx pgx.Tx, f CategoryFilter) ([]Category, error) {
+	prof := ""
+	if f.PropertyID != nil && !f.IncludeAll {
+		if err := tx.QueryRow(ctx, `SELECT profile FROM properties WHERE location_id = $1`, *f.PropertyID).Scan(&prof); err != nil {
+			if db.IsNoRows(err) {
+				return nil, apperr.NotFound("Property")
+			}
+			return nil, err
+		}
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT id, code, name, default_domain, default_priority, default_team_id, is_active, icon, profiles, tenant_visible, property_id
+		FROM service_request_categories c
+		WHERE is_active
+		  AND ($1::uuid IS NULL OR property_id IS NULL OR property_id = $1)
+		  AND ($2 = '' OR $2 = ANY(profiles))
+		  AND (NOT $3::bool OR tenant_visible)
+		  -- override per property mengalahkan kategori org dengan kode sama
+		  AND NOT ($1::uuid IS NOT NULL AND property_id IS NULL AND EXISTS (SELECT 1 FROM service_request_categories o WHERE o.organization_id = c.organization_id AND o.property_id = $1 AND o.code = c.code))
+		ORDER BY sort_order, name`, f.PropertyID, prof, f.TenantOnly)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Category
+	for rows.Next() {
+		var c Category
+		if err := rows.Scan(&c.ID, &c.Code, &c.Name, &c.DefaultDomain, &c.DefaultPriority, &c.DefaultTeamID, &c.IsActive, &c.Icon, &c.Profiles, &c.TenantVisible, &c.PropertyID); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 type ServiceRequest struct {
@@ -105,6 +141,23 @@ type ServiceRequest struct {
 	CreatedBy       *uuid.UUID              `json:"created_by"`
 	CreatedByName   *string                 `json:"created_by_name"`
 	Version         int                     `json:"version"`
+	// P1 (PRD v1.3): pelapor Tenant App, lingkup lokasi, reopen, konfirmasi tenant, estimasi due, domain routing
+	TenantUserID    *uuid.UUID `json:"tenant_user_id"`
+	AreaScope       *string    `json:"area_scope"`
+	ReopenCount     int        `json:"reopen_count"`
+	ConfirmedAt     *time.Time `json:"confirmed_at"`
+	DueEstimateAt   *time.Time `json:"due_estimate_at"`
+	Domain          *string    `json:"domain"`
+	MessageCount    int        `json:"message_count"`
+	UnreadTenantMsg int        `json:"unread_tenant_messages"`
+	Feedback        *Feedback  `json:"feedback,omitempty"`
+}
+
+// Feedback: CSAT tenant (PRD §18).
+type Feedback struct {
+	Rating    int       `json:"rating"`
+	Comment   *string   `json:"comment"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type CreateInput struct {
@@ -122,6 +175,10 @@ type CreateInput struct {
 	Channel        string     `json:"channel"`
 	AssigneeUserID *uuid.UUID `json:"assignee_user_id"`
 	AssigneeTeamID *uuid.UUID `json:"assignee_team_id"`
+	// P1 — diisi jalur Mobile Tenant (tenantapp), bukan dari body staf
+	TenantUserID *uuid.UUID `json:"-"`
+	AreaScope    string     `json:"-"` // unit | common_area | other
+	AsTenant     bool       `json:"-"` // lewati cek permission staf (kepemilikan diverifikasi tenantapp)
 }
 
 type UpdateInput struct {
@@ -135,7 +192,7 @@ type UpdateInput struct {
 	RequesterPhone *string    `json:"requester_phone"`
 }
 
-var channels = map[string]bool{"staff": true, "phone": true, "walk_in": true, "public_intake": true, "email": true, "whatsapp": true}
+var channels = map[string]bool{"staff": true, "phone": true, "walk_in": true, "public_intake": true, "email": true, "whatsapp": true, "tenant_app": true}
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (*ServiceRequest, error) {
 	var out *ServiceRequest
@@ -183,17 +240,18 @@ func (s *Service) CreateTx(ctx context.Context, tx pgx.Tx, in CreateInput) (uuid
 	default:
 		return uuid.Nil, apperr.Validation("property_id, location_id, atau tenant_id wajib")
 	}
-	if !p.HasOnProperty("tenant.service_requests.create", propertyID) {
+	if !in.AsTenant && !p.HasOnProperty("tenant.service_requests.create", propertyID) {
 		return uuid.Nil, apperr.Forbidden("Tidak memiliki tenant.service_requests.create pada property ini")
 	}
-	// kategori → default priority/team
+	// kategori → default priority/team (override per property mengalahkan kategori org; PRD §11 "Property dapat mengatur category")
 	var catID *uuid.UUID
 	var catPrio string
 	var catTeam *uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT id, default_priority, default_team_id FROM service_request_categories WHERE code = $1 AND is_active`, in.CategoryCode).Scan(&catID, &catPrio, &catTeam); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id, default_priority, default_team_id FROM service_request_categories WHERE code = $1 AND is_active AND (property_id IS NULL OR property_id = $2) ORDER BY property_id NULLS LAST LIMIT 1`, in.CategoryCode, propertyID).Scan(&catID, &catPrio, &catTeam); err != nil {
 		return uuid.Nil, apperr.Validation("category_code tidak dikenal")
 	}
-	if in.Priority == "" {
+	if in.Priority == "" || in.AsTenant {
+		// PRD §13: tenant tidak bebas menaikkan priority — default dari kategori/rule
 		in.Priority = catPrio
 	}
 	if !operations.Priorities[in.Priority] {
@@ -231,9 +289,13 @@ func (s *Service) CreateTx(ctx context.Context, tx pgx.Tx, in CreateInput) (uuid
 		status = workflow.Assigned
 	}
 	var id uuid.UUID
-	err = tx.QueryRow(ctx, `INSERT INTO service_requests (organization_id, property_id, request_number, category_id, category_code, title, description, tenant_id, occupant_id, requester_name, requester_phone, requester_email, location_id, priority, status, channel, assignee_user_id, assignee_team_id, acknowledged_at, created_by, updated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$20) RETURNING id`,
-		p.OrganizationID, propertyID, number, catID, in.CategoryCode, in.Title, in.Description, in.TenantID, in.OccupantID, in.RequesterName, in.RequesterPhone, in.RequesterEmail, in.LocationID, in.Priority, status, in.Channel, in.AssigneeUserID, in.AssigneeTeamID, nilTimeIf(status == workflow.Assigned), actorOrNil(p)).Scan(&id)
+	var areaScope *string
+	if in.AreaScope != "" {
+		areaScope = &in.AreaScope
+	}
+	err = tx.QueryRow(ctx, `INSERT INTO service_requests (organization_id, property_id, request_number, category_id, category_code, title, description, tenant_id, occupant_id, requester_name, requester_phone, requester_email, location_id, priority, status, channel, assignee_user_id, assignee_team_id, acknowledged_at, created_by, updated_by, tenant_user_id, area_scope)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$20,$21,$22) RETURNING id`,
+		p.OrganizationID, propertyID, number, catID, in.CategoryCode, in.Title, in.Description, in.TenantID, in.OccupantID, in.RequesterName, in.RequesterPhone, in.RequesterEmail, in.LocationID, in.Priority, status, in.Channel, in.AssigneeUserID, in.AssigneeTeamID, nilTimeIf(status == workflow.Assigned), actorOrNil(p), in.TenantUserID, areaScope).Scan(&id)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -246,8 +308,11 @@ func (s *Service) CreateTx(ctx context.Context, tx pgx.Tx, in CreateInput) (uuid
 	_ = audit.Record(ctx, tx, audit.Entry{ObjectType: operations.ObjServiceRequest, ObjectID: id, Action: audit.ActCreated, Payload: map[string]any{"number": number, "category": in.CategoryCode, "channel": in.Channel}})
 	_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: operations.ObjServiceRequest, EntityID: &id, EntityLabel: number})
 	if s.Jobs != nil {
-		_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: events.ServiceRequestCreated, OrganizationID: p.OrganizationID, PropertyID: &propertyID, ObjectType: operations.ObjServiceRequest, ObjectID: id, ObjectLabel: number, ActorUserID: actorOrNil(p),
-			Payload: map[string]any{"category": in.CategoryCode, "priority": in.Priority, "domain": domainOf(ctx, tx, in.CategoryCode), "assignee_user_id": in.AssigneeUserID, "assignee_team_id": in.AssigneeTeamID}})
+		payload := map[string]any{"category": in.CategoryCode, "priority": in.Priority, "domain": domainOf(ctx, tx, in.CategoryCode), "assignee_user_id": in.AssigneeUserID, "assignee_team_id": in.AssigneeTeamID, "channel": in.Channel}
+		if in.TenantUserID != nil {
+			payload["tenant_user_id"] = *in.TenantUserID
+		}
+		_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: events.ServiceRequestCreated, OrganizationID: p.OrganizationID, PropertyID: &propertyID, ObjectType: operations.ObjServiceRequest, ObjectID: id, ObjectLabel: number, ActorUserID: actorOrNil(p), Payload: payload})
 		if in.AssigneeUserID != nil || in.AssigneeTeamID != nil {
 			_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: events.ServiceRequestAssigned, OrganizationID: p.OrganizationID, PropertyID: &propertyID, ObjectType: operations.ObjServiceRequest, ObjectID: id, ObjectLabel: number, ActorUserID: actorOrNil(p),
 				Payload: map[string]any{"assignee_user_id": in.AssigneeUserID, "assignee_team_id": in.AssigneeTeamID}})
@@ -285,16 +350,27 @@ const srSelect = `SELECT sr.id, sr.property_id, sr.request_number, sr.category_c
 	sr.location_id, l.name, sr.priority, sr.status, sr.channel, sr.assignee_user_id, au.full_name, sr.assignee_team_id, at.name, sr.acknowledged_at, sr.resolved_at, sr.closed_at, sr.resolution,
 	sr.sla_risk_at, sr.sla_breached_at, sr.created_at, sr.created_by, cu.full_name, sr.version,
 	(SELECT count(*) FROM attachments x WHERE x.object_type = 'service_request' AND x.object_id = sr.id AND x.deleted_at IS NULL),
-	(SELECT count(*) FROM comments cm WHERE cm.object_type = 'service_request' AND cm.object_id = sr.id AND cm.deleted_at IS NULL)
-	FROM service_requests sr LEFT JOIN service_request_categories c ON c.id = sr.category_id LEFT JOIN tenants t ON t.id = sr.tenant_id LEFT JOIN locations l ON l.id = sr.location_id
+	(SELECT count(*) FROM comments cm WHERE cm.object_type = 'service_request' AND cm.object_id = sr.id AND cm.deleted_at IS NULL),
+	sr.tenant_user_id, sr.area_scope, sr.reopen_count, sr.confirmed_at, sr.due_estimate_at, c.default_domain,
+	(SELECT count(*) FROM service_request_messages m WHERE m.service_request_id = sr.id),
+	(SELECT count(*) FROM service_request_messages m WHERE m.service_request_id = sr.id AND m.author_kind = 'tenant' AND m.read_by_staff_at IS NULL),
+	fb.rating, fb.comment, fb.created_at
+	FROM service_requests sr LEFT JOIN service_request_feedback fb ON fb.service_request_id = sr.id LEFT JOIN service_request_categories c ON c.id = sr.category_id LEFT JOIN tenants t ON t.id = sr.tenant_id LEFT JOIN locations l ON l.id = sr.location_id
 	LEFT JOIN users au ON au.id = sr.assignee_user_id LEFT JOIN teams at ON at.id = sr.assignee_team_id LEFT JOIN users cu ON cu.id = sr.created_by`
 
 func scanSR(row pgx.Row) (*ServiceRequest, error) {
 	var r ServiceRequest
+	var fbRating *int
+	var fbComment *string
+	var fbAt *time.Time
 	if err := row.Scan(&r.ID, &r.PropertyID, &r.RequestNumber, &r.CategoryCode, &r.CategoryName, &r.Title, &r.Description, &r.TenantID, &r.TenantName, &r.OccupantID, &r.RequesterName, &r.RequesterPhone, &r.RequesterEmail,
 		&r.Location.ID, &r.Location.Name, &r.Priority, &r.Status, &r.Channel, &r.Assignee.UserID, &r.Assignee.UserName, &r.Assignee.TeamID, &r.Assignee.TeamName, &r.AcknowledgedAt, &r.ResolvedAt, &r.ClosedAt, &r.Resolution,
-		&r.SLARiskAt, &r.SLABreachedAt, &r.CreatedAt, &r.CreatedBy, &r.CreatedByName, &r.Version, &r.AttachmentCount, &r.CommentCount); err != nil {
+		&r.SLARiskAt, &r.SLABreachedAt, &r.CreatedAt, &r.CreatedBy, &r.CreatedByName, &r.Version, &r.AttachmentCount, &r.CommentCount,
+		&r.TenantUserID, &r.AreaScope, &r.ReopenCount, &r.ConfirmedAt, &r.DueEstimateAt, &r.Domain, &r.MessageCount, &r.UnreadTenantMsg, &fbRating, &fbComment, &fbAt); err != nil {
 		return nil, err
+	}
+	if fbRating != nil {
+		r.Feedback = &Feedback{Rating: *fbRating, Comment: fbComment, CreatedAt: *fbAt}
 	}
 	r.Flags = []string{}
 	if r.SLABreachedAt != nil {
@@ -613,9 +689,23 @@ type TransitionInput struct {
 }
 
 func (s *Service) Transition(ctx context.Context, id uuid.UUID, action string, in TransitionInput) (*ServiceRequest, error) {
-	p := authctx.Must(ctx)
 	var out *ServiceRequest
 	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		if err := s.TransitionTx(ctx, tx, id, action, in, false); err != nil {
+			return err
+		}
+		var err error
+		out, err = s.getTx(ctx, tx, id)
+		return err
+	})
+	return out, err
+}
+
+// TransitionTx: transisi SR di dalam tx. asTenant=true dipakai jalur Mobile Tenant (P1): kepemilikan & aksi yang
+// diizinkan sudah diverifikasi oleh tenantapp, sehingga cek permission staf dilewati (guardrail #9: reopen auditable).
+func (s *Service) TransitionTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, action string, in TransitionInput, asTenant bool) error {
+	p := authctx.Must(ctx)
+	{
 		r, err := s.getTx(ctx, tx, id)
 		if err != nil {
 			return err
@@ -624,7 +714,7 @@ func (s *Service) Transition(ctx context.Context, id uuid.UUID, action string, i
 		if !ok {
 			return apperr.InvalidTransition(fmt.Sprintf("Service Request %s cannot be %s from status %s", r.RequestNumber, action, r.Status))
 		}
-		if !p.HasOnProperty(tr.Perm, r.PropertyID) {
+		if !asTenant && !p.HasOnProperty(tr.Perm, r.PropertyID) {
 			return apperr.Forbidden("Memerlukan " + tr.Perm)
 		}
 		reason := strings.TrimSpace(in.Reason)
@@ -660,8 +750,11 @@ func (s *Service) Transition(ctx context.Context, id uuid.UUID, action string, i
 			_, _ = tx.Exec(ctx, `UPDATE sla_tracking SET resolved_at = $2 WHERE object_type = 'service_request' AND object_id = $1`, id, now)
 		case workflow.ActClose:
 			sets += ", closed_at = now()"
+			if asTenant {
+				sets += ", confirmed_at = now()" // PRD §17: tenant Confirm Resolved
+			}
 		case workflow.ActReopen:
-			sets += ", resolved_at = NULL, closed_at = NULL"
+			sets += ", resolved_at = NULL, closed_at = NULL, confirmed_at = NULL, reopen_count = reopen_count + 1"
 			_, _ = tx.Exec(ctx, `UPDATE sla_tracking SET resolved_at = NULL WHERE object_type = 'service_request' AND object_id = $1`, id)
 		case workflow.ActCancel:
 			sets += ", cancelled_at = now()"
@@ -673,22 +766,30 @@ func (s *Service) Transition(ctx context.Context, id uuid.UUID, action string, i
 		if _, err := tx.Exec(ctx, `UPDATE service_requests SET `+sets+` WHERE id = $1`, args...); err != nil {
 			return err
 		}
-		_ = audit.Record(ctx, tx, audit.Entry{ObjectType: operations.ObjServiceRequest, ObjectID: id, Action: audit.ActStatusChanged, From: string(r.Status), To: string(tr.To), Payload: map[string]any{"action": action, "reason": reason}})
+		actorKind := "staff"
+		if asTenant {
+			actorKind = "tenant"
+		}
+		_ = audit.Record(ctx, tx, audit.Entry{ObjectType: operations.ObjServiceRequest, ObjectID: id, Action: audit.ActStatusChanged, From: string(r.Status), To: string(tr.To), Payload: map[string]any{"action": action, "reason": reason, "actor_kind": actorKind}})
 		if action == workflow.ActResolve {
 			_ = audit.Record(ctx, tx, audit.Entry{ObjectType: operations.ObjServiceRequest, ObjectID: id, Action: audit.ActResolved, Payload: map[string]any{"resolution": reason}})
+		}
+		if action == workflow.ActReopen {
+			_ = audit.Record(ctx, tx, audit.Entry{ObjectType: operations.ObjServiceRequest, ObjectID: id, Action: audit.ActReopened, Payload: map[string]any{"reason": reason, "actor_kind": actorKind}})
 		}
 		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditStatusChange, EntityType: operations.ObjServiceRequest, EntityID: &id, EntityLabel: r.RequestNumber, Before: map[string]any{"status": r.Status}, After: map[string]any{"status": tr.To, "reason": reason}})
 		if s.Jobs != nil {
 			verb := map[string]string{workflow.ActAcknowledge: "acknowledged", workflow.ActStart: "started", workflow.ActResolve: "resolved", workflow.ActClose: "closed", workflow.ActReopen: "reopened", workflow.ActCancel: "cancelled", workflow.ActWaitTenant: "waiting_for_tenant"}[action]
-			_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: "service_request." + verb, OrganizationID: p.OrganizationID, PropertyID: &r.PropertyID, ObjectType: operations.ObjServiceRequest, ObjectID: id, ObjectLabel: r.RequestNumber, ActorUserID: &p.UserID,
-				Payload: map[string]any{"from": r.Status, "to": tr.To, "assignee_user_id": r.Assignee.UserID, "assignee_team_id": r.Assignee.TeamID, "requester_user_id": r.CreatedBy}})
-			_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: events.ServiceRequestStatusChanged, OrganizationID: p.OrganizationID, PropertyID: &r.PropertyID, ObjectType: operations.ObjServiceRequest, ObjectID: id, ObjectLabel: r.RequestNumber, ActorUserID: &p.UserID, Payload: map[string]any{"from": r.Status, "to": tr.To}})
+			payload := map[string]any{"from": r.Status, "to": tr.To, "assignee_user_id": r.Assignee.UserID, "assignee_team_id": r.Assignee.TeamID, "requester_user_id": r.CreatedBy, "actor_kind": actorKind, "domain": deref(r.Domain)}
+			if r.TenantUserID != nil {
+				payload["tenant_user_id"] = *r.TenantUserID
+			}
+			_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: "service_request." + verb, OrganizationID: p.OrganizationID, PropertyID: &r.PropertyID, ObjectType: operations.ObjServiceRequest, ObjectID: id, ObjectLabel: r.RequestNumber, ActorUserID: &p.UserID, Payload: payload})
+			_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: events.ServiceRequestStatusChanged, OrganizationID: p.OrganizationID, PropertyID: &r.PropertyID, ObjectType: operations.ObjServiceRequest, ObjectID: id, ObjectLabel: r.RequestNumber, ActorUserID: &p.UserID, Payload: payload})
 			_ = s.Jobs.EnqueueTx(ctx, tx, jobs.SearchIndexArgs{OrganizationID: p.OrganizationID, ObjectType: operations.ObjServiceRequest, ObjectID: id})
 		}
-		out, err = s.getTx(ctx, tx, id)
-		return err
-	})
-	return out, err
+	}
+	return nil
 }
 
 // CreateWorkOrderFromSR (AT-008): WO ter-link generated_from SR; SR → in_progress.

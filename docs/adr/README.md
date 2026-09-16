@@ -13,3 +13,4 @@ Status: Diterima kecuali disebut lain. Format: Konteks → Keputusan → Konseku
 - [ADR-009](ADR-009-deploy-docker-compose-vps.md) — Deployment pilot: Docker Compose di VPS
 - [ADR-010](ADR-010-offline-sync-server-authoritative.md) — Offline sync server-authoritative dengan explicit conflict handling (OD-004)
 - [ADR-011](ADR-011-observability-minimum-p0.md) — Observability minimum P0: slog JSON + Prometheus + Loki
+- [ADR-012](ADR-012-p1-profile-tenant-commercial.md) — P1 v1.3: Property Profile, identitas tenant, objek komersial, keputusan TD-P1-001..012

@@ -91,6 +91,9 @@ export interface WorkItem {
   actual_cost?: Money | null;
   parts_usage?: string | null;
   vendor_reference?: string | null;
+  vendor_id?: string | null;
+  vendor_name?: string | null;
+  vendor_notes?: string | null;
   reopen_count?: number | null;
   requester_user_id?: string | null;
   maintenance_schedule_id?: string | null;
@@ -135,6 +138,16 @@ export interface ServiceRequest {
   created_at: string;
   created_by_name: string | null;
   version: number;
+  // P1 (PRD v1.3)
+  tenant_user_id: string | null;
+  area_scope: "unit" | "common_area" | "other" | null;
+  reopen_count: number;
+  confirmed_at: string | null;
+  due_estimate_at: string | null;
+  domain: string | null;
+  message_count: number;
+  unread_tenant_messages: number;
+  feedback?: { rating: number; comment: string | null; created_at: string } | null;
 }
 export interface Incident {
   id: string;

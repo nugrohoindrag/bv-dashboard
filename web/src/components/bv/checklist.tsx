@@ -1,7 +1,7 @@
 // ChecklistRunner (web: review + edit oleh supervisor, DS §4.6) dan PhotoEvidenceUploader (DS §4.7)
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
-import { Camera, CloudUpload, FileText, ImageOff, MapPin, MapPinOff } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import { Badge, Input, Segmented, Textarea } from "@/components/ui/primitives";
 import { useAnswerItem, uploadAttachment } from "@/api/hooks";
 import { useToast } from "./common";
@@ -33,7 +33,7 @@ function ResultBadge({ item }: { item: ChecklistRunItem }) {
     case "text":
       return <span className="text-sm">{item.result_text}</span>;
     case "photo":
-      return item.attachment_id ? <Badge className="bg-success-soft text-success-text">Foto ✓</Badge> : <Badge className="bg-warning-soft text-warning-text"><ImageOff className="h-3 w-3" /> Foto kurang</Badge>;
+      return item.attachment_id ? <Badge className="bg-success-soft text-success-text">Foto ✓</Badge> : <Badge className="bg-warning-soft text-warning-text"><Icon name="hide_image" size={12} /> Foto kurang</Badge>;
   }
 }
 
@@ -131,9 +131,9 @@ export function PhotoEvidenceUploader({ objectType, objectId, attachmentType = "
     <div {...getRootProps()} className={cn("flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed text-sm text-muted-foreground transition-colors hover:border-brand-500 hover:bg-brand-50", isDragActive && "border-brand-500 bg-brand-50", compact ? "h-12 px-3" : "h-28 px-4", disabled && "cursor-not-allowed opacity-50")}>
       <input {...getInputProps()} aria-label={label ?? "Unggah foto"} />
       {progress !== null ? (
-        <span className="inline-flex items-center gap-2"><CloudUpload className="h-4 w-4 animate-pulse" /> Mengunggah… {progress}%</span>
+        <span className="inline-flex items-center gap-2"><Icon name="cloud_upload" size={16} className="animate-pulse" /> Mengunggah… {progress}%</span>
       ) : (
-        <span className="inline-flex items-center gap-2">{attachmentType === "document" ? <FileText className="h-4 w-4" /> : <Camera className="h-4 w-4" />} {label ?? (compact ? "Unggah foto" : "Seret foto ke sini atau klik untuk memilih (≤10 MB, dikompres ≤1600px)")}</span>
+        <span className="inline-flex items-center gap-2">{attachmentType === "document" ? <Icon name="description" size={16} /> : <Icon name="photo_camera" size={16} />} {label ?? (compact ? "Unggah foto" : "Seret foto ke sini atau klik untuk memilih (≤10 MB, dikompres ≤1600px)")}</span>
       )}
     </div>
   );
@@ -150,7 +150,7 @@ export function AttachmentGrid({ items, emptyLabel = "Belum ada foto." }: { item
               <img src={a.thumb_url ?? a.url} alt={a.caption ?? a.attachment_type} className="h-28 w-full object-cover" />
             </a>
           ) : (
-            <div className="flex h-28 items-center justify-center text-muted-foreground"><FileText className="h-8 w-8" /></div>
+            <div className="flex h-28 items-center justify-center text-muted-foreground"><Icon name="description" size={32} /></div>
           )}
           <figcaption className="space-y-0.5 px-2 py-1.5 text-xs text-muted-foreground">
             <div className="flex items-center justify-between">
@@ -158,7 +158,7 @@ export function AttachmentGrid({ items, emptyLabel = "Belum ada foto." }: { item
               <Badge className={a.status === "ready" ? "bg-success-soft text-success-text" : a.status === "failed" ? "bg-critical-soft text-critical-text" : "bg-warning-soft text-warning-text"}>{a.status}</Badge>
             </div>
             <div className="truncate">{a.uploaded_by_name}</div>
-            <div className="flex items-center gap-1 tnum">{fmtDateTime(a.captured_at ?? a.uploaded_at)} {a.gps_status === "captured" ? <MapPin className="h-3 w-3 text-success" aria-label="GPS captured" /> : <MapPinOff className="h-3 w-3" aria-label={`GPS ${a.gps_status}`} />}</div>
+            <div className="flex items-center gap-1 tnum">{fmtDateTime(a.captured_at ?? a.uploaded_at)} {a.gps_status === "captured" ? <Icon name="location_on" size={12} className="text-success" aria-label="GPS captured" /> : <Icon name="location_off" size={12} aria-label={`GPS ${a.gps_status}`} />}</div>
           </figcaption>
         </figure>
       ))}

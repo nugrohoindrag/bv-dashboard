@@ -98,10 +98,11 @@ const workItemSelect = `
 
 func selectFor(t tableInfo) string {
 	evidenceCol := "tasks.requires_photo"
-	woCols := "NULL::text, NULL::bigint, NULL::bigint, NULL::char(3), NULL::text, NULL::text, NULL::int, NULL::uuid, NULL::uuid"
+	woCols := "NULL::text, NULL::bigint, NULL::bigint, NULL::char(3), NULL::text, NULL::text, NULL::int, NULL::uuid, NULL::uuid, NULL::uuid, NULL::text, NULL::text"
 	if t.table == "work_orders" {
 		evidenceCol = "work_orders.requires_evidence"
-		woCols = "work_orders.resolution, work_orders.estimated_cost_amount, work_orders.actual_cost_amount, work_orders.currency_code, work_orders.parts_usage, work_orders.vendor_reference, work_orders.reopen_count, work_orders.requester_user_id, work_orders.maintenance_schedule_id"
+		// P1: vendor_id/vendor_name/vendor_notes (Vendor Work Order, NC §37)
+		woCols = "work_orders.resolution, work_orders.estimated_cost_amount, work_orders.actual_cost_amount, work_orders.currency_code, work_orders.parts_usage, work_orders.vendor_reference, work_orders.reopen_count, work_orders.requester_user_id, work_orders.maintenance_schedule_id, work_orders.vendor_id, (SELECT name FROM vendors vd WHERE vd.id = work_orders.vendor_id), work_orders.vendor_notes"
 	}
 	return fmt.Sprintf(workItemSelect, t.table, t.numberCol, t.typeCol, evidenceCol, woCols)
 }
@@ -119,6 +120,7 @@ func scanWorkItem(row pgx.Row, objectType string) (*WorkItem, error) {
 		&w.Assignee.UserID, &w.Assignee.UserName, &w.Assignee.TeamID, &w.Assignee.TeamName,
 		&w.SourceType, &w.SourceID, &w.CreatedAt, &w.CreatedBy, &w.CreatedByName, &w.UpdatedAt, &w.Version,
 		&w.Resolution, &estAmt, &actAmt, &cur, &w.PartsUsage, &w.VendorReference, &w.ReopenCount, &w.RequesterUserID, &w.MaintenanceScheduleID,
+		&w.VendorID, &w.VendorName, &w.VendorNotes,
 	); err != nil {
 		return nil, err
 	}
@@ -376,6 +378,20 @@ func (s *Service) ObjectAccess(ctx context.Context, tx pgx.Tx, objectType string
 	case ObjServiceRequest:
 		if err := tx.QueryRow(ctx, `SELECT property_id FROM service_requests WHERE id = $1`, objectID).Scan(&propertyID); err != nil {
 			return apperr.NotFound("Service Request")
+		}
+		if p.IsTenant {
+			// P1 (guardrail #4, #11): akun Mobile Tenant hanya menyentuh SR miliknya (tenant_admin: seluruh SR tenant-nya)
+			var ok bool
+			_ = tx.QueryRow(ctx, `SELECT EXISTS (
+				SELECT 1 FROM service_requests sr JOIN tenant_users tu ON tu.user_id = $2 AND tu.status = 'active'
+				WHERE sr.id = $1 AND (sr.tenant_user_id = $2 OR (tu.role = 'tenant_admin' AND tu.tenant_id IS NOT NULL AND sr.tenant_id = tu.tenant_id)))`, objectID, p.UserID).Scan(&ok)
+			if !ok {
+				return apperr.NotFound("Service Request")
+			}
+			if write && !p.Has("tenant_app.requests.create") {
+				return apperr.Forbidden("")
+			}
+			return nil
 		}
 		if !p.HasOnProperty("tenant.service_requests.view", propertyID) {
 			return apperr.Forbidden("")

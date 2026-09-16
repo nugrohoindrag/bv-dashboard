@@ -69,14 +69,15 @@ type loginResp struct {
 }
 
 type meResp struct {
-	ID           uuid.UUID       `json:"id"`
-	FullName     string          `json:"full_name"`
-	Organization uuid.UUID       `json:"organization_id"`
-	Roles        []string        `json:"roles"`
-	TeamIDs      []uuid.UUID     `json:"team_ids"`
-	LeadTeamIDs  []uuid.UUID     `json:"lead_team_ids"`
-	Permissions  []string        `json:"permissions"`
-	Properties   []propertyScope `json:"properties"`
+	ID              uuid.UUID       `json:"id"`
+	FullName        string          `json:"full_name"`
+	Organization    uuid.UUID       `json:"organization_id"`
+	Roles           []string        `json:"roles"`
+	TeamIDs         []uuid.UUID     `json:"team_ids"`
+	LeadTeamIDs     []uuid.UUID     `json:"lead_team_ids"`
+	Permissions     []string        `json:"permissions"`
+	Properties      []propertyScope `json:"properties"`
+	IsInternalAdmin bool            `json:"is_internal_admin"` // Website PRD §18: menu App Downloads hanya untuk admin_internal
 }
 
 type propertyScope struct {
@@ -84,8 +85,11 @@ type propertyScope struct {
 	Permissions []string   `json:"permissions"`
 }
 
+// ToMe: representasi principal untuk respons login/verify (dipakai lintas package).
+func ToMe(p *authctx.Principal) any { return toMe(p) }
+
 func toMe(p *authctx.Principal) meResp {
-	m := meResp{ID: p.UserID, FullName: p.FullName, Organization: p.OrganizationID, Roles: p.RoleCodes, TeamIDs: p.TeamIDs, LeadTeamIDs: p.LeadTeamIDs, Permissions: p.AllPermissions()}
+	m := meResp{ID: p.UserID, FullName: p.FullName, Organization: p.OrganizationID, Roles: p.RoleCodes, TeamIDs: p.TeamIDs, LeadTeamIDs: p.LeadTeamIDs, Permissions: p.AllPermissions(), IsInternalAdmin: p.IsInternalAdmin}
 	if m.Roles == nil {
 		m.Roles = []string{}
 	}
@@ -125,8 +129,8 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := loginResp{TokenPair: *pair, User: toMe(p)}
-	if req.Client != "mobile" {
-		// web: refresh token di cookie HttpOnly; tidak dikirim di body
+	if req.Client != "mobile" && req.Client != authctx.ClientTenantApp {
+		// web: refresh token di cookie HttpOnly; tidak dikirim di body (mobile & tenant_app: di body)
 		h.setRefreshCookie(w, pair.RefreshToken, pair.RefreshExpiresAt)
 		resp.RefreshToken = ""
 	}
@@ -159,7 +163,7 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if fromCookie || req.Client != "mobile" {
+	if fromCookie || (req.Client != "mobile" && req.Client != authctx.ClientTenantApp) {
 		h.setRefreshCookie(w, pair.RefreshToken, pair.RefreshExpiresAt)
 		if fromCookie {
 			pair.RefreshToken = ""
@@ -196,7 +200,12 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) setRefreshCookie(w http.ResponseWriter, token string, exp time.Time) {
-	http.SetCookie(w, &http.Cookie{Name: refreshCookie, Value: token, Path: "/api/v1/auth", Domain: h.CookieDomain, Expires: exp, HttpOnly: true, Secure: h.CookieSecure, SameSite: http.SameSiteStrictMode})
+	WriteRefreshCookie(w, token, exp, h.CookieDomain, h.CookieSecure)
+}
+
+// WriteRefreshCookie: cookie refresh token web (HttpOnly, path /api/v1/auth) — dipakai juga oleh alur verifikasi signup (growth).
+func WriteRefreshCookie(w http.ResponseWriter, token string, exp time.Time, domain string, secure bool) {
+	http.SetCookie(w, &http.Cookie{Name: refreshCookie, Value: token, Path: "/api/v1/auth", Domain: domain, Expires: exp, HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
 }
 func (h *Handler) clearRefreshCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: refreshCookie, Value: "", Path: "/api/v1/auth", Domain: h.CookieDomain, MaxAge: -1, HttpOnly: true, Secure: h.CookieSecure, SameSite: http.SameSiteStrictMode})

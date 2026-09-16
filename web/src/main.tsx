@@ -1,6 +1,14 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+// Urutan penting: token DS -> palet BuildingVision (re-point token) -> lapisan bv -> Tailwind (alias ke token).
+import "@buildingvision/ui/bv/fonts.css";
+import "@buildingvision/ui/tokens.css";
+import "@buildingvision/ui/bv/palette.css";
+import "@buildingvision/ui/bv/table-header.css";
+import "@buildingvision/ui/bv/mirror-fixes.css";
+import "@buildingvision/ui/bv/layout.css";
+import "@buildingvision/ui/bv/sidebar.css";
 import "./styles/theme.css";
 import "./lib/i18n";
 import { AuthProvider } from "./lib/auth";

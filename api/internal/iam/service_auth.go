@@ -97,9 +97,6 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, *authct
 			}
 			return err
 		}
-		if !u.IsActive {
-			return apperr.Unauthorized("Akun tidak aktif")
-		}
 		if u.LockedUntil != nil && u.LockedUntil.After(time.Now()) {
 			return apperr.New(423, "ACCOUNT_LOCKED", "Account locked", "Akun terkunci sementara; coba lagi nanti")
 		}
@@ -121,9 +118,35 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, *authct
 			})
 			return apperr.Unauthorized("Email/username atau password salah")
 		}
+		// TD-P1-003: akun Mobile Tenant vs akun staf — dicek setelah password valid agar status tidak bocor tanpa kredensial
+		var tuStatus *string
+		_ = tx.QueryRow(ctx, `SELECT status FROM tenant_users WHERE user_id = $1`, u.ID).Scan(&tuStatus)
+		isTenant := tuStatus != nil
+		if in.Client == authctx.ClientTenantApp && !isTenant {
+			return apperr.New(403, "NOT_TENANT_ACCOUNT", "Not a tenant account", "Akun ini bukan akun tenant; gunakan dashboard atau Staff App")
+		}
+		if in.Client != authctx.ClientTenantApp && isTenant {
+			return apperr.New(403, "TENANT_ACCOUNT_ONLY", "Tenant account", "Akun tenant hanya dapat masuk melalui Tenant App")
+		}
+		if isTenant {
+			switch *tuStatus {
+			case "pending_validation":
+				return apperr.New(403, "ACCOUNT_PENDING", "Account pending validation", "Akun menunggu validasi building management")
+			case "rejected":
+				return apperr.New(403, "ACCOUNT_REJECTED", "Account rejected", "Pendaftaran akun ditolak")
+			case "suspended":
+				return apperr.New(403, "ACCOUNT_SUSPENDED", "Account suspended", "Akun ditangguhkan; hubungi building management")
+			}
+		}
+		if !u.IsActive {
+			return apperr.Unauthorized("Akun tidak aktif")
+		}
 		_, err = tx.Exec(ctx, `UPDATE users SET failed_login_count = 0, locked_until = NULL, last_login_at = now() WHERE id = $1`, u.ID)
 		if err != nil {
 			return err
+		}
+		if isTenant {
+			_, _ = tx.Exec(ctx, `UPDATE tenant_users SET last_seen_at = now() WHERE user_id = $1`, u.ID)
 		}
 		// buat session
 		raw, hash, err := NewRefreshToken()
@@ -145,6 +168,10 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, *authct
 		}
 		pair = &TokenPair{AccessToken: access, AccessExpiresAt: exp, RefreshToken: raw, RefreshExpiresAt: now.Add(s.RefreshTTL), TokenType: "Bearer"}
 		_ = audit.LogAs(ctx, tx, u.OrgID, &u.ID, in.IP, in.UserAgent, audit.AuditEntry{Action: audit.AuditLogin, EntityType: "user", EntityID: &u.ID, EntityLabel: u.FullName, After: map[string]any{"client": in.Client}})
+		// scope org agar roles/teams (RLS) terbaca untuk respons login (user.roles, is_internal_admin)
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.organization_id', $1, true)`, u.OrgID.String()); err != nil {
+			return err
+		}
 		principal, err = s.loadPrincipalTx(ctx, tx, u.ID, u.OrgID, sid, u.PermVersion)
 		return err
 	})
@@ -331,6 +358,15 @@ func (s *Service) loadPrincipalTx(ctx context.Context, tx pgx.Tx, userID, orgID,
 	}
 	for r := range roleSet {
 		p.RoleCodes = append(p.RoleCodes, r)
+		if catalog.IsTenantRole(r) {
+			p.IsTenant = true
+		}
+		if catalog.IsInternalRole(r) {
+			// role internal hanya berlaku bila organization memang internal (bukan sekadar nama role)
+			var internal bool
+			_ = tx.QueryRow(ctx, `SELECT is_internal FROM organizations WHERE id = $1`, orgID).Scan(&internal)
+			p.IsInternalAdmin = internal
+		}
 	}
 	trows, err := tx.Query(ctx, `SELECT team_id, is_lead FROM team_members WHERE user_id = $1`, userID)
 	if err != nil {
@@ -411,4 +447,37 @@ func (s *Service) LoadPrincipal(ctx context.Context, userID, orgID uuid.UUID) (*
 	}
 	p.Source = authctx.SourceSystem
 	return p, nil
+}
+
+// IssueSessionTx: membuat session + token pair untuk user yang sudah terautentikasi lewat jalur lain
+// (verifikasi email signup, Website PRD §25). Dipanggil di dalam transaksi org user tersebut.
+func (s *Service) IssueSessionTx(ctx context.Context, tx pgx.Tx, userID, orgID uuid.UUID, client, ip, ua string) (*TokenPair, error) {
+	if client == "" {
+		client = "web"
+	}
+	var permVersion int
+	var fullName string
+	if err := tx.QueryRow(ctx, `SELECT permission_version, full_name FROM users WHERE id = $1 AND organization_id = $2 AND is_active AND deleted_at IS NULL`, userID, orgID).Scan(&permVersion, &fullName); err != nil {
+		return nil, apperr.Unauthorized("akun tidak ditemukan")
+	}
+	raw, hash, err := NewRefreshToken()
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	var sid uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO sessions (organization_id, user_id, refresh_token_hash, client, ip, user_agent, expires_at)
+		VALUES ($1,$2,$3,$4,NULLIF($5,'')::inet,NULLIF($6,''),$7) RETURNING id`,
+		orgID, userID, hash, client, ip, ua, now.Add(s.RefreshTTL)).Scan(&sid); err != nil {
+		return nil, err
+	}
+	_, _ = tx.Exec(ctx, `UPDATE users SET last_login_at = now() WHERE id = $1`, userID)
+	access, exp, err := s.Signer.Sign(userID, orgID, sid, permVersion, client, now)
+	if err != nil {
+		return nil, err
+	}
+	_ = audit.LogAs(ctx, tx, orgID, &userID, ip, ua, audit.AuditEntry{Action: audit.AuditLogin, EntityType: "user", EntityID: &userID, EntityLabel: fullName, After: map[string]any{"client": client, "via": "email_verification"}})
+	s.permCache.Delete(userID)
+	return &TokenPair{AccessToken: access, AccessExpiresAt: exp, RefreshToken: raw, RefreshExpiresAt: now.Add(s.RefreshTTL), TokenType: "Bearer"}, nil
 }

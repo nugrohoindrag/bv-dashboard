@@ -1,7 +1,7 @@
 // Roles & Permissions (PRD §22.3): role sistem (read-only) + role kustom dengan matriks permission modul.objek.aksi.
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import { Button, Checkbox, Field, Input, NativeSelect } from "@/components/ui/primitives";
 import { useToast } from "@/components/bv/common";
 import { useAll, useCreate, useInvalidate } from "@/api/hooks";
@@ -20,7 +20,7 @@ export default function RolesSection() {
   return (
     <div className="grid grid-cols-12 gap-5">
       <div className="col-span-4 space-y-2">
-        {can("iam.roles.create") && <Button className="w-full" onClick={() => setSel("new")}><Plus /> Role kustom</Button>}
+        {can("iam.roles.create") && <Button className="w-full" onClick={() => setSel("new")}><Icon name="add" size={16} /> Role kustom</Button>}
         <ul className="divide-y divide-border rounded-md border border-border">
           {(roles.data ?? []).map((r) => (
             <li key={r.id}><button type="button" className={cn("flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-muted", sel !== "new" && sel?.id === r.id && "bg-brand-50")} onClick={() => setSel(r)}><span><span className="font-medium">{r.name}</span><span className="ml-1 text-xs text-muted-foreground">{r.is_system ? "sistem" : "kustom"}{r.domain ? ` · ${r.domain}` : ""}</span></span><span className="text-xs text-muted-foreground tnum">{r.user_count} user · {r.permissions.length} izin</span></button></li>

@@ -1,11 +1,13 @@
-// DataGrid (DS §4.8): TanStack Table + cursor pagination "Muat lebih banyak", bulk action bar, ⋯ quick actions
+// DataGrid: TanStack Table di atas tabel design system (.bv-table: header solid primary, hairline baris), cursor pagination
+// "Muat lebih banyak", bulk action bar, aksi baris via RowActionMenu (bv).
 // FilterBar (DS §4.9): Status · Priority · Location · Assignee · Team · Date range + search; filter di URL query; preset chips
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef, type RowSelectionState } from "@tanstack/react-table";
-import { ArrowDown, ArrowUp, ArrowUpDown, Download, MoreHorizontal, RotateCcw, Search, X } from "lucide-react";
-import { Button, Checkbox, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, Input, NativeSelect, THead, TBody, TD, TH, TR, Table } from "@/components/ui/primitives";
+import { Icon } from "@buildingvision/ui";
+import { FilterChip, RowActionMenu } from "@buildingvision/ui/bv";
+import { Button, Checkbox, Input, NativeSelect, THead, TBody, TD, TH, TR, Table } from "@/components/ui/primitives";
 import { LocationPicker, TeamPicker, UserPicker } from "./pickers";
 import { ListSkeleton, EmptyState } from "./common";
 import { cn } from "@/lib/utils";
@@ -25,10 +27,16 @@ export interface DataGridProps<T> {
   total?: number;
   selectable?: boolean;
   bulkActions?: (ids: string[], clear: () => void) => React.ReactNode;
-  rowActions?: (r: T) => { label: string; onSelect: () => void; destructive?: boolean }[];
+  rowActions?: (r: T) => { label: string; onSelect: () => void; destructive?: boolean; icon?: string }[];
   sort?: string;
   onSort?: (s: string) => void;
   rowClassName?: (r: T) => string | undefined;
+}
+
+// Kolom identitas/waktu/aksi tidak boleh terpotong baris; kolom judul/lokasi boleh membungkus.
+function nowrapColumn(id: string, meta: unknown): boolean {
+  if ((meta as { nowrap?: boolean } | undefined)?.nowrap) return true;
+  return id === "_select" || id === "_actions" || id === "actions" || /(^id$|number|_at$|^due|^code$|status|priority|severity)/.test(id);
 }
 
 export function DataGrid<T>({ columns, rows, rowId, onRowClick, loading, isFiltered, empty, hasMore, onLoadMore, loadingMore, selectable, bulkActions, rowActions, sort, onSort, rowClassName }: DataGridProps<T>) {
@@ -55,20 +63,9 @@ export function DataGrid<T>({ columns, rows, rowId, onRowClick, loading, isFilte
           const acts = rowActions(row.original);
           if (!acts.length) return null;
           return (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-sm" aria-label="Aksi" onClick={(e) => e.stopPropagation()}>
-                  <MoreHorizontal />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
-                {acts.map((a) => (
-                  <DropdownMenuItem key={a.label} destructive={a.destructive} onSelect={a.onSelect}>
-                    {a.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <span onClick={(e) => e.stopPropagation()} className="inline-flex">
+              <RowActionMenu label="Aksi" items={acts.map((a, i) => ({ id: String(i), label: a.label, icon: a.icon, onClick: a.onSelect, danger: a.destructive }))} />
+            </span>
           );
         },
       });
@@ -84,11 +81,11 @@ export function DataGrid<T>({ columns, rows, rowId, onRowClick, loading, isFilte
   return (
     <div>
       {selectable && selectedIds.length > 0 && bulkActions && (
-        <div className="mb-2 flex items-center gap-3 rounded-md border border-brand-100 bg-brand-50 px-3 py-2 text-sm">
-          <span className="font-medium">{selectedIds.length} dipilih</span>
+        <div className="mb-2 flex items-center gap-3 rounded-[var(--radius-md)] px-3 py-2 text-sm" style={{ backgroundColor: "var(--color-primary-container)", color: "var(--color-on-primary-container)" }}>
+          <span className="font-bold">{selectedIds.length} dipilih</span>
           {bulkActions(selectedIds, () => setSelection({}))}
           <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setSelection({})}>
-            <X /> Batal pilih
+            <Icon name="close" size={16} /> Batal pilih
           </Button>
         </div>
       )}
@@ -103,9 +100,9 @@ export function DataGrid<T>({ columns, rows, rowId, onRowClick, loading, isFilte
                 return (
                   <TH key={h.id} style={{ width: h.getSize() !== 150 ? h.getSize() : undefined }}>
                     {sortKey && onSort ? (
-                      <button type="button" className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => onSort(active && !desc ? "-" + sortKey : sortKey)}>
+                      <button type="button" className="inline-flex items-center gap-1 opacity-90 hover:opacity-100" onClick={() => onSort(active && !desc ? "-" + sortKey : sortKey)}>
                         {flexRender(h.column.columnDef.header, h.getContext())}
-                        {active ? desc ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" /> : <ArrowUpDown className="h-3 w-3 opacity-40" />}
+                        {active ? desc ? <Icon name="arrow_downward" size={12} /> : <Icon name="arrow_upward" size={12} /> : <Icon name="swap_vert" size={12} className="opacity-40" />}
                       </button>
                     ) : (
                       flexRender(h.column.columnDef.header, h.getContext())
@@ -128,13 +125,15 @@ export function DataGrid<T>({ columns, rows, rowId, onRowClick, loading, isFilte
               }}
             >
               {row.getVisibleCells().map((cell) => (
-                <TD key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TD>
+                <TD key={cell.id} className={cn(nowrapColumn(cell.column.id, cell.column.columnDef.meta) && "whitespace-nowrap", (cell.column.id === "_actions" || cell.column.id === "actions") && "text-right")}>
+                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                </TD>
               ))}
             </TR>
           ))}
         </TBody>
       </Table>
-      <div className="flex items-center justify-between border-t border-border px-3 py-2 text-sm text-muted-foreground">
+      <div className="flex items-center justify-between border-t border-border px-3 py-2 text-sm text-on-surface-variant">
         <span>{t("label.showing", { n: rows.length })}</span>
         {hasMore && (
           <Button variant="secondary" size="sm" onClick={onLoadMore} loading={loadingMore}>
@@ -191,8 +190,8 @@ export function FilterBar({ spec, onExport }: { spec: FilterSpec; onExport?: () 
             f.set({ q });
           }}
         >
-          <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input className="w-64 pl-8" placeholder={t("label.search")} value={q} onChange={(e) => setQ(e.target.value)} />
+          <Icon name="search" size={18} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant" />
+          <Input className="w-64 pl-9" placeholder={t("label.search")} value={q} onChange={(e) => setQ(e.target.value)} />
         </form>
         {spec.status && (
           <NativeSelect className="w-40" value={f.get("status")} onChange={(e) => f.set({ status: e.target.value })} aria-label="Status">
@@ -232,7 +231,7 @@ export function FilterBar({ spec, onExport }: { spec: FilterSpec; onExport?: () 
         {spec.dateRange && (
           <span className="inline-flex items-center gap-1">
             <Input type="date" className="w-36" value={f.get("created_from").slice(0, 10)} onChange={(e) => f.set({ created_from: e.target.value })} aria-label="Dari tanggal" />
-            <span className="text-muted-foreground">–</span>
+            <span className="text-on-surface-variant">–</span>
             <Input type="date" className="w-36" value={f.get("created_to").slice(0, 10)} onChange={(e) => f.set({ created_to: e.target.value ? e.target.value + "T23:59:59Z" : "" })} aria-label="Sampai tanggal" />
           </span>
         )}
@@ -240,12 +239,12 @@ export function FilterBar({ spec, onExport }: { spec: FilterSpec; onExport?: () 
         <span className="ml-auto flex items-center gap-2">
           {onExport && (
             <Button variant="secondary" size="sm" onClick={onExport}>
-              <Download /> {t("action.export")}
+              <Icon name="download" size={16} /> {t("action.export")}
             </Button>
           )}
           {f.isFiltered && (
             <Button variant="ghost" size="sm" onClick={() => { setQ(""); f.reset(); }}>
-              <RotateCcw /> {t("action.reset_filter")}
+              <Icon name="replay" size={16} /> {t("action.reset_filter")}
             </Button>
           )}
         </span>
@@ -255,16 +254,16 @@ export function FilterBar({ spec, onExport }: { spec: FilterSpec; onExport?: () 
           {spec.presets?.map((p) => {
             const active = Object.entries(p.params).every(([k, v]) => f.get(k) === v);
             return (
-              <button key={p.key} type="button" onClick={() => f.set(active ? Object.fromEntries(Object.keys(p.params).map((k) => [k, null])) : p.params)} className={cn("rounded-full border px-2.5 py-0.5 text-xs", active ? "border-brand-600 bg-brand-600 text-white" : "border-border bg-card text-muted-foreground hover:bg-muted")}>
+              <FilterChip key={p.key} selected={active} onClick={() => f.set(active ? Object.fromEntries(Object.keys(p.params).map((k) => [k, null])) : p.params)}>
                 {p.label}
-              </button>
+              </FilterChip>
             );
           })}
           {chips.map(([k, v]) => (
-            <span key={k} className="inline-flex items-center gap-1 rounded-full bg-neutral-soft px-2 py-0.5 text-xs text-neutral-text">
+            <span key={k} className="inline-flex items-center gap-1 rounded-full bg-surface-container-high px-2 py-0.5 text-xs text-on-surface-variant">
               {k}: {v.length > 14 ? v.slice(0, 8) + "…" : v}
-              <button type="button" aria-label={`Hapus filter ${k}`} onClick={() => f.set({ [k]: null })}>
-                <X className="h-3 w-3" />
+              <button type="button" aria-label={`Hapus filter ${k}`} onClick={() => f.set({ [k]: null })} className="inline-flex">
+                <Icon name="close" size={12} />
               </button>
             </span>
           ))}

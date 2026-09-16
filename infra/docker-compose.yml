@@ -21,8 +21,22 @@ x-api-env: &api-env
   BV_S3_PATH_STYLE: ${BV_S3_PATH_STYLE:-true}
   BV_FCM_PROJECT_ID: ${BV_FCM_PROJECT_ID:-}
   BV_FCM_SERVICE_ACCOUNT: ${BV_FCM_SERVICE_ACCOUNT:-}
+  BV_VAPID_PUBLIC_KEY: ${BV_VAPID_PUBLIC_KEY:-}
+  BV_VAPID_PRIVATE_KEY: ${BV_VAPID_PRIVATE_KEY:-}
+  BV_VAPID_SUBJECT: ${BV_VAPID_SUBJECT:-mailto:ops@example.com}
+  BV_DEMO_ENABLED: ${BV_DEMO_ENABLED:-false}
   BV_QR_BASE_URL: ${BV_QR_BASE_URL:-https://app.example.com/q/}
   BV_LOG_LEVEL: ${BV_LOG_LEVEL:-info}
+  # Website PRD v1.1: website publik, email transaksional, trial
+  BV_WEBSITE_URL: ${BV_WEBSITE_URL:-https://www.example.com}
+  BV_SMTP_HOST: ${BV_SMTP_HOST:-}
+  BV_SMTP_PORT: ${BV_SMTP_PORT:-587}
+  BV_SMTP_USER: ${BV_SMTP_USER:-}
+  BV_SMTP_PASSWORD: ${BV_SMTP_PASSWORD:-}
+  BV_SMTP_FROM: ${BV_SMTP_FROM:-BuildingVision <no-reply@example.com>}
+  BV_SMTP_STARTTLS: ${BV_SMTP_STARTTLS:-true}
+  BV_SALES_EMAIL: ${BV_SALES_EMAIL:-sales@example.com}
+  BV_TRIAL_DAYS: ${BV_TRIAL_DAYS:-14}
   BV_METRICS_ADDR: ":9091"
   TZ: UTC
 
@@ -40,14 +54,27 @@ services:
     ports: ["80:80", "443:443", "443:443/udp"]
     environment:
       BV_DOMAIN: ${BV_DOMAIN:-localhost}
+      BV_WEBSITE_DOMAIN: ${BV_WEBSITE_DOMAIN:-www.localhost}
       BV_ACME_EMAIL: ${BV_ACME_EMAIL:-admin@example.com}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - web-dist:/srv:ro
+      - website-dist:/srv-website:ro
       - caddy-data:/data
       - caddy-config:/config
-    depends_on: [api, web]
+    depends_on: [api, web, website]
     logging: *logging
+
+  website:
+    # Website publik (Website PRD v1.1): prerender statis; dist disalin ke volume yang disajikan Caddy utama pada BV_WEBSITE_DOMAIN.
+    image: ghcr.io/nugrohoindrag/bv-website:${BV_VERSION:-latest}
+    build:
+      context: ..
+      dockerfile: website/Dockerfile
+      args: { VITE_APP_URL: "https://${BV_DOMAIN:-localhost}", VITE_SITE_URL: "https://${BV_WEBSITE_DOMAIN:-www.localhost}" }
+    restart: "no"
+    entrypoint: ["sh", "-c", "rm -rf /srv-out/* && cp -r /srv/. /srv-out/ && echo website dist synced"]
+    volumes: [website-dist:/srv-out]
 
   web:
     # Image web menyalin dist/ ke volume yang disajikan Caddy utama (SPA statis, ADR-008).
@@ -280,6 +307,7 @@ volumes:
   pgbackrest-spool:
   minio-data:
   web-dist:
+  website-dist:
   caddy-data:
   caddy-config:
   prom-data:

@@ -1,0 +1,71 @@
+{
+  "name": "@buildingvision/ui",
+  "version": "1.0.0",
+  "private": true,
+  "description": "BuildingVision UI: mirror of the Morphic/Nexus design system (D:/Design System) plus the token-only BuildingVision extension layer in src/bv.",
+  "type": "module",
+  "main": "src/index.ts",
+  "module": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "ds:check": "node scripts/sync-design-system.mjs check && python scripts/check-icon-font.py",
+    "ds:pull": "node scripts/sync-design-system.mjs pull",
+    "fonts:check": "python scripts/check-icon-font.py",
+    "fonts:vendor": "python scripts/vendor-fonts.py"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "react": "^18.3.1 || ^19.0.0",
+    "react-dom": "^18.3.1 || ^19.0.0"
+  },
+  "dependencies": {
+    "motion": "^13.1.1"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./bv": {
+      "types": "./src/bv/index.ts",
+      "import": "./src/bv/index.ts",
+      "default": "./src/bv/index.ts"
+    },
+    "./patterns": {
+      "types": "./src/patterns/index.ts",
+      "import": "./src/patterns/index.ts",
+      "default": "./src/patterns/index.ts"
+    },
+    "./templates": {
+      "types": "./src/templates/index.ts",
+      "import": "./src/templates/index.ts",
+      "default": "./src/templates/index.ts"
+    },
+    "./examples": {
+      "types": "./src/examples/index.ts",
+      "import": "./src/examples/index.ts",
+      "default": "./src/examples/index.ts"
+    },
+    "./tokens": {
+      "types": "./src/tokens/index.ts",
+      "import": "./src/tokens/index.ts",
+      "default": "./src/tokens/index.ts"
+    },
+    "./tokens.css": "./src/tokens/components.css",
+    "./bv/palette.css": "./src/bv/palette.css",
+    "./bv/fonts.css": "./src/bv/fonts.css",
+    "./bv/table-header.css": "./src/bv/table-header.css",
+    "./bv/mirror-fixes.css": "./src/bv/mirror-fixes.css",
+    "./bv/layout.css": "./src/bv/layout.css",
+    "./bv/sidebar.css": "./src/bv/sidebar.css"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "typescript": "~6.0.2"
+  }
+}

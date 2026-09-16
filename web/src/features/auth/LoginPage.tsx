@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { HardHat } from "lucide-react";
-import { Alert, Button, Field, Input } from "@/components/ui/primitives";
+import { BuildingVisionLogo } from "@buildingvision/ui/bv";
+import { Alert, Button, Card, Field, Input } from "@/components/ui/primitives";
 import { useAuth } from "@/lib/auth";
 
 export function LoginPage() {
@@ -30,13 +30,10 @@ export function LoginPage() {
   };
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="w-full max-w-sm rounded-lg border border-border bg-card p-8 shadow-card">
-        <div className="mb-6 flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-md bg-brand-600 text-white"><HardHat className="h-6 w-6" /></span>
-          <div>
-            <h1 className="text-h2 font-semibold">{t("auth.title")}</h1>
-            <p className="text-sm text-muted-foreground">{t("auth.subtitle")}</p>
-          </div>
+      <Card className="w-full max-w-sm p-8">
+        <div className="mb-6 flex flex-col items-start gap-4">
+          <BuildingVisionLogo height={40} tagline={t("auth.subtitle")} />
+          <h1 className="text-h2 font-bold">{t("auth.title")}</h1>
         </div>
         <form onSubmit={submit} className="space-y-4">
           {error && <Alert variant="critical">{error}</Alert>}
@@ -49,7 +46,7 @@ export function LoginPage() {
           <Button type="submit" className="w-full" loading={busy}>{busy ? t("auth.signing_in") : t("auth.login")}</Button>
         </form>
         <p className="mt-6 text-center text-xs text-muted-foreground">BuildingVision Web · Desktop ≥1280px</p>
-      </div>
+      </Card>
     </div>
   );
 }

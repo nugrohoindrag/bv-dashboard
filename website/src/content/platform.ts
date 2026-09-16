@@ -1,0 +1,261 @@
+// Platform pages (Website PRD §12): problem → how BuildingVision addresses it → main workflow → capabilities → CTA.
+import type { ImageKey } from "@/components/Picture";
+import type { Feature, Step } from "@/components/blocks";
+
+export interface PlatformPage {
+  slug: string;
+  name: string;
+  seoTitle: string;
+  seoDescription: string;
+  title: string;
+  lead: string;
+  hero: ImageKey;
+  problem: { title: string; body: string };
+  solution: { title: string; body: string; bullets: string[]; image: ImageKey };
+  workflow: Step[];
+  capabilities: Feature[];
+  mock?: "dashboard" | "staff" | "tenant";
+  downloadCta?: { label: string; to: string };
+}
+
+export const PLATFORM_CONTENT: PlatformPage[] = [
+  {
+    slug: "property-operations",
+    name: "Property Operations",
+    seoTitle: "Property Operations Software",
+    seoDescription: "See what needs attention today across housekeeping, engineering, security, and tenant relation. BuildingVision property operations for hotels, apartments, and offices.",
+    title: "One view of what needs attention today",
+    lead: "Overdue work, SLA risk, open requests, patrols, and cleaning, per property and per building. The morning meeting is already on the screen.",
+    hero: "open-office",
+    problem: { title: "Every team has its own list", body: "Housekeeping has a whiteboard, engineering has a spreadsheet, security has a logbook, and the property manager has a phone that never stops. Nobody has the full picture." },
+    solution: { title: "A shared operational picture", body: "BuildingVision turns every request, task, and work order into one list with owners, due times, and status. The Overview shows what is late, what is at risk, and where.", bullets: ["Today's counters: open work orders, overdue, SLA risk, requests, incidents", "Attention Required: sorted by severity and age, with the next action", "Building state per tower and floor", "Team workload so you can rebalance before things slip"], image: "laptop-dashboard" },
+    workflow: [
+      { title: "Start the day on Overview", body: "See overdue and SLA-risk items first, then today's operations per domain." },
+      { title: "Act from the list", body: "Assign, escalate, or open the item without leaving the page." },
+      { title: "Switch property, keep the context", body: "Multiple properties in one organization. The profile (Hotel, Apartment, Office) follows the property." },
+      { title: "Report without exporting", body: "Built-in reports for SLA, work orders, maintenance, patrols, facilities, and billing." },
+    ],
+    capabilities: [
+      { icon: "space_dashboard", title: "Overview dashboard", body: "Today's counters, attention list, building state, team workload." },
+      { icon: "swap_horiz", title: "Multi-property", body: "Switch properties. Roles can be per property or organization-wide." },
+      { icon: "tune", title: "Property profile", body: "Hotel, Apartment, or Office terminology and workflows per property." },
+      { icon: "timer", title: "SLA policies", body: "Response and resolution targets per object and priority, with business hours." },
+      { icon: "notifications_active", title: "Notifications", body: "In-app and push alerts for assignments, overdue, SLA risk, and escalations." },
+      { icon: "bar_chart", title: "Reports", body: "Service requests, work orders, maintenance, patrol and cleaning, facilities, billing." },
+    ],
+    mock: "dashboard",
+  },
+  {
+    slug: "housekeeping",
+    name: "Housekeeping",
+    seoTitle: "Housekeeping Management Software",
+    seoDescription: "Cleaning schedules, inspections, room status, and photo evidence for housekeeping teams in hotels, apartments, and offices.",
+    title: "Housekeeping with proof, not promises",
+    lead: "Cleaning tasks generated from schedules, completed in the Staff App with photos, and inspected by supervisors. Room and area status everyone can see.",
+    hero: "cleaning-window",
+    problem: { title: "Clean is hard to prove", body: "A tenant says the toilet was not cleaned. Your team says it was. Without time, place, and photo, it is one word against another." },
+    solution: { title: "Schedules, checklists, evidence", body: "Set cleaning schedules per area, and BuildingVision creates the tasks. Staff follow a checklist, attach photos, and supervisors inspect with a pass or fail result.", bullets: ["Routine and ad-hoc cleaning tasks", "Checklists with required photos", "Inspections that turn Not OK into findings and rework", "Hotel: turnover cleaning created at check-out, room status flow"], image: "clean-bathroom" },
+    workflow: [
+      { title: "Schedule", body: "Define cleaning schedules per toilet, lobby, corridor, or room." },
+      { title: "Task", body: "Tasks are generated for the coming days and assigned to a team or a person." },
+      { title: "Clean and document", body: "Staff complete the checklist in the Staff App, including the required photo." },
+      { title: "Inspect", body: "A supervisor passes or fails the inspection. Failures become findings with a rework task." },
+    ],
+    capabilities: [
+      { icon: "event_repeat", title: "Cleaning schedules", body: "Daily, weekly, custom times per location." },
+      { icon: "checklist", title: "Checklists", body: "OK / Not OK, yes / no, numeric, text, and photo items." },
+      { icon: "photo_camera", title: "Photo evidence", body: "Required photos with time and location." },
+      { icon: "fact_check", title: "Inspections", body: "Pass, fail, or partial results with findings." },
+      { icon: "bed", title: "Room status (Hotel)", body: "Dirty, clean, inspected, available." },
+      { icon: "cloud_off", title: "Offline", body: "Basement or plant room, the app keeps working." },
+    ],
+    mock: "staff",
+  },
+  {
+    slug: "engineering",
+    name: "Engineering",
+    seoTitle: "Building Engineering & Maintenance Software",
+    seoDescription: "Preventive maintenance plans, asset registry with QR codes, inspections, and corrective work orders for building engineering teams.",
+    title: "Maintenance that runs on a plan",
+    lead: "Preventive maintenance schedules, inspections, and corrective work orders, all tied to the assets they belong to. Fewer surprises, better history.",
+    hero: "electrician",
+    problem: { title: "Reactive maintenance is expensive", body: "When the chiller trips on a Saturday, the cost is not the repair. It is the tenants, the guests, and the emergency vendor rate." },
+    solution: { title: "Plans, schedules, and work orders on autopilot", body: "Publish a maintenance plan per asset and BuildingVision generates the schedule and creates work orders ahead of time. Inspections catch issues early, and every job lands in the asset history.", bullets: ["Preventive maintenance plans with frequency and lead time", "Automatic schedule and work order generation", "Inspections with pass or fail and findings", "Corrective and repair work orders from any request"], image: "engineer-plans" },
+    workflow: [
+      { title: "Register assets", body: "AHU, chiller, lift, pump, genset. Each with a QR code and a location." },
+      { title: "Publish a plan", body: "Monthly filter check, weekly lift inspection. Checklists attached." },
+      { title: "Work is created for you", body: "Schedules and work orders appear before the due date, assigned to the right team." },
+      { title: "Complete with evidence", body: "Technician follows the checklist, records readings, attaches photos. History updates." },
+    ],
+    capabilities: [
+      { icon: "inventory_2", title: "Asset registry", body: "Categories, types, criticality, specs, QR codes." },
+      { icon: "event_repeat", title: "Preventive maintenance", body: "Plans, schedules, automatic work orders." },
+      { icon: "build", title: "Corrective maintenance", body: "Work orders from requests, findings, and incidents." },
+      { icon: "fact_check", title: "Inspections", body: "Checklist-based with pass or fail." },
+      { icon: "handshake", title: "Vendors", body: "Assign vendors and track performance." },
+      { icon: "inventory", title: "Spare parts", body: "Parts usage against work orders, stock levels." },
+    ],
+    mock: "staff",
+  },
+  {
+    slug: "security",
+    name: "Security",
+    seoTitle: "Building Security Operations Software",
+    seoDescription: "Patrol routes with QR checkpoints, missed checkpoint alerts, incident reports, and visitor management for building security teams.",
+    title: "Security operations you can audit",
+    lead: "Patrol routes with QR checkpoints, incidents with evidence, and visitor passes verified at the gate. Every shift leaves a record.",
+    hero: "cctv",
+    problem: { title: "Patrols are invisible", body: "A patrol logbook says the round was done. It does not say which checkpoints were skipped or when the officer was actually in the parking basement." },
+    solution: { title: "Checkpoints, incidents, visitors, in one app", body: "Officers scan QR checkpoints along a route in the Staff App. Missed checkpoints are flagged automatically. Incidents are reported with photos and can become work orders.", bullets: ["Patrol routes and schedules with QR checkpoints", "Missed checkpoint detection", "Incident reports with severity and evidence", "Visitor pre-registration and QR pass verification"], image: "server-room" },
+    workflow: [
+      { title: "Define routes", body: "Checkpoints in order, estimated duration, a checklist for the round." },
+      { title: "Schedule patrols", body: "Night patrol at 22:00, morning at 06:00. Tasks are generated automatically." },
+      { title: "Scan and report", body: "Officers scan checkpoints, note findings, and report incidents from the app." },
+      { title: "Review", body: "Supervisors see completion, missed checkpoints, and open incidents." },
+    ],
+    capabilities: [
+      { icon: "route", title: "Patrol routes", body: "Ordered checkpoints, QR codes, GPS stamp." },
+      { icon: "qr_code_scanner", title: "Checkpoint scans", body: "QR or manual with reason; missed detection." },
+      { icon: "report", title: "Incidents", body: "Report, assign, resolve, close; link to work orders." },
+      { icon: "badge", title: "Visitors", body: "Pre-registration, approval, QR pass, check-in and out." },
+      { icon: "lock", title: "Access operations", body: "Verification at the gate with masked identity data." },
+      { icon: "bar_chart", title: "Reports", body: "Patrol completion, findings, visitor volumes." },
+    ],
+    mock: "staff",
+  },
+  {
+    slug: "tenant-relation",
+    name: "Tenant Relation",
+    seoTitle: "Tenant Relation Software",
+    seoDescription: "Tenant accounts, requests, messages, announcements, and satisfaction feedback for hotels, apartments, and office buildings.",
+    title: "Tenant relation with a paper trail",
+    lead: "Requests, messages, announcements, and feedback with tenants, residents, and guests, all in one place. Internal notes stay internal.",
+    hero: "two-people-laptop",
+    problem: { title: "Requests arrive everywhere", body: "WhatsApp, email, phone, the front desk. Each channel has its own follow-up, and none of them show the tenant what is actually happening." },
+    solution: { title: "One channel, visible progress", body: "Tenants raise requests in the app. Your team acknowledges, assigns, and resolves. The tenant sees a clear status, can message the team, and confirms or reopens the fix.", bullets: ["Tenant-facing status that hides internal detail", "Two-way messages per request", "Announcements to a property or a building", "CSAT feedback after resolution"], image: "property-manager" },
+    workflow: [
+      { title: "Tenant registers", body: "Self-registration in the app; Tenant Relation validates the account and unit access." },
+      { title: "Request comes in", body: "Category sets priority and team. SLA starts." },
+      { title: "Team works, tenant watches", body: "Status updates and messages, without exposing internal notes." },
+      { title: "Tenant confirms", body: "Confirm or reopen, then rate. Auto-close after a grace period if there is no reply." },
+    ],
+    capabilities: [
+      { icon: "how_to_reg", title: "Account validation", body: "Approve, reject, suspend tenant accounts." },
+      { icon: "forum", title: "Messages", body: "Threaded conversation per request." },
+      { icon: "campaign", title: "Announcements", body: "Draft, publish, and archive with notifications." },
+      { icon: "reviews", title: "Feedback", body: "CSAT scores and comments per request." },
+      { icon: "insights", title: "Metrics", body: "Volume, response time, reopen rate, satisfaction." },
+      { icon: "language", title: "Terminology", body: "Tenant, resident, or guest, per property profile." },
+    ],
+    mock: "tenant",
+    downloadCta: { label: "Get the Tenant App", to: "/download" },
+  },
+  {
+    slug: "work-orders",
+    name: "Work Orders",
+    seoTitle: "Work Order Management Software",
+    seoDescription: "Work orders and tasks with owners, priorities, checklists, SLA tracking, and photo evidence for building operations teams.",
+    title: "Work orders that finish",
+    lead: "Every job with an owner, a due time, a checklist, and photo evidence. From request to closed, with a timeline you can trust.",
+    hero: "checking-plans",
+    problem: { title: "Work gets started, not finished", body: "Jobs are assigned by voice, tracked by memory, and closed by assumption. When a tenant asks what happened, there is nothing to show." },
+    solution: { title: "A workflow with guardrails", body: "Work orders move through clear states. Required evidence stops a job from being closed without proof. Every action is on the timeline with who, when, and from where.", bullets: ["Tasks and work orders with priority and due time", "Checklists with required photos", "SLA tracking with risk and breach flags", "Findings and incidents linked to the work that fixes them"], image: "site-workers" },
+    workflow: [
+      { title: "Create", body: "From a request, a finding, an inspection, a maintenance schedule, or by hand." },
+      { title: "Assign", body: "To a person or a team, with a due time. Overdue is flagged automatically." },
+      { title: "Do the work", body: "Start, follow the checklist, attach photos, add parts and vendor notes." },
+      { title: "Close", body: "Complete with evidence, then close. Linked requests resolve automatically." },
+    ],
+    capabilities: [
+      { icon: "assignment", title: "Tasks and work orders", body: "General, patrol, cleaning, inspection, maintenance, corrective, repair, service." },
+      { icon: "checklist", title: "Checklists", body: "Versioned templates per domain." },
+      { icon: "photo_camera", title: "Evidence", body: "Before and after photos with time and GPS." },
+      { icon: "timer", title: "SLA", body: "Response and resolution with escalation." },
+      { icon: "link", title: "Links", body: "Requests, findings, incidents, assets, schedules." },
+      { icon: "history", title: "Timeline", body: "Every change with actor, source, and time." },
+    ],
+    mock: "dashboard",
+  },
+  {
+    slug: "asset-management",
+    name: "Asset Management",
+    seoTitle: "Building Asset Management Software",
+    seoDescription: "Asset registry with QR codes, maintenance history, spare parts, and vendor costs for building equipment.",
+    title: "Every asset with a QR code and a memory",
+    lead: "Register equipment once. Scan the QR on site to see the history, open a work order, or check the next service date.",
+    hero: "server-room",
+    problem: { title: "Nobody knows the asset's story", body: "The lift was serviced, but when, by whom, and what was replaced? The answer is in an email somewhere." },
+    solution: { title: "Registry, history, and costs in one place", body: "Assets have categories, criticality, specifications, and a location. Work orders, schedules, parts, and vendor costs attach to them automatically.", bullets: ["Asset registry per property and location", "QR codes for on-site scanning", "Maintenance plans and schedules per asset", "History: work orders, inspections, parts, costs"], image: "engineer-plans" },
+    workflow: [
+      { title: "Register", body: "Import from CSV or add by hand. Categories and types come pre-loaded." },
+      { title: "Tag", body: "Print QR labels. Rotate a code if a label is replaced." },
+      { title: "Maintain", body: "Preventive plans create work; inspections catch issues." },
+      { title: "Review", body: "History and cost per asset support replace-or-repair decisions." },
+    ],
+    capabilities: [
+      { icon: "inventory_2", title: "Registry", body: "Category, type, criticality, manufacturer, specs." },
+      { icon: "qr_code", title: "QR codes", body: "Scan to resolve, with permission checks." },
+      { icon: "event_repeat", title: "Maintenance plans", body: "Frequency, lead time, checklist, team." },
+      { icon: "history", title: "History", body: "Work orders, schedules, activity." },
+      { icon: "inventory", title: "Parts", body: "Usage per work order, stock levels." },
+      { icon: "payments", title: "Costs", body: "Actual cost from parts and vendors." },
+    ],
+    mock: "dashboard",
+  },
+  {
+    slug: "mobile-staff",
+    name: "Mobile Staff",
+    seoTitle: "Staff App for Building Operations",
+    seoDescription: "The BuildingVision Staff App: tasks, work orders, checklists, QR checkpoint scans, and photo evidence, working offline.",
+    title: "The Staff App that works where the signal does not",
+    lead: "Technicians, officers, and housekeeping staff get their work for the day, complete checklists, scan checkpoints, and upload photos. Offline in the basement, synced when back upstairs.",
+    hero: "technician",
+    problem: { title: "Field staff are the last to know", body: "Assignments come by radio, evidence comes by WhatsApp, and the plant room has no signal. The dashboard is only as good as what reaches it." },
+    solution: { title: "Built for the field, not the office", body: "The Staff App shows today's tasks with location and priority. Photos are compressed on the device, and everything queues offline. Conflicts are resolved by clear rules, and evidence is never lost.", bullets: ["Today's tasks, work orders, and patrols", "Checklists with photo, numeric, and text items", "QR checkpoint and asset scanning", "Offline queue with automatic sync"], image: "site-workers" },
+    workflow: [
+      { title: "Open the app", body: "Today's list, sorted by priority and due time." },
+      { title: "Start the job", body: "Checklist, photos, readings. Parts used, if any." },
+      { title: "Keep working offline", body: "Changes queue on the device with a timestamp." },
+      { title: "Sync", body: "Back online, everything uploads. Supervisors see it on the dashboard." },
+    ],
+    capabilities: [
+      { icon: "task_alt", title: "My work", body: "Tasks, work orders, patrols, cleaning." },
+      { icon: "qr_code_scanner", title: "Scan", body: "Checkpoints, assets, areas." },
+      { icon: "photo_camera", title: "Evidence", body: "Compressed photos with time and GPS." },
+      { icon: "cloud_off", title: "Offline", body: "Full work bundle available without signal." },
+      { icon: "notifications_active", title: "Push", body: "Assignments and due reminders." },
+      { icon: "android", title: "Android first", body: "Distributed to your team from the Download Apps page." },
+    ],
+    mock: "staff",
+    downloadCta: { label: "Download Staff App", to: "/download" },
+  },
+  {
+    slug: "tenant-app",
+    name: "Tenant App",
+    seoTitle: "Tenant App for Residents, Tenants, and Guests",
+    seoDescription: "The BuildingVision Tenant App: report issues, follow progress, book facilities, register visitors, and view bills.",
+    title: "A tenant app people actually use",
+    lead: "Report an issue in under a minute, follow it to the fix, book a facility, register a visitor, and check the bill. For residents, office tenants, and hotel guests.",
+    hero: "phone-laptop",
+    problem: { title: "Tenants want to know, not to chase", body: "The question is never just \"is it fixed?\". It is \"did anyone see it, who is coming, and when?\"." },
+    solution: { title: "Clear status, no internal noise", body: "The Tenant App shows a tenant-facing status, the team working on it, and the after photo. Tenants can message, confirm, reopen, and rate. Internal notes stay with your team.", bullets: ["Report an issue with location, category, and photos", "Track status and message the team", "Book facilities and register visitors with a QR pass", "View invoices and announcements"], image: "apartment-living" },
+    workflow: [
+      { title: "Register", body: "Tenant signs up and picks their unit. Tenant Relation validates the account." },
+      { title: "Report", body: "My unit or a common area, a category, a photo. Done." },
+      { title: "Follow", body: "Received, in progress, resolved. Messages both ways." },
+      { title: "Confirm", body: "Confirm the fix or reopen it, then rate the service." },
+    ],
+    capabilities: [
+      { icon: "report_problem", title: "Requests", body: "Create, track, message, confirm, reopen, rate." },
+      { icon: "event", title: "Facilities", body: "Availability and bookings with approval." },
+      { icon: "badge", title: "Visitors", body: "Pre-register and share a QR pass." },
+      { icon: "receipt_long", title: "Bills", body: "Invoices, details, payment status." },
+      { icon: "campaign", title: "Announcements", body: "Property news in the inbox." },
+      { icon: "install_mobile", title: "Installable", body: "Works as a web app on any phone." },
+    ],
+    mock: "tenant",
+    downloadCta: { label: "Get the Tenant App", to: "/download" },
+  },
+];
+
+export const platformBySlug = (slug: string) => PLATFORM_CONTENT.find((p) => p.slug === slug);

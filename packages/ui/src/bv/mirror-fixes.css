@@ -1,0 +1,99 @@
+/**
+ * BuildingVision, Fixes for mirror components
+ *
+ * `packages/ui/src/components` is a read-only mirror of `D:\Design System`.
+ * Where one of its components renders something incorrectly and exposes no
+ * prop to change it, the narrow CSS override belongs here rather than in a
+ * page (Docs/DESIGN-SYSTEM-GUIDELINE.md). Keep each rule scoped to the
+ * component's own class and document why it exists.
+ *
+ * Import ONCE at the app root:
+ * import '@buildingvision/ui/bv/mirror-fixes.css';
+ */
+
+/* ---------------------------------------------------------------------------
+ * GaugeChart, honest arc
+ *
+ * Hooks come from `bv/Gauge.tsx`; `GaugeChart` renders no class of its own.
+ *
+ * (a) Flat caps. The mirror strokes the arc with `stroke-linecap: round`,
+ * which extends it by half a stroke width at each end, arc the reading
+ * has not earned. `!important` is required because the cap is set as an
+ * SVG presentation attribute on the element.
+ *
+ * (b) No arc at zero. The gauge clips its SVG to `size / 2 + 14`, which is
+ * 14px taller than the semicircle it means to show. The remainder arc sits
+ * immediately below the diameter, so those 14px let it bleed into view as
+ * two coloured stubs at the left and right ends. At a non-zero value the
+ * bleed abuts the real arc and passes unnoticed; at zero it is the only
+ * thing on screen, so a line that produced nothing looks like it produced
+ * something. `circle:nth-of-type(2)` is the progress arc, the first
+ * `circle` is the ambient track, which must stay.
+ * ------------------------------------------------------------------------- */.bv-gauge svg circle {
+ stroke-linecap: butt!important;
+}.bv-gauge--empty svg circle:nth-of-type(2) {
+ display: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * AdvancedDataTable, leading cell inset
+ *
+ * The mirror pads the selection column with a flat `8px` (`12px 8px` on the
+ * header) while every data column gets `16px` and the table's own title block
+ * sits at `24px`. The checkbox therefore hugs the table's left edge and reads
+ * as if it had fallen outside the grid.
+ *
+ * `:has()` keeps the rule off a table that has no selection column, whose
+ * first cell is a data cell already carrying the mirror's own padding, and
+ * `:first-child` keeps it off a checkbox that follows an expander column,
+ * where the mirror's tighter `8px` is the gap between the two controls.
+ * `!important` is required: the mirror sets padding as an inline `style`.
+ * ------------------------------------------------------------------------- */
+.morphic-advanced-table th:first-child:has(> .m3-checkbox),
+.morphic-advanced-table td:first-child:has(> .m3-checkbox) {
+  padding-left: 20px !important;
+  padding-right: 12px !important;
+}
+
+/* ---------------------------------------------------------------------------
+ * FilledTextField, one field shape beside Select
+ *
+ * The mirror ships M3's filled recipe: a `surface-container-highest` slab,
+ * square at the bottom, open on three sides with a single hairline underneath.
+ * `Select` — the control it stands next to in every filter row and every form
+ * on the planning screens — is a box instead: `surface-container`, a hairline
+ * all the way round, `radius-md`. Side by side the two read as different kinds
+ * of control, and the grey slab reads as the disabled one.
+ *
+ * The box wins because it is what the rest of the console is made of (cards,
+ * tables, chips all carry a border and a radius), so the fill matches
+ * `Select`'s here, and `bv/DateField.tsx` carries the same recipe in its own
+ * markup. `!important` is required throughout: the mirror sets all of this as
+ * inline `style`.
+ *
+ * Two consequences of boxing a filled field, both handled here:
+ *
+ * (a) The active indicator — M3's 2px line that grows from the centre on focus
+ *     — is meaningless once the field has four sides, and it paints across the
+ *     bottom border. The focused state moves to the border, as on `Select`.
+ * (b) That indicator also carried the error state, so the error colour has to
+ *     move with it. `aria-invalid` is on the input the mirror already sets it
+ *     on, which is why the rule reaches for `:has()` rather than a class.
+ * ------------------------------------------------------------------------- */
+.m3-filled-textfield > div {
+  background-color: var(--color-surface-container) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-md) !important;
+}
+
+.m3-filled-textfield:focus-within > div {
+  border-color: var(--color-primary) !important;
+}
+
+.m3-filled-textfield > div:has(input[aria-invalid='true']) {
+  border-color: var(--color-error) !important;
+}
+
+.m3-filled-textfield > div > span:first-child {
+  display: none !important;
+}

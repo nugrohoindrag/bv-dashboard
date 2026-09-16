@@ -65,12 +65,23 @@ func (s *Service) Handle(ctx context.Context, ev events.Event) error {
 		if len(rules) == 0 {
 			return nil
 		}
-		title, body, deepLink := s.render(ctx, tx, ev)
+		title, body, deepLink := s.render(ctx, tx, ev, false)
+		tTitle, tBody, tLink := "", "", ""
 		for _, r := range rules {
 			recipients := s.resolve(ctx, tx, r.resolver, ev)
+			title, body, deepLink := title, body, deepLink
+			if r.resolver == "tenant_user" {
+				// P1: penerima tenant → judul/status tenant-facing & deep link Tenant App (PRD §14, §20; guardrail #12)
+				if tTitle == "" {
+					tTitle, tBody, tLink = s.render(ctx, tx, ev, true)
+				}
+				title, body, deepLink = tTitle, tBody, tLink
+			}
 			for _, uid := range recipients {
-				if ev.ActorUserID != nil && *ev.ActorUserID == uid && strings.HasSuffix(ev.Type, ".assigned") {
-					// self-assign: tetap kirim (assignee harus tahu) — kecuali event komentar sendiri
+				if ev.ActorUserID != nil && *ev.ActorUserID == uid && !strings.HasSuffix(ev.Type, ".created") && !strings.HasSuffix(ev.Type, ".assigned") && !strings.HasSuffix(ev.Type, ".confirmed") {
+					// aktor tidak perlu diberi tahu atas aksinya sendiri (pesan, konfirmasi, reopen, feedback);
+					// self-assign & created tetap dikirim (assignee harus tahu; tenant mendapat konfirmasi Ticket Created)
+					continue
 				}
 				if r.dedupMins > 0 {
 					var exists bool
@@ -225,6 +236,42 @@ func (s *Service) resolve(ctx context.Context, tx pgx.Tx, resolver string, ev ev
 		if id := getUUID("reporter_user_id"); id != uuid.Nil {
 			add(id)
 		}
+	case "tenant_user":
+		// P1: pelapor Tenant App (users.id) — dari payload atau dari objek
+		if id := getUUID("tenant_user_id"); id != uuid.Nil {
+			add(id)
+		} else {
+			var tu *uuid.UUID
+			switch ev.ObjectType {
+			case "service_request":
+				_ = tx.QueryRow(ctx, `SELECT tenant_user_id FROM service_requests WHERE id = $1`, ev.ObjectID).Scan(&tu)
+			case "tenant_user":
+				_ = tx.QueryRow(ctx, `SELECT user_id FROM tenant_users WHERE id = $1`, ev.ObjectID).Scan(&tu)
+			case "booking":
+				_ = tx.QueryRow(ctx, `SELECT tenant_user_id FROM bookings WHERE id = $1`, ev.ObjectID).Scan(&tu)
+			case "visitor":
+				_ = tx.QueryRow(ctx, `SELECT tenant_user_id FROM visitors WHERE id = $1`, ev.ObjectID).Scan(&tu)
+			case "invoice":
+				_ = tx.QueryRow(ctx, `SELECT tu.user_id FROM invoices i JOIN tenant_users tu ON tu.tenant_id = i.tenant_id AND tu.status = 'active' WHERE i.id = $1 LIMIT 1`, ev.ObjectID).Scan(&tu)
+			case "payment":
+				_ = tx.QueryRow(ctx, `SELECT tu.user_id FROM payments pm JOIN invoices i ON i.id = pm.invoice_id JOIN tenant_users tu ON tu.tenant_id = i.tenant_id AND tu.status = 'active' WHERE pm.id = $1 LIMIT 1`, ev.ObjectID).Scan(&tu)
+			}
+			if tu != nil {
+				add(*tu)
+			}
+		}
+	case "tenant_property_users":
+		// P1: seluruh tenant user aktif pada property (announcement)
+		rows, err := tx.Query(ctx, `SELECT user_id FROM tenant_users WHERE status = 'active' AND ($1::uuid IS NULL OR property_id = $1)`, ev.PropertyID)
+		if err == nil {
+			for rows.Next() {
+				var id uuid.UUID
+				if rows.Scan(&id) == nil {
+					add(id)
+				}
+			}
+			rows.Close()
+		}
 	}
 	out := make([]uuid.UUID, 0, len(set))
 	for id := range set {
@@ -317,9 +364,20 @@ func domainOfObject(ctx context.Context, tx pgx.Tx, ev events.Event) string {
 	return ""
 }
 
+// tenantStatusLabel: status internal → label tenant-facing (PRD §14; TD-P1-008).
+var tenantStatusLabel = map[string]string{
+	"new": "Submitted", "acknowledged": "Received", "assigned": "Being Assigned", "in_progress": "In Progress",
+	"waiting_for_tenant": "Need Your Response", "resolved": "Resolved", "closed": "Closed", "cancelled": "Cancelled",
+}
+
 // render: Title (Naming Convention §52 [Object] + [Event]) / body (Context: business id — title, location) / deep link.
-func (s *Service) render(ctx context.Context, tx pgx.Tx, ev events.Event) (title, body, deepLink string) {
-	objectLabel := map[string]string{"task": "Task", "work_order": "Work Order", "service_request": "Service Request", "incident": "Incident", "finding": "Finding", "maintenance_schedule": "Maintenance", "export": "Export"}[ev.ObjectType]
+// tenantFacing=true → istilah "Ticket", status tenant-facing, tanpa detail internal, deep link route Tenant App.
+func (s *Service) render(ctx context.Context, tx pgx.Tx, ev events.Event, tenantFacing bool) (title, body, deepLink string) {
+	if tenantFacing {
+		return s.renderTenant(ctx, tx, ev)
+	}
+	objectLabel := map[string]string{"task": "Task", "work_order": "Work Order", "service_request": "Service Request", "incident": "Incident", "finding": "Finding", "maintenance_schedule": "Maintenance", "export": "Export",
+		"tenant_user": "Tenant Account", "announcement": "Announcement", "booking": "Booking", "visitor": "Visitor", "invoice": "Invoice", "payment": "Payment", "hotel_reservation": "Reservation", "unit_rental_reservation": "Rental Reservation", "unit_sales_lead": "Sales Lead", "unit_sale_reservation": "Unit Reservation", "unit_listing": "Unit Listing", "unit_rental_listing": "Rental Listing"}[ev.ObjectType]
 	if objectLabel == "" {
 		objectLabel = ev.ObjectType
 	}
@@ -328,6 +386,7 @@ func (s *Service) render(ctx context.Context, tx pgx.Tx, ev events.Event) (title
 		"created": "Received", "assigned": "Assigned", "started": "Started", "completed": "Completed", "closed": "Closed", "reopened": "Reopened",
 		"cancelled": "Cancelled", "due_soon": "Due Soon", "overdue": "Overdue", "sla_risk": "SLA Risk", "sla_breached": "SLA Breached",
 		"resolved": "Resolved", "escalated": "Escalated", "checkpoint_missed": "Checkpoint Missed", "due": "Due", "conflict": "Sync Conflict", "ready": "Ready",
+		"confirmed": "Confirmed", "activated": "Activated", "sold": "Sold", "handed_over": "Handed Over", "published": "Published", "status_changed": "Updated",
 	}[verb]
 	if eventLabel == "" {
 		eventLabel = strings.Title(strings.ReplaceAll(verb, "_", " "))
@@ -371,9 +430,107 @@ func (s *Service) render(ctx context.Context, tx pgx.Tx, ev events.Event) (title
 	if r, ok := ev.Payload["reason"].(string); ok && r != "" {
 		body += "\n" + r
 	}
-	route := map[string]string{"task": "/operations/tasks/", "work_order": "/operations/work-orders/", "service_request": "/operations/service-requests/", "incident": "/operations/incidents/", "finding": "/findings/", "maintenance_schedule": "/engineering/preventive-maintenance/", "export": "/exports/"}[ev.ObjectType]
+	route := map[string]string{"task": "/operations/tasks/", "work_order": "/operations/work-orders/", "service_request": "/operations/service-requests/", "incident": "/operations/incidents/", "finding": "/findings/", "maintenance_schedule": "/engineering/preventive-maintenance/", "export": "/exports/",
+		"tenant_user": "/tenant-relation/tenant-users/", "announcement": "/tenant-relation/announcements/", "booking": "/booking/bookings/", "visitor": "/security/visitors/", "invoice": "/billing/invoices/", "payment": "/billing/payments/", "hotel_reservation": "/commercial/hotel/reservations/", "unit_rental_reservation": "/commercial/rental/reservations/", "unit_sales_lead": "/commercial/sales/leads/", "unit_sale_reservation": "/commercial/sales/reservations/", "unit_listing": "/commercial/sales/listings/", "unit_rental_listing": "/commercial/rental/listings/"}[ev.ObjectType]
 	if route != "" {
 		deepLink = route + ev.ObjectID.String()
+	}
+	if m, ok := ev.Payload["message_preview"].(string); ok && m != "" {
+		body += "\n" + m
+	}
+	return
+}
+
+// renderTenant: notifikasi untuk Mobile Tenant (PRD §20). Tidak memuat catatan internal, cost, atau assignment terbatas.
+func (s *Service) renderTenant(ctx context.Context, tx pgx.Tx, ev events.Event) (title, body, deepLink string) {
+	verb := ev.Type[strings.LastIndex(ev.Type, ".")+1:]
+	label := ev.ObjectLabel
+	switch ev.ObjectType {
+	case "service_request":
+		var num, ttl string
+		_ = tx.QueryRow(ctx, `SELECT request_number, title FROM service_requests WHERE id = $1`, ev.ObjectID).Scan(&num, &ttl)
+		if num != "" {
+			label = num
+		}
+		to := ""
+		if v, ok := ev.Payload["to"]; ok && v != nil {
+			to = fmt.Sprint(v) // string atau workflow.Status (in-process)
+		}
+		switch verb {
+		case "created":
+			title = "Ticket Created"
+		case "message":
+			title = "New Message from Building Management"
+		case "auto_closed":
+			title = "Ticket Closed"
+		default:
+			if l := tenantStatusLabel[to]; l != "" {
+				title = "Ticket " + l
+			} else {
+				title = "Ticket Updated"
+			}
+		}
+		body = label
+		if ttl != "" {
+			body += " — " + ttl
+		}
+		if m, ok := ev.Payload["message_preview"].(string); ok && m != "" {
+			body += "\n" + m
+		}
+		deepLink = "/requests/" + ev.ObjectID.String()
+	case "tenant_user":
+		switch verb {
+		case "approved":
+			title, body = "Account Approved", "Akun Tenant App Anda telah divalidasi. Silakan masuk."
+		case "rejected":
+			title, body = "Account Rejected", "Pendaftaran akun tidak dapat disetujui."
+			if r, ok := ev.Payload["reason"].(string); ok && r != "" {
+				body += "\n" + r
+			}
+		case "suspended":
+			title, body = "Account Suspended", "Akun Anda ditangguhkan. Hubungi building management."
+		default:
+			title, body = "Account Updated", ""
+		}
+		deepLink = "/profile"
+	case "announcement":
+		title = "Announcement"
+		var ttl, excerpt string
+		_ = tx.QueryRow(ctx, `SELECT title, COALESCE(excerpt,'') FROM announcements WHERE id = $1`, ev.ObjectID).Scan(&ttl, &excerpt)
+		body = ttl
+		if excerpt != "" {
+			body += "\n" + excerpt
+		}
+		deepLink = "/inbox/announcements/" + ev.ObjectID.String()
+	case "booking":
+		title = "Booking " + strings.Title(strings.ReplaceAll(verb, "_", " "))
+		body = label
+		deepLink = "/facilities/bookings/" + ev.ObjectID.String()
+	case "visitor":
+		title = "Visitor " + strings.Title(strings.ReplaceAll(verb, "_", " "))
+		body = label
+		deepLink = "/visitors/" + ev.ObjectID.String()
+	case "invoice":
+		title = "Invoice " + strings.Title(strings.ReplaceAll(verb, "_", " "))
+		body = label
+		deepLink = "/bills/" + ev.ObjectID.String()
+	case "payment":
+		title = "Payment " + strings.Title(strings.ReplaceAll(verb, "_", " "))
+		body = label
+		deepLink = "/bills"
+	case "unit_rental_reservation":
+		switch verb {
+		case "activated":
+			title, body = "Welcome Home", "Sewa unit Anda aktif. Akun Tenant App Anda dapat digunakan untuk permintaan layanan, tagihan, dan informasi gedung."
+		case "completed":
+			title, body = "Rental Completed", "Masa sewa unit Anda telah berakhir. Terima kasih."
+		default:
+			title, body = "Rental "+strings.Title(strings.ReplaceAll(verb, "_", " ")), label
+		}
+		deepLink = "/home"
+	default:
+		title = strings.Title(strings.ReplaceAll(ev.ObjectType, "_", " ")) + " " + strings.Title(strings.ReplaceAll(verb, "_", " "))
+		body = label
 	}
 	return
 }

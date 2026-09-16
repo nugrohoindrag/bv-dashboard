@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { Plus, Play } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shell/AppShell";
 import { Button, Checkbox, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect, Tabs, TabsContent, TabsList, TabsTrigger, Textarea } from "@/components/ui/primitives";
@@ -81,7 +81,7 @@ function PatrolTasksTab() {
             { key: "open", label: "Open", params: { open: "true" } },
             { key: "overdue", label: t("label.overdue"), params: { overdue: "true" } },
           ],
-          extra: can("security.patrol.manage") ? <Button size="sm" variant="secondary" loading={generate.isPending} onClick={() => generate.mutateAsync().then((r) => toast.success(`${r.generated} patrol task dibuat dari jadwal`)).catch(toast.error)}><Play /> Generate dari jadwal</Button> : undefined,
+          extra: can("security.patrol.manage") ? <Button size="sm" variant="secondary" loading={generate.isPending} onClick={() => generate.mutateAsync().then((r) => toast.success(`${r.generated} patrol task dibuat dari jadwal`)).catch(toast.error)}><Icon name="play_arrow" size={16} /> Generate dari jadwal</Button> : undefined,
         }}
       />
       <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/operations/tasks/${r.id}`} loading={list.isLoading} isFiltered={f.isFiltered} empty={{ message: "Belum ada Patrol Task. Buat jadwal patrol lalu generate." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} rowClassName={(r) => (r.is_overdue ? "border-l-4 border-l-critical" : undefined)} />
@@ -149,7 +149,7 @@ function CheckpointsTab() {
   );
   return (
     <div className="space-y-3">
-      <div className="flex justify-end">{can("security.checkpoints.create") && <Button onClick={() => setEdit("new")}><Plus /> Tambah Checkpoint</Button>}</div>
+      <div className="flex justify-end">{can("security.checkpoints.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Tambah Checkpoint</Button>}</div>
       <DataGrid columns={columns} rows={list.data ?? []} rowId={(r) => r.id} onRowClick={(r) => { if (can("security.checkpoints.update")) setEdit(r); }} loading={list.isLoading} empty={{ message: "Belum ada checkpoint." }} />
       {edit && <CheckpointDialog item={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
     </div>
@@ -206,7 +206,7 @@ function RoutesTab() {
   );
   return (
     <div className="space-y-3">
-      <div className="flex justify-end">{can("security.patrol_routes.create") && <Button onClick={() => setEdit("new")}><Plus /> Buat Rute</Button>}</div>
+      <div className="flex justify-end">{can("security.patrol_routes.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Buat Rute</Button>}</div>
       <DataGrid columns={columns} rows={list.data ?? []} rowId={(r) => r.id} onRowClick={(r) => { setEdit(r); }} loading={list.isLoading} empty={{ message: "Belum ada rute patrol." }} />
       {edit && <RouteDialog item={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
     </div>
@@ -291,7 +291,7 @@ function SchedulesTab() {
   );
   return (
     <div className="space-y-3">
-      <div className="flex justify-end">{can("security.patrol.manage") && <Button onClick={() => setEdit("new")}><Plus /> Buat Jadwal</Button>}</div>
+      <div className="flex justify-end">{can("security.patrol.manage") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Buat Jadwal</Button>}</div>
       <DataGrid columns={columns} rows={list.data ?? []} rowId={(r) => r.id} onRowClick={(r) => { if (can("security.patrol.manage")) setEdit(r); }} loading={list.isLoading} empty={{ message: "Belum ada jadwal patrol." }} />
       {edit && <PatrolScheduleDialog item={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
     </div>

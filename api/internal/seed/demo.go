@@ -50,7 +50,7 @@ func SeedDemoRefs(ctx context.Context, tx pgx.Tx, orgID, adminID uuid.UUID, with
 		return createLocationTx(ctx, tx, orgID, adminID, lt, parent, name, details)
 	}
 	var err error
-	if refs.PropertyID, err = mk(property.LTProperty, nil, "Graha Pangeran", map[string]any{"timezone": "Asia/Jakarta", "address": "Jl. Pangeran No. 1", "city": "Jakarta", "property_type": "office"}); err != nil {
+	if refs.PropertyID, err = mk(property.LTProperty, nil, "Graha Pangeran", map[string]any{"timezone": "Asia/Jakarta", "address": "Jl. Pangeran No. 1", "city": "Jakarta", "property_type": "office", "profile": "office"}); err != nil {
 		return nil, err
 	}
 	bld, err := mk(property.LTBuilding, &refs.PropertyID, "Graha Pangeran Main", map[string]any{"floors_count": 20.0})
@@ -105,7 +105,7 @@ func SeedDemoRefs(ctx context.Context, tx pgx.Tx, orgID, adminID uuid.UUID, with
 	}
 
 	// Teams
-	for _, t := range []struct{ name, domain string }{{"Engineering Team", "engineering"}, {"Security Team", "security"}, {"Housekeeping Team", "housekeeping"}, {"Building Management Team", "management"}} {
+	for _, t := range []struct{ name, domain string }{{"Engineering Team", "engineering"}, {"Security Team", "security"}, {"Housekeeping Team", "housekeeping"}, {"Building Management Team", "management"}, {"Tenant Relation Team", "tenant_relation"}, {"Finance Team", "finance"}} {
 		var id uuid.UUID
 		if err := tx.QueryRow(ctx, `INSERT INTO teams (organization_id, property_id, name, domain, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING id`, orgID, refs.PropertyID, t.name, t.domain, adminID).Scan(&id); err != nil {
 			return nil, err
@@ -131,6 +131,11 @@ func SeedDemoRefs(ctx context.Context, tx pgx.Tx, orgID, adminID uuid.UUID, with
 		{"hk.manager@demo.buildingvision.id", "Maria Housekeeping Manager", "housekeeping_manager", "housekeeping", false},
 		{"hk.spv@demo.buildingvision.id", "Sari Housekeeping Supervisor", "housekeeping_supervisor", "housekeeping", true},
 		{"siti@demo.buildingvision.id", "Siti Aminah", "housekeeping_staff", "housekeeping", false},
+		// P1: Tenant Relation, Receptionist, Finance (PRD v1.3 §6; NC §32)
+		{"tr.manager@demo.buildingvision.id", "Lestari Tenant Relation Manager", "tenant_relation_manager", "tenant_relation", true},
+		{"tr.officer@demo.buildingvision.id", "Nadia Tenant Relation Officer", "tenant_relation_officer", "tenant_relation", false},
+		{"reception@demo.buildingvision.id", "Putri Receptionist", "receptionist", "tenant_relation", false},
+		{"finance@demo.buildingvision.id", "Yusuf Finance Staff", "finance_staff", "finance", true},
 	}
 	for _, u := range users {
 		id, err := CreateUser(ctx, tx, orgID, u.email, u.name, "Demo12345!", u.role, &refs.PropertyID)
@@ -165,6 +170,9 @@ func SeedDemoRefs(ctx context.Context, tx pgx.Tx, orgID, adminID uuid.UUID, with
 
 	if withOps {
 		if err := SeedDemoOperations(ctx, tx, refs); err != nil {
+			return nil, err
+		}
+		if err := SeedBVRoomsDemo(ctx, tx, refs); err != nil {
 			return nil, err
 		}
 	}

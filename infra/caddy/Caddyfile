@@ -61,3 +61,39 @@
 		format json
 	}
 }
+
+# Website publik (Website PRD v1.1): situs statis hasil prerender; /api → api (public endpoints: app-downloads, plans, signup, events).
+{$BV_WEBSITE_DOMAIN} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+	@api path /api/*
+	handle @api {
+		reverse_proxy api:8080 {
+			lb_policy round_robin
+			health_uri /health
+			header_up X-Request-Id {http.request.uuid}
+		}
+	}
+	handle {
+		root * /srv-website
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		header /images/* Cache-Control "public, max-age=2592000"
+		try_files {path} {path}/index.html /404.html
+		file_server
+	}
+	handle_errors {
+		root * /srv-website
+		rewrite * /404.html
+		file_server
+	}
+	log {
+		output stdout
+		format json
+	}
+}

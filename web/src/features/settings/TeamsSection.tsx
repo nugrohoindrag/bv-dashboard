@@ -1,7 +1,7 @@
 // Teams (PRD §22.4): team per domain & property, anggota + lead.
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Button, Checkbox, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect } from "@/components/ui/primitives";
 import { DataGrid } from "@/components/bv/datagrid";
@@ -27,7 +27,7 @@ export default function TeamsSection() {
   );
   return (
     <div className="space-y-3">
-      <div className="flex justify-end">{can("iam.teams.create") && <Button onClick={() => setEdit("new")}><Plus /> Buat Team</Button>}</div>
+      <div className="flex justify-end">{can("iam.teams.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Buat Team</Button>}</div>
       <DataGrid columns={columns} rows={list.data ?? []} rowId={(r) => r.id} onRowClick={(r) => { if (can("iam.teams.update")) setEdit(r); }} loading={list.isLoading} empty={{ message: "Belum ada team." }} />
       {edit && <TeamDialog item={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
     </div>

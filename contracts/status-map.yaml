@@ -30,6 +30,67 @@ service_request:
   resolved:           { label_id: "Terselesaikan",     label_en: "Resolved",           semantic: success, variant: soft }
   closed:             { label_id: "Ditutup",           label_en: "Closed",             semantic: success, variant: solid }
   cancelled:          { label_id: "Dibatalkan",        label_en: "Cancelled",          semantic: neutral, variant: outline }
+# Tenant-facing status Service Request (PRD P1 v1.3 §14; TD-P1-008): pemetaan presentasi untuk Mobile Tenant — status internal tetap kanonik.
+# new→submitted, acknowledged→received, assigned→being_assigned, in_progress→in_progress, waiting_for_tenant→need_your_response,
+# resolved→resolved, closed→closed, cancelled→cancelled
+service_request_tenant:
+  submitted:          { label_id: "Terkirim",              label_en: "Submitted",          semantic: neutral, variant: soft }
+  received:           { label_id: "Diterima",              label_en: "Received",           semantic: info,    variant: soft }
+  being_assigned:     { label_id: "Sedang Ditugaskan",     label_en: "Being Assigned",     semantic: info,    variant: soft }
+  in_progress:        { label_id: "Sedang Dikerjakan",     label_en: "In Progress",        semantic: info,    variant: solid }
+  need_your_response: { label_id: "Butuh Respons Anda",    label_en: "Need Your Response", semantic: warning, variant: solid }
+  resolved:           { label_id: "Selesai",               label_en: "Resolved",           semantic: success, variant: soft }
+  closed:             { label_id: "Ditutup",               label_en: "Closed",             semantic: success, variant: solid }
+  cancelled:          { label_id: "Dibatalkan",            label_en: "Cancelled",          semantic: neutral, variant: outline }
+# Facility Booking (PRD P1 §3.6; NC §71 Booking)
+booking:
+  pending:     { label_id: "Menunggu Persetujuan", label_en: "Pending",     semantic: warning, variant: soft }
+  confirmed:   { label_id: "Dikonfirmasi",         label_en: "Confirmed",   semantic: info,    variant: soft }
+  checked_in:  { label_id: "Berlangsung",          label_en: "Checked In",  semantic: info,    variant: solid }
+  completed:   { label_id: "Selesai",              label_en: "Completed",   semantic: success, variant: soft }
+  cancelled:   { label_id: "Dibatalkan",           label_en: "Cancelled",   semantic: neutral, variant: outline }
+  rejected:    { label_id: "Ditolak",              label_en: "Rejected",    semantic: critical, variant: soft }
+  no_show:     { label_id: "Tidak Hadir",          label_en: "No Show",     semantic: critical, variant: outline }
+# BVRooms customer booking (Requirements v0.2 §4.1) — derivasi dari payment_status + hotel_reservations.status
+bvrooms_booking_customer:
+  UNPAID:      { label_id: "Belum Dibayar",  label_en: "Unpaid",      semantic: critical, variant: solid }
+  PAID:        { label_id: "Sudah Dibayar",  label_en: "Paid",        semantic: success,  variant: solid }
+  "CHECK IN":  { label_id: "Check In",       label_en: "Checked In",  semantic: warning,  variant: solid }
+  "CHECK OUT": { label_id: "Check Out",      label_en: "Checked Out", semantic: neutral,  variant: solid }
+  CANCELLED:   { label_id: "Dibatalkan",     label_en: "Cancelled",   semantic: neutral,  variant: solid }
+  EXPIRED:     { label_id: "Hangus",         label_en: "Expired",     semantic: neutral,  variant: outline }
+bvrooms_payment:
+  pending:         { label_id: "Menunggu Pembayaran", label_en: "Pending",         semantic: warning,  variant: soft }
+  proof_submitted: { label_id: "Bukti Diverifikasi",  label_en: "Proof Submitted", semantic: info,     variant: soft }
+  paid:            { label_id: "Lunas",               label_en: "Paid",            semantic: success,  variant: soft }
+  expired:         { label_id: "Kedaluwarsa",         label_en: "Expired",         semantic: neutral,  variant: outline }
+  failed:          { label_id: "Ditolak",             label_en: "Rejected",        semantic: critical, variant: soft }
+  cancelled:       { label_id: "Dibatalkan",          label_en: "Cancelled",       semantic: neutral,  variant: outline }
+# Visitor Management (PRD P1 §3.7)
+visitor:
+  pending_approval: { label_id: "Menunggu Persetujuan", label_en: "Pending Approval", semantic: warning, variant: soft }
+  registered:  { label_id: "Terdaftar",            label_en: "Registered",  semantic: info,    variant: soft }
+  checked_in:  { label_id: "Sudah Masuk",          label_en: "Checked In",  semantic: info,    variant: solid }
+  checked_out: { label_id: "Sudah Keluar",         label_en: "Checked Out", semantic: success, variant: soft }
+  expired:     { label_id: "Kedaluwarsa",          label_en: "Expired",     semantic: neutral, variant: outline }
+  cancelled:   { label_id: "Dibatalkan",           label_en: "Cancelled",   semantic: neutral, variant: outline }
+  denied:      { label_id: "Ditolak",              label_en: "Denied",      semantic: critical, variant: soft }
+# Billing & Payment (PRD P1 §3.8; NC §34)
+invoice:
+  draft:       { label_id: "Draft",                label_en: "Draft",       semantic: neutral, variant: outline }
+  issued:      { label_id: "Belum Dibayar",        label_en: "Unpaid",      semantic: warning, variant: soft }
+  partially_paid: { label_id: "Dibayar Sebagian",  label_en: "Partially Paid", semantic: warning, variant: solid }
+  paid:        { label_id: "Lunas",                label_en: "Paid",        semantic: success, variant: solid }
+  overdue:     { label_id: "Jatuh Tempo",          label_en: "Overdue",     semantic: critical, variant: solid }
+  cancelled:   { label_id: "Dibatalkan",           label_en: "Cancelled",   semantic: neutral, variant: outline }
+payment:
+  initiated:   { label_id: "Menunggu Pembayaran",  label_en: "Pending",     semantic: warning, variant: soft }
+  pending:     { label_id: "Diproses",             label_en: "Processing",  semantic: info,    variant: soft }
+  paid:        { label_id: "Berhasil",             label_en: "Paid",        semantic: success, variant: solid }
+  failed:      { label_id: "Gagal",                label_en: "Failed",      semantic: critical, variant: soft }
+  expired:     { label_id: "Kedaluwarsa",          label_en: "Expired",     semantic: neutral, variant: outline }
+  cancelled:   { label_id: "Dibatalkan",           label_en: "Cancelled",   semantic: neutral, variant: outline }
+  refunded:    { label_id: "Dikembalikan",         label_en: "Refunded",    semantic: neutral, variant: soft }
 maintenance_schedule:
   scheduled:   { label_id: "Terjadwal",         label_en: "Scheduled",   semantic: info,     variant: soft }
   due:         { label_id: "Jatuh Tempo",       label_en: "Due",         semantic: warning,  variant: soft }

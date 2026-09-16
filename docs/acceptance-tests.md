@@ -21,3 +21,15 @@ Tambahan yang diuji otomatis: RBAC negatif (technician tidak bisa close), rotasi
 - #25 Backup & restore: `docs/runbooks/backup-restore.md` + `infra/scripts/restore-drill.sh` (drill wajib sebelum UAT — hasil dicatat di tabel runbook).
 - #26 Observability: `/metrics` api/worker, dashboard Grafana, alert `infra/prometheus/alerts.yml`.
 - #27 Runbook deploy/rollback: `docs/runbooks/`.
+
+## P1 v1.3 (PRD §43) → test otomatis
+
+| AT | Skenario | Test otomatis | Kode utama |
+|---|---|---|---|
+| AT-P1-000 / 000A / 000B | Profile & modul mandatory, konfigurasi profile, boundary capability | `TestPropertyProfile` | `internal/profile`, `POST /properties/{id}/profile`, 403 `CAPABILITY_NOT_ENABLED` |
+| AT-P1-000C | Hotel Booking Management | `TestHotelBooking` | `internal/hotel` (reservasi ↔ kamar ↔ Housekeeping) |
+| AT-P1-000D / 000E | Apartment Unit Sales / Unit Rental (daily/weekly/monthly) | `TestApartmentSalesAndRental` | `internal/commercial` |
+| AT-P1-001 … 009 | Login tenant, ticket unit/common area, unauthorized unit, ticket → WO, progres, resolusi, reopen, isolasi data internal | `TestTenantAppFlow`, `TestServiceRequestAndNotifications` | `internal/tenantapp`, `internal/tenantservice`, `internal/notification` |
+| AT-P1-010 / 011 | Facility booking (konflik dicegah), visitor + pass | `TestFacilityBookingAndVisitor` | `internal/booking`, `internal/visitor` |
+| AT-P1-012 | Payment via gateway + callback terverifikasi + receipt | `TestBillingAndPayment` | `internal/billing`, `POST /webhooks/payments/{provider}` |
+| — | Vendor WO & Parts Usage; sweep worker (auto-close, visitor expire, billing); Reports §26 | `TestVendorAndInventory`, `TestP1Sweeps`, `TestReports` | `internal/{vendor,inventory,reports}`, `tenantapp.AutoCloseSweep` |

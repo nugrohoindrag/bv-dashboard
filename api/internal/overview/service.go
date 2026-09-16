@@ -414,13 +414,13 @@ func (s *Service) TodaysOperations(ctx context.Context, propertyID *uuid.UUID, d
 			if err != nil {
 				return nil, err
 			}
-			panel.Items = tasks
+			panel.Items = append(panel.Items, tasks...) // tetap [] (bukan null) bila kosong
 		case "housekeeping":
 			tasks, _, err := s.Ops.List(ctx, operations.ObjTask, operations.ListFilter{PropertyID: propertyID, ScheduledOn: &today, Types: []string{"cleaning"}, Sort: "due_at"}, page)
 			if err != nil {
 				return nil, err
 			}
-			panel.Items = tasks
+			panel.Items = append(panel.Items, tasks...) // tetap [] (bukan null) bila kosong
 		}
 		for _, it := range panel.Items {
 			panel.Summary[string(it.Status)]++

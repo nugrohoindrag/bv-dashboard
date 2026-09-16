@@ -1,7 +1,7 @@
 // Equipment (master kategori/tipe aset, PRD §13.1): tabel + form tambah/edit; aktif/nonaktif.
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shell/AppShell";
 import { Button, Checkbox, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect } from "@/components/ui/primitives";
@@ -34,7 +34,7 @@ export default function EquipmentPage() {
   );
   return (
     <div>
-      <PageHeader title={t("nav.equipment")} subtitle="Master kategori & tipe peralatan untuk Asset Register." actions={can("engineering.equipment.create") && <Button onClick={() => setEdit("new")}><Plus /> Tambah Equipment</Button>}>
+      <PageHeader title={t("nav.equipment")} subtitle="Master kategori & tipe peralatan untuk Asset Register." actions={can("engineering.equipment.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Tambah Equipment</Button>}>
         <Input className="w-72" placeholder="Cari kategori / tipe…" value={q} onChange={(e) => setQ(e.target.value)} />
       </PageHeader>
       <DataGrid columns={columns} rows={list.data ?? []} rowId={(r) => r.id} onRowClick={(r) => { if (can("engineering.equipment.update")) setEdit(r); }} loading={list.isLoading} empty={{ message: "Belum ada equipment." }} />

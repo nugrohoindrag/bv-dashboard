@@ -38,6 +38,12 @@ type Config struct {
 	// Push
 	FCMProjectID          string
 	FCMServiceAccountJSON string // path atau inline JSON
+	// BVRooms Web Push (VAPID) — kosong = push dinonaktifkan; kunci dari `bvctl vapid-keygen`
+	VAPIDPublicKey  string
+	VAPIDPrivateKey string
+	VAPIDSubject    string
+	// Demo Seed Database (§39): tooling demo aktif di local/staging/test; production butuh BV_DEMO_ENABLED=true
+	DemoEnabled bool
 
 	// Misc
 	LogLevel            string
@@ -47,6 +53,22 @@ type Config struct {
 	MinMobileAppVersion string
 	QRBaseURL           string
 	MetricsAddr         string // alamat internal /metrics (kosong = nonaktif)
+
+	// Website, self-serve onboarding & free trial (Website PRD v1.1)
+	WebsiteURL          string        // https://buildingvision.id (public website; CTA Login/Start Free Trial → PublicURL)
+	TrialDays           int           // §24: 14 hari
+	TrialEndingSoonDays int           // §31: trial_ending_soon bila sisa ≤ N hari
+	SignupTokenTTL      time.Duration // masa berlaku link verifikasi email
+	SalesEmail          string        // penerima Book a Demo (§34)
+	GrowthEventsEnabled bool          // §40 analytics funnel (server-side store)
+
+	// Email (SMTP; kosong = mailer log-only, dev memakai Mailpit :1025)
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUser     string
+	SMTPPassword string
+	SMTPFrom     string
+	SMTPStartTLS bool
 }
 
 func Load() (Config, error) {
@@ -73,6 +95,10 @@ func Load() (Config, error) {
 		MaxUploadBytes:        getint64("BV_MAX_UPLOAD_BYTES", 10*1024*1024),
 		FCMProjectID:          getenv("BV_FCM_PROJECT_ID", ""),
 		FCMServiceAccountJSON: getenv("BV_FCM_SERVICE_ACCOUNT", ""),
+		VAPIDPublicKey:        getenv("BV_VAPID_PUBLIC_KEY", ""),
+		VAPIDPrivateKey:       getenv("BV_VAPID_PRIVATE_KEY", ""),
+		VAPIDSubject:          getenv("BV_VAPID_SUBJECT", "mailto:ops@buildingvision.id"),
+		DemoEnabled:           getenv("BV_DEMO_ENABLED", "") == "true",
 		LogLevel:              getenv("BV_LOG_LEVEL", "info"),
 		CORSOrigins:           splitCSV(getenv("BV_CORS_ORIGINS", "http://localhost:5173")),
 		OverviewCacheTTL:      getdur("BV_OVERVIEW_CACHE_TTL", 30*time.Second),
@@ -80,6 +106,18 @@ func Load() (Config, error) {
 		MinMobileAppVersion:   getenv("BV_MIN_MOBILE_APP_VERSION", "0.1.0"),
 		QRBaseURL:             getenv("BV_QR_BASE_URL", "https://bv.link/q/"),
 		MetricsAddr:           getenv("BV_METRICS_ADDR", ""),
+		WebsiteURL:            getenv("BV_WEBSITE_URL", "http://localhost:5175"),
+		TrialDays:             int(getint64("BV_TRIAL_DAYS", 14)),
+		TrialEndingSoonDays:   int(getint64("BV_TRIAL_ENDING_SOON_DAYS", 3)),
+		SignupTokenTTL:        getdur("BV_SIGNUP_TOKEN_TTL", 24*time.Hour),
+		SalesEmail:            getenv("BV_SALES_EMAIL", "sales@buildingvision.id"),
+		GrowthEventsEnabled:   getbool("BV_GROWTH_EVENTS", true),
+		SMTPHost:              getenv("BV_SMTP_HOST", ""),
+		SMTPPort:              int(getint64("BV_SMTP_PORT", 1025)),
+		SMTPUser:              getenv("BV_SMTP_USER", ""),
+		SMTPPassword:          getenv("BV_SMTP_PASSWORD", ""),
+		SMTPFrom:              getenv("BV_SMTP_FROM", "BuildingVision <no-reply@buildingvision.id>"),
+		SMTPStartTLS:          getbool("BV_SMTP_STARTTLS", false),
 	}
 	if c.WorkerDatabaseURL == "" {
 		c.WorkerDatabaseURL = c.DatabaseURL

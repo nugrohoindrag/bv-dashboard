@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Plus, Play } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shell/AppShell";
 import { Button, Checkbox, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect, Tabs, TabsContent, TabsList, TabsTrigger, Textarea } from "@/components/ui/primitives";
@@ -74,7 +74,7 @@ function SchedulesTab({ highlight }: { highlight?: string }) {
             { key: "30", label: "30 hari", params: { due_within_days: "30" } },
             { key: "overdue", label: t("label.overdue"), params: { status: "overdue" } },
           ],
-          extra: can("engineering.maintenance_schedules.skip") ? <Button size="sm" variant="secondary" loading={runDue.isPending} onClick={() => runDue.mutateAsync().then((r) => toast.success(`${r.created} Work Order dibuat dari jadwal due`)).catch(toast.error)}><Play /> Buat WO jadwal due</Button> : undefined,
+          extra: can("engineering.maintenance_schedules.skip") ? <Button size="sm" variant="secondary" loading={runDue.isPending} onClick={() => runDue.mutateAsync().then((r) => toast.success(`${r.created} Work Order dibuat dari jadwal due`)).catch(toast.error)}><Icon name="play_arrow" size={16} /> Buat WO jadwal due</Button> : undefined,
         }}
       />
       <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => (r.work_order_id ? `/operations/work-orders/${r.work_order_id}` : undefined)} loading={list.isLoading} isFiltered={f.isFiltered} empty={{ message: "Belum ada jadwal PM. Publikasikan Maintenance Plan untuk membuat jadwal." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} rowClassName={(r) => cn(r.status === "overdue" && "border-l-4 border-l-critical", r.id === highlight && "bg-brand-50")} />
@@ -108,7 +108,7 @@ function PlansTab() {
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <NativeSelect className="w-40" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option><option value="draft">Draft</option><option value="published">Published</option><option value="archived">Archived</option></NativeSelect>
-        <span className="ml-auto">{can("engineering.maintenance_plans.create") && <Button onClick={() => setEdit("new")}><Plus /> Buat Plan</Button>}</span>
+        <span className="ml-auto">{can("engineering.maintenance_plans.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Buat Plan</Button>}</span>
       </div>
       <DataGrid
         columns={columns}

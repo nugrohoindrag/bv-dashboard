@@ -1,0 +1,36 @@
+/**
+ * BuildingVision, the page and section shell.
+ *
+ * `Page` and `Section` (bv/PageMotion.tsx) stamp `.bv-page` and `.bv-section`
+ * on every screen, but nothing ever defined those classes: they carried the
+ * motion cascade and no geometry at all. Ten console pages worked around it by
+ * repeating the same recipe inline —
+ *
+ *     <Page style={{ padding: 'var(--space-5)', display: 'flex',
+ *                    flexDirection: 'column', gap: 'var(--space-4)' }}>
+ *
+ * — and the pages that did not repeat it (the whole planning section) rendered
+ * with no page padding and no gap between sections, so their cards sat flush
+ * against the shell and against each other.
+ *
+ * That recipe is the design system's page rhythm, so it belongs here rather
+ * than in ten copies. Inline styles still win over these rules, which is why
+ * the ten pages that set their own values are unaffected, and why a full-bleed
+ * screen (the operator terminal) opts out by setting `padding: 0`.
+ */
+
+.bv-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  /* A grid or table child wider than the viewport must scroll inside its own
+     container rather than stretching the column and pushing the page sideways. */
+  min-width: 0;
+}
+
+.bv-section {
+  /* Same reason as above: without this, a `minmax()` grid inside a section can
+     refuse to shrink and the whole page gains a horizontal scrollbar. */
+  min-width: 0;
+}

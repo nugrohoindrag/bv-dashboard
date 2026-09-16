@@ -18,6 +18,7 @@ import (
 	"github.com/buildingvision/api/internal/platform/events"
 	"github.com/buildingvision/api/internal/platform/ids"
 	"github.com/buildingvision/api/internal/platform/jobs"
+	"github.com/buildingvision/api/internal/profile"
 )
 
 type Service struct {
@@ -227,9 +228,28 @@ func (s *Service) upsertDetails(ctx context.Context, tx pgx.Tx, id, orgID uuid.U
 			return apperr.Validation("sla_calendar harus always|business_hours")
 		}
 		if insert {
-			_, err = tx.Exec(ctx, `INSERT INTO properties (location_id, organization_id, timezone, address, city, property_type, sla_calendar) VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),$7)`,
-				id, orgID, tz, str("address", ""), str("city", ""), str("property_type", ""), cal)
+			// Property Profile wajib dipilih saat membuat property (Onboarding Brief PS-001/AC-02; TD-P1-001)
+			prof := strings.ToLower(str("profile", ""))
+			if prof == "" {
+				return apperr.Validation("details.profile wajib: hotel|apartment|office").WithField("details.profile", "wajib")
+			}
+			if !profile.Valid(prof) {
+				return apperr.Validation("details.profile harus hotel|apartment|office").WithField("details.profile", "tidak valid")
+			}
+			_, err = tx.Exec(ctx, `INSERT INTO properties (location_id, organization_id, timezone, address, city, property_type, sla_calendar, profile) VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),$7,$8)`,
+				id, orgID, tz, str("address", ""), str("city", ""), str("property_type", ""), cal, prof)
+			if err == nil {
+				_, err = tx.Exec(ctx, `INSERT INTO property_profile_configs (property_id, organization_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, id, orgID)
+			}
 		} else {
+			// profile TIDAK diubah lewat PATCH biasa (PS-006) — hanya lewat POST /properties/{id}/profile
+			if v := str("profile", ""); v != "" {
+				var cur string
+				_ = tx.QueryRow(ctx, `SELECT profile FROM properties WHERE location_id = $1`, id).Scan(&cur)
+				if !strings.EqualFold(v, cur) {
+					return apperr.Validation("Perubahan profile harus melalui aksi administratif Ubah Profile (POST /properties/{id}/profile)")
+				}
+			}
 			_, err = tx.Exec(ctx, `UPDATE properties SET timezone = COALESCE(NULLIF($2,''), timezone), address = COALESCE(NULLIF($3,''), address), city = COALESCE(NULLIF($4,''), city), property_type = COALESCE(NULLIF($5,''), property_type), sla_calendar = $6 WHERE location_id = $1`,
 				id, str("timezone", ""), str("address", ""), str("city", ""), str("property_type", ""), cal)
 		}

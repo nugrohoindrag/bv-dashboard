@@ -15,6 +15,7 @@ export interface Principal {
   lead_team_ids: string[];
   permissions: string[];
   properties: PropertyScope[];
+  is_internal_admin?: boolean; // role admin_internal pada organization internal (Website PRD §18)
 }
 export interface PropertyLite {
   id: string;

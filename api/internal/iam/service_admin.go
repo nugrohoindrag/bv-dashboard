@@ -731,7 +731,12 @@ func (s *Service) UnregisterDevice(ctx context.Context, token string) error {
 
 // SeedSystemRoles membuat/menyinkronkan role is_system per organization dari katalog.
 func (s *Service) SeedSystemRoles(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) error {
+	var internal bool
+	_ = tx.QueryRow(ctx, `SELECT is_internal FROM organizations WHERE id = $1`, orgID).Scan(&internal)
 	for _, rt := range s.Catalog.Roles {
+		if catalog.IsInternalRole(rt.Code) && !internal {
+			continue // admin_internal hanya untuk organization internal BuildingVision (Website PRD §18)
+		}
 		var id uuid.UUID
 		err := tx.QueryRow(ctx, `
 			INSERT INTO roles (organization_id, code, name, is_system, domain) VALUES ($1,$2,$3,true,$4)

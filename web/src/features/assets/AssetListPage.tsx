@@ -1,7 +1,7 @@
 // Asset Register (PRD §13): daftar aset per property/lokasi/kategori; QR; buat/edit aset; export.
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/primitives";
@@ -41,7 +41,7 @@ export default function AssetListPage() {
   );
   return (
     <div>
-      <PageHeader title={t("nav.assets")} actions={can("engineering.assets.create") && <Button onClick={() => setCreateOpen(true)}><Plus /> Tambah Aset</Button>}>
+      <PageHeader title={t("nav.assets")} actions={can("engineering.assets.create") && <Button onClick={() => setCreateOpen(true)}><Icon name="add" size={16} /> Tambah Aset</Button>}>
         <FilterBar
           spec={{
             status: [{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }, { value: "under_maintenance", label: "Under Maintenance" }, { value: "decommissioned", label: "Decommissioned" }],

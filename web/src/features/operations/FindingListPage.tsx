@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shell/AppShell";
 import { Button } from "@/components/ui/primitives";
@@ -42,7 +42,7 @@ export default function FindingListPage() {
   );
   return (
     <div>
-      <PageHeader title="Findings" actions={can("operations.findings.create") && <Button onClick={() => setCreateOpen(true)}><Plus /> Catat Finding</Button>}>
+      <PageHeader title="Findings" actions={can("operations.findings.create") && <Button onClick={() => setCreateOpen(true)}><Icon name="add" size={16} /> Catat Finding</Button>}>
         <FilterBar
           spec={{
             status: Object.entries(statusMap.finding).map(([value, d]) => ({ value, label: d.label_id })),

@@ -2,6 +2,7 @@
 // useExport (POST /exports → polling → link unduh). Nama aksi mengikuti Naming Convention §42–§44.
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { RowActionMenu } from "@buildingvision/ui/bv";
 import { Button, Checkbox, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect, Textarea } from "@/components/ui/primitives";
 import { ReasonDialog, useToast } from "@/components/bv/common";
 import { AssetPicker, LocationPicker, TeamPicker, UserPicker } from "@/components/bv/pickers";
@@ -224,6 +225,8 @@ const REASON_ACTIONS: Record<string, { title: string; label: string; required: b
 };
 const PRIMARY: Record<string, true> = { start: true, complete: true, resolve: true, acknowledge: true, resume: true };
 
+const ACTION_ICON: Record<string, string> = { start: "play_arrow", resume: "play_arrow", complete: "check_circle", close: "task_alt", verify: "verified", hold: "pause_circle", reopen: "replay", cancel: "cancel", schedule: "event", acknowledge: "mark_email_read", resolve: "done_all", wait_tenant: "hourglass_top", escalate: "priority_high", skip: "skip_next" };
+
 export function TransitionActions({ objectType, item, onAssign, compact, size = "sm" }: { objectType: ActionObjectType; item: { id: string; allowed_actions: string[]; status: string; assignee?: { user_id: string | null; team_id: string | null } }; onAssign?: () => void; compact?: boolean; size?: "sm" | "md" }) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -247,17 +250,44 @@ export function TransitionActions({ objectType, item, onAssign, compact, size = 
     else if (action === "schedule") setScheduleOpen(true);
     else run(action);
   };
-  const shown = compact ? actions.slice(0, 2) : actions;
+  // Baris tabel (compact): satu aksi utama sebagai tombol + sisanya di menu baris (DS: hanya kolom yang dibutuhkan, bukan deretan tombol).
+  const canAssign = item.allowed_actions.includes("assign") && !!onAssign;
+  const primaryAction = compact ? (actions.find((a) => PRIMARY[a]) ?? (canAssign ? null : actions[0] ?? null)) : null;
+  const menuActions = compact ? actions.filter((a) => a !== primaryAction) : [];
   return (
     <>
-      {item.allowed_actions.includes("assign") && onAssign && (
-        <Button size={size} variant="secondary" onClick={onAssign}>{t("action.assign")}</Button>
+      {compact ? (
+        <>
+          {canAssign && !primaryAction && (
+            <Button size={size} variant="secondary" onClick={onAssign}>{t("action.assign")}</Button>
+          )}
+          {primaryAction && (
+            <Button size={size} variant="primary" onClick={() => click(primaryAction)} loading={transition.isPending && transition.variables?.action === primaryAction}>
+              {t(`action.${primaryAction}`, { defaultValue: primaryAction })}
+            </Button>
+          )}
+          {(menuActions.length > 0 || (canAssign && primaryAction)) && (
+            <RowActionMenu
+              label="Aksi lainnya"
+              items={[
+                ...(canAssign && primaryAction ? [{ id: "assign", label: t("action.assign"), icon: "person_add", onClick: onAssign }] : []),
+                ...menuActions.map((a) => ({ id: a, label: t(`action.${a}`, { defaultValue: a }), icon: ACTION_ICON[a], onClick: () => click(a), danger: a === "cancel" })),
+              ]}
+            />
+          )}
+        </>
+      ) : (
+        <>
+          {canAssign && (
+            <Button size={size} variant="secondary" onClick={onAssign}>{t("action.assign")}</Button>
+          )}
+          {actions.map((a) => (
+            <Button key={a} size={size} variant={PRIMARY[a] ? "primary" : a === "cancel" ? "destructive" : "secondary"} onClick={() => click(a)} loading={transition.isPending && transition.variables?.action === a}>
+              {t(`action.${a}`, { defaultValue: a })}
+            </Button>
+          ))}
+        </>
       )}
-      {shown.map((a) => (
-        <Button key={a} size={size} variant={PRIMARY[a] ? "primary" : a === "cancel" ? "destructive" : "secondary"} onClick={() => click(a)} loading={transition.isPending && transition.variables?.action === a}>
-          {t(`action.${a}`, { defaultValue: a })}
-        </Button>
-      ))}
       {pending && (
         <ReasonDialog
           open

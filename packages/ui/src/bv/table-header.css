@@ -1,0 +1,99 @@
+/**
+ * BuildingVision, Table Header Fill
+ *
+ * Every `AdvancedDataTable` header row fills solid with `--color-primary`
+ * and sets `--color-on-primary` text, the token pair, not a fixed hex, so
+ * the header follows dark mode the same way the hero and every other
+ * "identity" surface does (light: navy fill, white text; dark: sky-blue
+ * fill, navy text).
+ *
+ * `AdvancedDataTable` is a mirror component (`packages/ui/src/components`)
+ * with no prop for header colour, and every instance renders the same
+ * `.morphic-advanced-table` class, so this is a deliberate *global* override
+ * of a mirror component's own inline styles, the one case in the codebase
+ * where that is intentional (see Docs/DESIGN-SYSTEM-GUIDELINE.md).
+ * `!important` is required: the mirror sets these as inline `style`, which
+ * always wins over an external class otherwise.
+ *
+ * The header also hosts two child elements that set their OWN explicit
+ * colour, so they do not inherit the `th` override above and need their own
+ * rule:
+ * - The mirror's `Checkbox` ("select all"): its unchecked border reads
+ * `--md-sys-color-outline`, a neutral grey invisible against a solid
+ * `--color-primary` fill. It has no distinguishing class of its own, so
+ * it is targeted structurally, `.m3-checkbox`'s direct `div` child is
+ * always the checkbox box (see `Checkbox.tsx`).
+ * - The sort-direction arrow `Icon`: it hardcodes `color="var(--md-sys-
+ * color-primary)"`, which is now the exact colour of the header it sits
+ * on. Targeted via the `material-symbols-*` class every `Icon` renders.
+ *
+ * Import ONCE at the app root, alongside the palette:
+ * import '@buildingvision/ui/bv/palette.css';
+ * import '@buildingvision/ui/bv/table-header.css';
+ */.morphic-advanced-table thead tr {
+ background-color: var(--color-primary)!important;
+}.morphic-advanced-table thead th {
+ color: var(--color-on-primary)!important;
+}.morphic-advanced-table thead .m3-checkbox > div {
+ border-color: var(--color-on-primary)!important;
+}.morphic-advanced-table thead th [class*='material-symbols-'] {
+ color: var(--color-on-primary)!important;
+}
+
+/**
+ * Plain `<table>` blocks, matched to `AdvancedDataTable`.
+ *
+ * A handful of planning screens render a bare `<table>` rather than the mirror
+ * component — a capacity breakdown, an order's lines, the wizard's previews.
+ * They fell outside the rule above, so their headers stayed unfilled grey text
+ * while every other table in the console carried a solid primary header, and
+ * their cells sat on 8px of padding, tight enough to read as one block.
+ *
+ * `.bv-table` gives them the same header fill and the same rhythm, from the
+ * same tokens, so the two kinds of table are indistinguishable to a planner.
+ */
+.bv-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+
+.bv-table thead th {
+  background-color: var(--color-primary);
+  color: var(--color-on-primary);
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  white-space: nowrap;
+  padding: var(--space-3) var(--space-3);
+}
+
+.bv-table thead th:first-child {
+  border-start-start-radius: var(--radius-md, 10px);
+}
+
+.bv-table thead th:last-child {
+  border-start-end-radius: var(--radius-md, 10px);
+}
+
+.bv-table tbody td {
+  padding: var(--space-2) var(--space-3);
+  border-block-start: 1px solid var(--color-border);
+  color: var(--color-on-surface);
+  vertical-align: middle;
+}
+
+/* Figures line up on the decimal, which is most of what these tables carry. */
+.bv-table td.bv-num,
+.bv-table th.bv-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A wide table scrolls inside its own box rather than widening the page. */
+.bv-table-scroll {
+  overflow-x: auto;
+}

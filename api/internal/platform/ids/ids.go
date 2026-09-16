@@ -33,6 +33,24 @@ const (
 	PrefixUnit            = "UNT"
 	PrefixTenant          = "TEN"
 	PrefixUser            = "USR"
+	// P1 (PRD v1.3 §15 brief; NC v2.0 §35–§36)
+	PrefixFacility          = "FCL"   // plain
+	PrefixBooking           = "BKG"   // yearly
+	PrefixVisitor           = "VIS"   // yearly
+	PrefixInvoice           = "INV"   // yearly
+	PrefixPayment           = "PAY"   // yearly
+	PrefixVendor            = "VND"   // plain
+	PrefixItem              = "ITM"   // plain
+	PrefixStockTransaction  = "STK"   // yearly
+	PrefixHotelReservation  = "RES"   // yearly
+	PrefixHotelRoom         = "ROOM"  // yearly
+	PrefixHotelRoomType     = "RT"    // yearly
+	PrefixHotelRate         = "RATE"  // yearly
+	PrefixUnitListing       = "LIST"  // yearly
+	PrefixSalesLead         = "LEAD"  // yearly
+	PrefixSaleReservation   = "SRES"  // yearly
+	PrefixRentalListing     = "RLIST" // yearly
+	PrefixRentalReservation = "RRES"  // yearly
 )
 
 // nextSeq mengambil nomor urut berikutnya (row lock via upsert) — harus dipanggil dalam transaksi create.

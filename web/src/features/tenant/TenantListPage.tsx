@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shell/AppShell";
 import { Button, Checkbox, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect, Textarea } from "@/components/ui/primitives";
@@ -39,7 +39,7 @@ export default function TenantListPage() {
   );
   return (
     <div>
-      <PageHeader title={t("nav.tenants")} actions={can("property.tenants.create") && <Button onClick={() => setEdit("new")}><Plus /> Tambah Tenant</Button>}>
+      <PageHeader title={t("nav.tenants")} actions={can("property.tenants.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Tambah Tenant</Button>}>
         <div className="flex items-center gap-2">
           <Input className="w-72" placeholder="Cari tenant / unit…" value={q} onChange={(e) => setQ(e.target.value)} />
           <NativeSelect className="w-40" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="moved_out">Moved out</option></NativeSelect>
@@ -68,14 +68,14 @@ function TenantDrawer({ id, onClose, onEdit }: { id: string; onClose: () => void
             <div className="space-y-5">
               <KeyValue items={[{ label: "Tipe", value: tn.tenant_type }, { label: "Kontak", value: tn.contact_name }, { label: "Telepon", value: tn.contact_phone }, { label: "Email", value: tn.contact_email }, { label: "Status", value: tn.status }, { label: "Unit", value: tn.units.length ? <ul>{tn.units.map((u) => <li key={u.location_id}><Link to={`/property/locations/${u.location_id}`} className="text-brand-600 hover:underline">{u.unit_number}</Link> <span className="text-xs text-muted-foreground">{u.path_text}</span></li>)}</ul> : "—" }]} />
               <div>
-                <div className="mb-2 flex items-center justify-between"><h3 className="text-h3 font-semibold">Occupant</h3>{can("property.occupants.create") && <Button size="sm" variant="secondary" onClick={() => setOcc("new")}><Plus /> Tambah</Button>}</div>
+                <div className="mb-2 flex items-center justify-between"><h3 className="text-h3 font-semibold">Occupant</h3>{can("property.occupants.create") && <Button size="sm" variant="secondary" onClick={() => setOcc("new")}><Icon name="add" size={16} /> Tambah</Button>}</div>
                 <ul className="divide-y divide-border rounded-md border border-border">
                   {(occupants.data ?? []).map((o) => <li key={o.id} className="flex items-center justify-between px-3 py-2 text-sm"><span>{o.full_name}{o.is_primary_contact && <span className="ml-1 rounded-full bg-brand-50 px-1.5 text-[10px] text-brand-700">utama</span>}<span className="ml-2 text-xs text-muted-foreground">{o.phone ?? ""} {o.email ?? ""}</span></span>{can("property.occupants.update") && <Button size="sm" variant="ghost" onClick={() => setOcc(o)}>Edit</Button>}</li>)}
                   {(occupants.data ?? []).length === 0 && <li className="px-3 py-4 text-center text-xs text-muted-foreground">Belum ada occupant.</li>}
                 </ul>
               </div>
               <div>
-                <div className="mb-2 flex items-center justify-between"><h3 className="text-h3 font-semibold">Service Request</h3>{can("tenant.service_requests.create") && <Button size="sm" variant="secondary" onClick={() => setSrOpen(true)}><Plus /> {t("action.create_service_request")}</Button>}</div>
+                <div className="mb-2 flex items-center justify-between"><h3 className="text-h3 font-semibold">Service Request</h3>{can("tenant.service_requests.create") && <Button size="sm" variant="secondary" onClick={() => setSrOpen(true)}><Icon name="add" size={16} /> {t("action.create_service_request")}</Button>}</div>
                 <ul className="divide-y divide-border rounded-md border border-border">
                   {(srs.data ?? []).slice(0, 20).map((s) => <li key={s.id} className="flex items-center justify-between px-3 py-2 text-sm"><Link to={`/operations/service-requests/${s.id}`} className="hover:underline"><span className="font-mono text-xs font-semibold">{s.request_number}</span> {s.title}</Link><StatusBadge objectType="service_request" status={s.status} /></li>)}
                   {(srs.data ?? []).length === 0 && <li className="px-3 py-4 text-center text-xs text-muted-foreground">Belum ada service request.</li>}

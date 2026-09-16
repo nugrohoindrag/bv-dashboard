@@ -13,3 +13,14 @@ api/tmp
 Thumbs.db
 .idea
 .vscode/settings.json
+website/dist
+website/dist-ssr
+website/node_modules
+website/.image-cache
+# catatan internal (tidak dipublikasikan)
+PROGRESS.md
+docs/p1-v1.3-gap-analysis.md
+docs/p1-v1.3-implementation-report.md
+# log & artefak lokal
+*.log
+api/*.exe

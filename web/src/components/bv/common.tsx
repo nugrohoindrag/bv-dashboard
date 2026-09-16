@@ -3,7 +3,7 @@ import * as React from "react";
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, ChevronRight, Inbox, WifiOff } from "lucide-react";
+import { Icon } from "@buildingvision/ui";
 import { Alert, Button, Dialog, DialogContent, DialogFooter, Field, Skeleton, Textarea, Tooltip } from "@/components/ui/primitives";
 import { fmtDateTime, fmtRelative, fmtMinutes } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -14,13 +14,13 @@ export function LocationPath({ path, pathText, locationId, className, linkTo }: 
   const parts = path?.length ? path.slice(path.length > 1 ? 1 : 0) : (pathText ?? "").split(" / ").filter(Boolean).map((name, i) => ({ id: String(i), name }));
   if (!parts.length) return <span className={cn("text-muted-foreground", className)}>—</span>;
   return (
-    <span className={cn("inline-flex flex-wrap items-center gap-0.5 text-sm text-muted-foreground", className)} title={pathText ?? undefined}>
+    <span className={cn("inline text-sm leading-5 text-on-surface-variant [&>*]:inline [&>*]:align-middle", className)} title={pathText ?? undefined}>
       {parts.map((p, i) => {
         const last = i === parts.length - 1;
-        const el = <span className={cn(last && "font-medium text-foreground")}>{p.name}</span>;
+        const el = <span className={cn("whitespace-nowrap", last && "font-semibold text-on-surface")}>{p.name}</span>;
         return (
           <React.Fragment key={p.id + i}>
-            {i > 0 && <ChevronRight className="h-3 w-3 shrink-0 opacity-60" aria-hidden />}
+            {i > 0 && <Icon name="chevron_right" size={12} className="mx-0.5 opacity-60" aria-hidden />}
             {last && locationId && linkTo ? (
               <Link to={linkTo(locationId)} className="hover:underline">
                 {el}
@@ -60,7 +60,7 @@ export function AsyncState<T>({ query, children, empty, emptyFilter, isFiltered,
 export function EmptyState({ message, cta, compact, icon }: { message: string; cta?: React.ReactNode; compact?: boolean; icon?: React.ReactNode }) {
   return (
     <div className={cn("flex flex-col items-center justify-center gap-3 text-center", compact ? "py-8" : "py-14")}>
-      {!compact && <div className="text-neutral-300">{icon ?? <Inbox className="h-10 w-10" strokeWidth={1.25} />}</div>}
+      {!compact && <div className="text-neutral-300">{icon ?? <Icon name="inbox" size={40} />}</div>}
       <p className="text-body text-muted-foreground">{message}</p>
       {cta}
     </div>
@@ -111,7 +111,7 @@ export function OfflineBanner() {
   if (online) return null;
   return (
     <div className="flex items-center gap-2 bg-warning-soft px-8 py-2 text-sm text-warning-text">
-      <WifiOff className="h-4 w-4" /> {t("state.offline")}
+      <Icon name="wifi_off" size={16} /> {t("state.offline")}
     </div>
   );
 }
@@ -185,7 +185,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       <div className="pointer-events-none fixed bottom-4 right-4 z-[60] flex w-[360px] flex-col gap-2" aria-live="polite">
         {items.map((it) => (
           <div key={it.id} className={cn("pointer-events-auto flex items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-popover", it.variant === "success" && "border-success/30 bg-success-soft text-success-text", it.variant === "critical" && "border-critical/30 bg-critical-soft text-critical-text", it.variant === "warning" && "border-warning/30 bg-warning-soft text-warning-text", it.variant === "info" && "border-info/30 bg-info-soft text-info-text")}>
-            {it.variant === "critical" && <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+            {it.variant === "critical" && <Icon name="error" size={16} className="mt-0.5 shrink-0" />}
             <div className="flex-1">
               {it.message}
               {it.link && (

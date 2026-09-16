@@ -16,6 +16,7 @@ import { fmtDateTime, fmtMoney } from "@/lib/format";
 import type { Attachment, WorkItem } from "@/api/types";
 import { AssignDialog, CreateWorkItemDialog, TransitionActions } from "./dialogs";
 import { CreateFindingDialog, CreateIncidentDialog } from "./FindingDialogs";
+import { WorkOrderPartsPanel, WorkOrderVendorPanel } from "@/features/inventory/WorkOrderPartsPanel";
 
 export default function WorkItemDetailPage({ objectType }: { objectType: "task" | "work_order" }) {
   const { id } = useParams();
@@ -83,6 +84,7 @@ export default function WorkItemDetailPage({ objectType }: { objectType: "task" 
                       ]} />
                     </CardContent></Card>
                   )}
+                  {objectType === "work_order" && <WorkOrderPartsPanel woId={w.id} propertyId={w.property_id} terminal={["closed", "cancelled"].includes(w.status)} editable={!["completed", "closed", "cancelled"].includes(w.status)} />}
                   <CommentsPanel resource={resource} id={w.id} comments={comments.data ?? []} />
                 </TabsContent>
                 <TabsContent value="checklist" className="pt-4">
@@ -116,6 +118,7 @@ export default function WorkItemDetailPage({ objectType }: { objectType: "task" 
               <Card><CardHeader><CardTitle>Penugasan</CardTitle>{w.allowed_actions.includes("assign") && <Button variant="link" size="sm" onClick={() => setAssignOpen(true)}>{t("action.assign")}</Button>}</CardHeader><CardContent>
                 <KeyValue items={[{ label: t("label.team"), value: w.assignee.team_name }, { label: t("label.assignee"), value: w.assignee.user_name ?? <em className="text-muted-foreground">belum ditugaskan</em> }]} />
               </CardContent></Card>
+              {objectType === "work_order" && <WorkOrderVendorPanel woId={w.id} vendorId={w.vendor_id ?? null} vendorName={w.vendor_name ?? null} vendorNotes={w.vendor_notes ?? null} terminal={["closed", "cancelled"].includes(w.status)} />}
               <Card><CardHeader><CardTitle>{t("label.location")} & {t("label.asset")}</CardTitle></CardHeader><CardContent>
                 <KeyValue items={[
                   { label: t("label.location"), value: <LocationPath pathText={w.location.path_text} locationId={w.location.id} linkTo={(lid) => `/property/locations/${lid}`} /> },

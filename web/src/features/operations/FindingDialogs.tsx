@@ -139,19 +139,20 @@ export function useSRCategories() {
   return useAll<SRCategory>("service-request-categories");
 }
 
-export function CreateServiceRequestDialog({ open, onOpenChange, defaults, onCreated }: { open: boolean; onOpenChange: (o: boolean) => void; defaults?: Partial<{ tenant_id: string; location_id: string | null }>; onCreated?: (s: ServiceRequest) => void }) {
+export function CreateServiceRequestDialog({ open, onOpenChange, defaults, onCreated }: { open: boolean; onOpenChange: (o: boolean) => void; defaults?: Partial<{ tenant_id: string; location_id: string | null; property_id: string; requester_name: string; requester_phone: string; title: string; channel: string }>; onCreated?: (s: ServiceRequest) => void }) {
   const { t } = useTranslation();
   const toast = useToast();
   const { pid, setPid, properties } = usePropertySelect();
   const cats = useSRCategories();
   const tenants = useAll<Tenant>("tenants", { property_id: pid || undefined, status: "active" }, { enabled: !!pid });
-  const [form, setForm] = useState({ category_code: "", title: "", description: "", priority: "", channel: "phone", tenant_id: defaults?.tenant_id ?? "", requester_name: "", requester_phone: "" });
+  const [form, setForm] = useState({ category_code: "", title: defaults?.title ?? "", description: "", priority: "", channel: defaults?.channel ?? "phone", tenant_id: defaults?.tenant_id ?? "", requester_name: defaults?.requester_name ?? "", requester_phone: defaults?.requester_phone ?? "" });
   const [locationId, setLocationId] = useState<string | null>(defaults?.location_id ?? null);
   const [error, setError] = useState<string | null>(null);
   const create = useCreate<Record<string, unknown>, ServiceRequest>("service-requests");
   useEffect(() => {
     if (open) {
-      setForm((f) => ({ ...f, title: "", description: "", tenant_id: defaults?.tenant_id ?? "" }));
+      setForm((f) => ({ ...f, title: defaults?.title ?? "", description: "", tenant_id: defaults?.tenant_id ?? "", requester_name: defaults?.requester_name ?? f.requester_name, requester_phone: defaults?.requester_phone ?? f.requester_phone }));
+      if (defaults?.property_id) setPid(defaults.property_id);
       setLocationId(defaults?.location_id ?? null);
       setError(null);
     }

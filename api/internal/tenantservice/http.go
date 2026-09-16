@@ -38,7 +38,11 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func (h *Handler) categories(w http.ResponseWriter, r *http.Request) {
-	items, err := h.Svc.ListCategories(r.Context())
+	var f CategoryFilter
+	f.PropertyID, _ = httpx.QueryUUID(r, "property_id")
+	f.IncludeAll = r.URL.Query().Get("all") == "true"
+	f.TenantOnly = r.URL.Query().Get("tenant_visible") == "true"
+	items, err := h.Svc.ListCategories(r.Context(), f)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

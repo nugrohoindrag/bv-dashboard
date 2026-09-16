@@ -294,6 +294,11 @@ func (s *Service) fillURLs(ctx context.Context, a *Attachment) {
 	}
 }
 
+// GetTx: baca attachment di dalam transaksi tanpa cek akses (pemanggil bertanggung jawab atas otorisasi).
+func (s *Service) GetTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*Attachment, error) {
+	return getTx(ctx, tx, id)
+}
+
 // FillURLs: dipakai handler lain (mis. detail WO) untuk melengkapi URL.
 func (s *Service) FillURLs(ctx context.Context, list []Attachment) {
 	for i := range list {
