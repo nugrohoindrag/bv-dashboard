@@ -102,8 +102,11 @@ jobs:
 
   images:
     # Build & push image ke GHCR pada push ke default branch dan tag v* (TAD §11.4).
+    # Tetap jalan bila api/web di-skip oleh path filter (hanya berhenti bila ada yang gagal/dibatalkan).
     needs: [api, web]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: >-
+      always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') &&
+      github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions: { contents: read, packages: write }
     steps:
