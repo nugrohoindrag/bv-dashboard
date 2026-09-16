@@ -73,7 +73,7 @@ func runImport(ctx context.Context, url string, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer fh.Close()
+	defer func() { _ = fh.Close() }()
 	r := csv.NewReader(fh)
 	r.TrimLeadingSpace = true
 	header, err := r.Read()

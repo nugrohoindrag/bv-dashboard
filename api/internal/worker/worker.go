@@ -131,7 +131,7 @@ func (w *attachmentWorker) Work(ctx context.Context, job *river.Job[jobs.Attachm
 		if err != nil {
 			return err
 		}
-		defer rc.Close()
+		defer func() { _ = rc.Close() }()
 		img, format, err := image.Decode(rc)
 		if err != nil {
 			_, _ = tx.Exec(ctx, `UPDATE attachments SET status = 'failed' WHERE id = $1`, job.Args.AttachmentID)

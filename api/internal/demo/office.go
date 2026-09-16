@@ -102,7 +102,7 @@ func (s *Service) seedOffice(ctx context.Context, env *Env, logf func(string, ..
 		ref := tenantRef{TenantID: ten.ID, Name: c.name, UnitID: units[c.units0], UnitLabel: "Office Unit " + c.units0, OccupantID: &occ.ID}
 		for i, email := range c.app {
 			role, name, unitIDs := "tenant_admin", c.pic, uids
-			var occID *uuid.UUID = &occ.ID
+			occID := &occ.ID
 			if i > 0 {
 				// authorized user kedua: hanya unit kedua (isolasi lintas unit dapat dites)
 				role, name, occID = "tenant_user", "Staff "+c.name, nil

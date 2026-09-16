@@ -66,7 +66,7 @@ func (s SMTP) Send(ctx context.Context, m Message) error {
 	if err != nil {
 		return fmt.Errorf("mailer client: %w", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if s.StartTLS {
 		if err := c.StartTLS(&tls.Config{ServerName: s.Host, MinVersion: tls.VersionTLS12}); err != nil {
 			return fmt.Errorf("mailer starttls: %w", err)

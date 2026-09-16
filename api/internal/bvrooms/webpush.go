@@ -30,7 +30,7 @@ func (p VAPIDPusher) Send(ctx context.Context, sub PushSubscription, payload []b
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound {
 		return ErrSubscriptionGone
 	}

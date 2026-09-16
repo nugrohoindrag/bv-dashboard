@@ -49,8 +49,9 @@ jobs:
       - name: go vet
         run: go vet ./...
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with: { version: latest, working-directory: api, args: --timeout=5m }
+        # goinstall: dibangun dengan Go dari setup-go (go.mod 1.26) — binary rilis dibangun dengan Go lebih lama dan menolak go directive lebih baru
+        uses: golangci/golangci-lint-action@v8
+        with: { version: latest, install-mode: goinstall, working-directory: api, args: --timeout=10m }
       - name: go test (unit + integration, RLS via bv_app)
         env:
           BV_TEST_ADMIN_DATABASE_URL: postgres://postgres:postgres@localhost:5432/buildingvision_test?sslmode=disable

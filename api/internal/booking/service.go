@@ -302,7 +302,7 @@ func (s *Service) UpdateFacility(ctx context.Context, id uuid.UUID, in FacilityI
 				}
 			}
 		}
-		var wd *[]int = in.Weekdays
+		wd := in.Weekdays
 		var wdArg any
 		if wd != nil {
 			wdArg = *wd

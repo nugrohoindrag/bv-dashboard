@@ -207,7 +207,7 @@ func TestGrowthSignupTrialAndAppDownloads(t *testing.T) {
 	if ad.Status != "active" {
 		t.Fatalf("activate: %s", body)
 	}
-	st, body = e.do("", http.MethodGet, "/api/v1/public/app-downloads", nil)
+	_, body = e.do("", http.MethodGet, "/api/v1/public/app-downloads", nil)
 	if !strings.Contains(string(body), "Staff App") || !strings.Contains(string(body), "abc123") {
 		t.Fatalf("public setelah activate: %s", body)
 	}

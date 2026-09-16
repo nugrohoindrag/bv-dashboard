@@ -308,7 +308,7 @@ func TestBVRoomsHotelFlow(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		var buf bytes.Buffer
 		_, _ = buf.ReadFrom(resp.Body)
 		return resp.StatusCode, buf.Bytes()

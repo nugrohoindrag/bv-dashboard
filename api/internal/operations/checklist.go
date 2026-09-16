@@ -134,7 +134,7 @@ func (s *Service) UpdateChecklistTemplate(ctx context.Context, id uuid.UUID, in 
 		if before.Status == "archived" {
 			return apperr.Conflict("TEMPLATE_ARCHIVED", "Template sudah diarsipkan")
 		}
-		var applies *[]string = in.AppliesTo
+		applies := in.AppliesTo
 		if _, err := tx.Exec(ctx, `UPDATE checklist_templates SET name = COALESCE(NULLIF($2,''), name), description = COALESCE($3, description), domain = COALESCE($4, domain), applies_to = COALESCE($5, applies_to), updated_by = $6 WHERE id = $1`,
 			id, derefStr(in.Name), in.Description, in.Domain, applies, p.UserID); err != nil {
 			return err
@@ -575,7 +575,7 @@ func (s *Service) AnswerItemTx(ctx context.Context, tx pgx.Tx, itemID uuid.UUID,
 				sev = *in.FindingSeverity
 			}
 			var locID, assetID *uuid.UUID
-			var ftype string = "checklist"
+			ftype := "checklist"
 			if t, e := tableFor(objectType); e == nil {
 				_ = tx.QueryRow(ctx, `SELECT location_id, asset_id FROM `+t.table+` WHERE id = $1`, objectID).Scan(&locID, &assetID)
 				if objectType == ObjTask {

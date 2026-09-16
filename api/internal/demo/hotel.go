@@ -104,7 +104,6 @@ func (s *Service) seedHotel(ctx context.Context, env *Env, logf func(string, ...
 		{"Nadia Rahma", "081211110011", "nadia.rahma@guest.test", "standard", "", 4, 1, "cancelled", 1, ""},
 	}
 	var activeStayTenant *tenantRef
-	var completedResIDs []uuid.UUID
 	for _, r := range resDefs {
 		ci := today().AddDate(0, 0, r.ciOff)
 		co := ci.AddDate(0, 0, r.nights)
@@ -179,7 +178,6 @@ func (s *Service) seedHotel(ctx context.Context, env *Env, logf func(string, ...
 			if _, err := act("check_out", hotel.ActionInput{IssueInvoice: ptr(true)}); err != nil {
 				return uuid.Nil, err
 			}
-			completedResIDs = append(completedResIDs, res.ID)
 			_ = s.DB.WithOrgTx(ctx, env.OrgID, func(ctx context.Context, tx pgx.Tx) error {
 				_, err := tx.Exec(ctx, `UPDATE hotel_reservations SET checked_out_at = $2 WHERE id = $1`, res.ID, at(co, 11, 45))
 				return err

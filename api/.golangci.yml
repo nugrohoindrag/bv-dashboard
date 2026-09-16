@@ -8,3 +8,12 @@ linters:
       exclude-functions:
         - (net/http.ResponseWriter).Write
         - io.Copy
+  exclusions:
+    rules:
+      # QF* = saran refactor gaya (tagged switch, De Morgan) — bukan bug; SA1019 = API deprecated pihak ketiga (chi RealIP,
+      # oauth2 CredentialsFromJSON, river WorkerMiddleware, strings.Title) yang penggantiannya dijadwalkan terpisah.
+      - linters: [staticcheck]
+        text: "^(QF1001|QF1002|QF1003|SA1019):"
+      # reflect.Ptr vs reflect.Pointer: alias identik
+      - linters: [govet]
+        text: "Constant reflect.Ptr should be inlined"

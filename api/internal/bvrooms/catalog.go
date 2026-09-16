@@ -750,9 +750,9 @@ func (s *Service) typeOffersTx(ctx context.Context, tx pgx.Tx, l *listingRow, ch
 		}
 		_ = tx.QueryRow(ctx, `SELECT storage_key FROM bvrooms_property_photos WHERE property_id = $1 AND `+col+` = $2 AND status = 'ready' ORDER BY is_cover DESC, sort_order, created_at LIMIT 1`, l.PropertyID, t.ID).Scan(&key)
 		o.PhotoURL = s.photoURL(ctx, key)
-		ci, co := time.Now().In(l.location()), time.Time{}
+		ci := time.Now().In(l.location())
 		ci = time.Date(ci.Year(), ci.Month(), ci.Day(), 0, 0, 0, 0, time.UTC)
-		co = ci.AddDate(0, 0, 1)
+		co := ci.AddDate(0, 0, 1)
 		if checkIn != nil && checkOut != nil {
 			ci, co = *checkIn, *checkOut
 		}

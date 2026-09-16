@@ -168,7 +168,7 @@ func TestTenantAppFlow(t *testing.T) {
 	if st != 403 || !strings.Contains(string(body), "TENANT_ACCOUNT_ONLY") {
 		t.Fatalf("tenant via web harus 403: %d %s", st, body)
 	}
-	st, resp = e.loginTenant(t, "rudi@tenant.test", "Tenant12345")
+	_, resp = e.loginTenant(t, "rudi@tenant.test", "Tenant12345")
 	tenB := resp["access_token"].(string)
 	e.dispatch(t)
 	if ib := e.inboxOf(t, tenA); !hasType(ib, "tenant_account_approved") {

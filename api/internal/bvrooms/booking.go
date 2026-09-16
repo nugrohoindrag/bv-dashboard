@@ -129,7 +129,7 @@ func (b *bookingRow) deriveStatus(now time.Time) string {
 
 func (b *bookingRow) checkInAt(loc *time.Location, checkInTime string) time.Time {
 	h, m := 14, 0
-	fmt.Sscanf(checkInTime, "%d:%d", &h, &m)
+	_, _ = fmt.Sscanf(checkInTime, "%d:%d", &h, &m)
 	return time.Date(b.CheckIn.Year(), b.CheckIn.Month(), b.CheckIn.Day(), h, m, 0, 0, loc)
 }
 
@@ -415,8 +415,7 @@ func (s *Service) CreateBooking(ctx context.Context, in CreateBookingInput) (*Bo
 			}
 			if avail < need[id] {
 				e := apperr.Conflict("ROOM_UNAVAILABLE", fmt.Sprintf("%s tersisa %d untuk tanggal tersebut", t.Name, avail))
-				e.WithField("type_id", id.String()).WithField("available_count", fmt.Sprint(avail))
-				return e
+				return e.WithField("type_id", id.String()).WithField("available_count", fmt.Sprint(avail))
 			}
 		}
 		code, err := newBookingCode()
@@ -633,7 +632,7 @@ func (s *Service) assembleBookingTx(ctx context.Context, tx pgx.Tx, b *bookingRo
 	out.CheckInAt = b.checkInAt(loc, l.CheckInTime)
 	co := time.Date(b.CheckOut.Year(), b.CheckOut.Month(), b.CheckOut.Day(), 0, 0, 0, 0, loc)
 	h, m := 12, 0
-	fmt.Sscanf(l.CheckOutTime, "%d:%d", &h, &m)
+	_, _ = fmt.Sscanf(l.CheckOutTime, "%d:%d", &h, &m)
 	out.CheckOutAt = co.Add(time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 	out.PrimaryAction = primaryAction(st)
 	out.CanCancel = (st == StatusUnpaid || st == StatusPaid) && now.Before(out.CheckInAt)
@@ -779,7 +778,7 @@ func (s *Service) ListBookings(ctx context.Context, scope string, page httpx.Pag
 			card.Property.CoverURL = s.photoURL(ctx, pi.key)
 			card.CheckInAt = b.checkInAt(loc, pi.l.CheckInTime)
 			h, m := 12, 0
-			fmt.Sscanf(pi.l.CheckOutTime, "%d:%d", &h, &m)
+			_, _ = fmt.Sscanf(pi.l.CheckOutTime, "%d:%d", &h, &m)
 			card.CheckOutAt = time.Date(b.CheckOut.Year(), b.CheckOut.Month(), b.CheckOut.Day(), h, m, 0, 0, loc)
 			out = append(out, card)
 		}

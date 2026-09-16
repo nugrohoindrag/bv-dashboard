@@ -56,7 +56,7 @@ func (r *Report) Text() string {
 	if r.Pass {
 		b.WriteString("\nRESULT: PASS\n")
 	} else {
-		b.WriteString(fmt.Sprintf("\nRESULT: FAIL (%d/%d)\n", r.Failed, r.Total))
+		fmt.Fprintf(&b, "\nRESULT: FAIL (%d/%d)\n", r.Failed, r.Total)
 	}
 	return b.String()
 }

@@ -44,7 +44,7 @@ func main() {
 		if err != nil {
 			fail(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode != http.StatusOK {
 			fail(fmt.Errorf("status %d", resp.StatusCode))
 		}
@@ -92,7 +92,7 @@ func main() {
 			if err != nil {
 				fail(err)
 			}
-			defer fh.Close()
+			defer func() { _ = fh.Close() }()
 			out = fh
 		}
 		if err := runOpenAPI(out); err != nil {
