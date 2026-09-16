@@ -140,11 +140,11 @@
   --md-sys-color-inverse-primary: #5FD3C6;
   --md-sys-color-scrim: rgba(17, 24, 39, 0.42);
 
-  /* Logo (bv/BuildingVisionLogo tone="auto"): the roof mark in brand gradient
-     ends, the wordmark in ink. */
-  --bv-logo-mark: #0E9187;
-  --bv-logo-mark-2: #5FD3C6;
-  --bv-logo-word: #111827;
+  /* Logo (bv/BuildingVisionLogo tone="auto"): the vision mark in brand blue,
+     the wordmark in ink (VISION in the same blue). */
+  --bv-logo-mark: #0442B9;
+  --bv-logo-mark-2: #0442B9;
+  --bv-logo-word: #1B1B1B;
   --bv-logo-tagline: #4B5563;
 
   /* Sidebar (bv/sidebar.css): a floating panel in primary teal, the same in
@@ -244,8 +244,8 @@
   --md-sys-color-inverse-primary: #0B776F;
   --md-sys-color-scrim: rgba(0, 0, 0, 0.6);
 
-  --bv-logo-mark: #5FD3C6;
-  --bv-logo-mark-2: #14A69E;
+  --bv-logo-mark: #8FB3FF;
+  --bv-logo-mark-2: #8FB3FF;
   --bv-logo-word: #F3F4F6;
   --bv-logo-tagline: #A8B0BC;
 

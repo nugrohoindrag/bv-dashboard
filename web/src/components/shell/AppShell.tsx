@@ -208,7 +208,7 @@ export function AppShell() {
         <div className="flex h-16 items-center" style={{ padding: collapsed ? "16px 8px 8px" : "16px 14px 8px", justifyContent: collapsed ? "center" : "flex-start" }}>
           {collapsed ? (
             <button type="button" onClick={() => setCollapsed(false)} className="rounded-[var(--radius-md)] p-1" title="Buka sidebar" aria-label="Buka sidebar">
-              <BuildingVisionIcon size={30} tone="white" />
+              <BuildingVisionIcon size={36} tone="white" />
             </button>
           ) : (
             <BuildingVisionLogo height={34} tone="white" />

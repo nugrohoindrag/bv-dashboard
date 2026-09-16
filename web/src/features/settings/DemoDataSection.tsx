@@ -85,7 +85,7 @@ export default function DemoDataSection() {
       </Alert>
       {st?.error && <Alert variant="critical" title={`Operasi terakhir gagal (state: ${st.state})`}>{st.error}</Alert>}
       <div className="flex flex-wrap items-center gap-2">
-        <Badge tone={st?.state === "ready" ? "success" : st?.state === "failed" ? "critical" : st?.running ? "warning" : "neutral"} dot>{st?.running ? "Sedang berjalan…" : st?.state ?? "-"}</Badge>
+        <Badge tone={st?.state === "ready" ? "success" : st?.state === "failed" ? "error" : st?.running ? "warning" : "neutral"} dot>{st?.running ? "Sedang berjalan…" : st?.state ?? "-"}</Badge>
         {st?.seed_version && <span className="text-sm text-on-surface-variant">Seed version {st.seed_version}</span>}
         {st?.last_seeded_at && <span className="text-sm text-on-surface-variant">· Last seeded <RelativeTime value={st.last_seeded_at} /></span>}
         <div className="ml-auto flex gap-2">
@@ -129,7 +129,7 @@ export default function DemoDataSection() {
       </div>
       {report && (
         <Card>
-          <CardHeader><CardTitle>Verification Report {report.report.pass ? <Badge tone="success">PASS</Badge> : <Badge tone="critical">FAIL {report.report.failed}/{report.report.total}</Badge>}</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Verification Report {report.report.pass ? <Badge tone="success">PASS</Badge> : <Badge tone="error">FAIL {report.report.failed}/{report.report.total}</Badge>}</CardTitle></CardHeader>
           <CardContent>
             <pre className="max-h-[480px] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs">{report.text}</pre>
           </CardContent>
