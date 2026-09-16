@@ -6,6 +6,8 @@ ARG VITE_SITE_URL=https://buildingvision.id
 ARG VITE_API_URL=
 WORKDIR /repo
 COPY packages/ui ./packages/ui
+# packages/ui butuh node_modules sendiri (react/@types untuk tsc & motion) karena diimpor sebagai sumber, bukan paket terbit
+RUN cd packages/ui && npm ci --legacy-peer-deps
 COPY website ./website
 WORKDIR /repo/website
 RUN npm ci --legacy-peer-deps

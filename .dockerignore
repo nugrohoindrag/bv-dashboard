@@ -1,0 +1,9 @@
+# konteks build root (web/Dockerfile, website/Dockerfile): jangan bawa node_modules/dist lokal & artefak lain
+**/node_modules
+**/dist
+**/dist-ssr
+**/.git
+api/
+infra/
+docs/
+**/*.log

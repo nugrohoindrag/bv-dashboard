@@ -4,6 +4,7 @@
 FROM node:22-alpine AS build
 WORKDIR /repo
 COPY packages/ui ./packages/ui
+RUN cd packages/ui && npm ci --legacy-peer-deps
 COPY web ./web
 WORKDIR /repo/web
 RUN npm ci --legacy-peer-deps
