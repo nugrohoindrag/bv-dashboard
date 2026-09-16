@@ -4,6 +4,7 @@
 	email {$BV_ACME_EMAIL}
 	servers {
 		trusted_proxies static private_ranges
+		metrics
 	}
 }
 

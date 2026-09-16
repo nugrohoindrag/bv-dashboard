@@ -253,7 +253,13 @@ services:
     profiles: ["observability"]
     image: prom/alertmanager:v0.28.1
     restart: unless-stopped
-    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    # render placeholder Telegram; tanpa token → semua route ke receiver null
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sed -e "s|__TELEGRAM_BOT_TOKEN__|${TELEGRAM_BOT_TOKEN}|" -e "s|__TELEGRAM_CHAT_ID__|${TELEGRAM_CHAT_ID:-0}|" /etc/alertmanager/alertmanager.yml > /tmp/alertmanager.yml
+        if [ -z "${TELEGRAM_BOT_TOKEN}" ]; then sed -i "s|receiver: telegram|receiver: \"null\"|" /tmp/alertmanager.yml; fi
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-0}

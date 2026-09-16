@@ -1,4 +1,5 @@
-# Alert ke Telegram (TAD §11.5). Isi TELEGRAM_BOT_TOKEN & TELEGRAM_CHAT_ID di .env. Slack: ganti receiver dengan slack_configs.
+# Alert ke Telegram (TAD §11.5). Isi TELEGRAM_BOT_TOKEN & TELEGRAM_CHAT_ID di .env; placeholder __TELEGRAM_*__ diganti saat start
+# (entrypoint compose, Alertmanager tidak mengekspansi env). Token kosong → receiver "null" (alert hanya tampil di UI).
 global:
   resolve_timeout: 5m
 route:
@@ -12,9 +13,10 @@ route:
       receiver: telegram
       repeat_interval: 1h
 receivers:
+  - name: "null"
   - name: telegram
     telegram_configs:
-      - bot_token: ${TELEGRAM_BOT_TOKEN}
-        chat_id: ${TELEGRAM_CHAT_ID}
+      - bot_token: "__TELEGRAM_BOT_TOKEN__"
+        chat_id: __TELEGRAM_CHAT_ID__
         parse_mode: HTML
         message: '{{ range .Alerts }}<b>{{ .Labels.severity | toUpper }}</b> {{ .Annotations.summary }} ({{ .Status }}){{ "\n" }}{{ end }}'
