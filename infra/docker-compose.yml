@@ -56,11 +56,14 @@ services:
     environment:
       BV_DOMAIN: ${BV_DOMAIN:-localhost}
       BV_WEBSITE_DOMAIN: ${BV_WEBSITE_DOMAIN:-www.localhost}
+      BV_TENANT_DOMAIN: ${BV_TENANT_DOMAIN:-tenant.localhost}
+      BV_ROOMS_DOMAIN: ${BV_ROOMS_DOMAIN:-rooms.localhost}
       BV_ACME_EMAIL: ${BV_ACME_EMAIL:-admin@example.com}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - web-dist:/srv:ro
       - website-dist:/srv-website:ro
+      - ${BV_PWA_DIR:-/opt/bv-apps}:/srv-pwa:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on: [api, web, website]
@@ -130,7 +133,9 @@ services:
     restart: "no"
 
   postgres:
-    image: postgres:17-alpine
+    # image lokal: postgres:17-alpine + pgbackrest (infra/postgres/Dockerfile) — `docker compose build postgres`
+    build: ./postgres
+    image: bv-postgres:17
     restart: unless-stopped
     environment:
       POSTGRES_DB: buildingvision
@@ -140,9 +145,9 @@ services:
     command:
       - postgres
       - -c
-      - shared_buffers=1GB
+      - shared_buffers=${PG_SHARED_BUFFERS:-512MB}
       - -c
-      - effective_cache_size=3GB
+      - effective_cache_size=${PG_EFFECTIVE_CACHE:-1536MB}
       - -c
       - work_mem=16MB
       - -c
@@ -161,7 +166,7 @@ services:
       - log_min_duration_statement=500
     volumes:
       - pg-data:/var/lib/postgresql/data
-      - ./pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - ${PGBACKREST_CONF:-./pgbackrest/pgbackrest.conf}:/etc/pgbackrest/pgbackrest.conf:ro
       - pgbackrest-spool:/var/spool/pgbackrest
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d buildingvision"]
@@ -236,7 +241,7 @@ services:
     profiles: ["observability"]
     image: prom/prometheus:v3.3.0
     restart: unless-stopped
-    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d", "--web.enable-lifecycle"]
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d", "--web.enable-lifecycle"]
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro

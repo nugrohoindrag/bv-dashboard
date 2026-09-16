@@ -97,3 +97,47 @@
 		format json
 	}
 }
+
+# PWA Tenant & BVRooms (repo bv-tenant-app, customer-booking-app): dist statis di /srv-pwa/<app> (infra/scripts/deploy-pwa.sh),
+# /api → api (same-origin, tanpa CORS), /sw.js no-cache agar update PWA terdeteksi.
+(pwa_site) {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+	@api path /api/* /public/*
+	handle @api {
+		reverse_proxy api:8080 {
+			lb_policy round_robin
+			health_uri /health
+			header_up X-Request-Id {http.request.uuid}
+			transport http {
+				read_timeout 65s
+			}
+		}
+	}
+	handle {
+		root * {args[0]}
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		header /sw.js Cache-Control "no-cache"
+		header /index.html Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+	log {
+		output stdout
+		format json
+	}
+}
+
+{$BV_TENANT_DOMAIN} {
+	import pwa_site /srv-pwa/tenant
+}
+
+{$BV_ROOMS_DOMAIN} {
+	import pwa_site /srv-pwa/rooms
+}
