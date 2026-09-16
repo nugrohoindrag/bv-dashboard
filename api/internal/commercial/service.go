@@ -27,15 +27,15 @@ import (
 )
 
 const (
-	EventListingPublished          = "unit_listing.published"
-	EventLeadCreated               = "unit_sales_lead.created"
-	EventLeadStatusChanged         = "unit_sales_lead.status_changed"
-	EventSaleReservationCreated    = "unit_sale_reservation.created"
-	EventSaleReservationSold       = "unit_sale_reservation.sold"
-	EventSaleReservationHandedOver = "unit_sale_reservation.handed_over"
-	EventSaleReservationCancelled  = "unit_sale_reservation.cancelled"
-	EventRentalListingPublished    = "unit_rental_listing.published"
-	EventRentalReservationCreated  = "unit_rental_reservation.created"
+	EventListingPublished           = "unit_listing.published"
+	EventLeadCreated                = "unit_sales_lead.created"
+	EventLeadStatusChanged          = "unit_sales_lead.status_changed"
+	EventSaleReservationCreated     = "unit_sale_reservation.created"
+	EventSaleReservationSold        = "unit_sale_reservation.sold"
+	EventSaleReservationHandedOver  = "unit_sale_reservation.handed_over"
+	EventSaleReservationCancelled   = "unit_sale_reservation.cancelled"
+	EventRentalListingPublished     = "unit_rental_listing.published"
+	EventRentalReservationCreated   = "unit_rental_reservation.created"
 	EventRentalReservationConfirmed = "unit_rental_reservation.confirmed"
 	EventRentalReservationActivated = "unit_rental_reservation.activated"
 	EventRentalReservationCompleted = "unit_rental_reservation.completed"
@@ -291,7 +291,7 @@ func dateOnly(t time.Time) time.Time {
 func parseDate(v string, field string) (time.Time, error) {
 	t, err := time.Parse("2006-01-02", strings.TrimSpace(v))
 	if err != nil {
-		return time.Time{}, apperr.Validation(field + " harus YYYY-MM-DD").WithField(field, "format YYYY-MM-DD")
+		return time.Time{}, apperr.Validation(field+" harus YYYY-MM-DD").WithField(field, "format YYYY-MM-DD")
 	}
 	return t, nil
 }

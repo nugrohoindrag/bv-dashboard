@@ -123,7 +123,7 @@ func validRates(d, w, m *int64) error {
 	}
 	for k, v := range map[string]*int64{"rate_daily": d, "rate_weekly": w, "rate_monthly": m} {
 		if v != nil && *v <= 0 {
-			return apperr.Validation(k + " harus > 0").WithField(k, "harus > 0")
+			return apperr.Validation(k+" harus > 0").WithField(k, "harus > 0")
 		}
 	}
 	return nil
@@ -1168,7 +1168,7 @@ type RentalSummary struct {
 	Listings      map[string]int `json:"listings"`
 	Reservations  map[string]int `json:"reservations"`
 	ActiveRentals int            `json:"active_rentals"`
-	EndingSoon    int            `json:"ending_soon"` // active, end_date ≤ 7 hari
+	EndingSoon    int            `json:"ending_soon"`    // active, end_date ≤ 7 hari
 	UpcomingStart int            `json:"upcoming_start"` // reserved, start ≤ 7 hari
 	OpenInquiries int            `json:"open_inquiries"`
 	OccupancyPct  float64        `json:"occupancy_pct"` // unit dengan listing sewa yang aktif disewa

@@ -19,8 +19,8 @@ import (
 	"github.com/buildingvision/api/internal/platform/events"
 	"github.com/buildingvision/api/internal/platform/httpx"
 	"github.com/buildingvision/api/internal/platform/ids"
-	"github.com/buildingvision/api/internal/property"
 	"github.com/buildingvision/api/internal/profile"
+	"github.com/buildingvision/api/internal/property"
 )
 
 // ============ UNIT LISTING (sales inventory) ============
@@ -724,14 +724,14 @@ func (s *Service) LeadAct(ctx context.Context, id uuid.UUID, action string, in L
 // ---------- Sales activity / history ----------
 
 type Activity struct {
-	ID           uuid.UUID `json:"id"`
-	LeadID       uuid.UUID `json:"lead_id"`
-	ActivityType string    `json:"activity_type"`
-	Summary      string    `json:"summary"`
-	OccurredAt   time.Time `json:"occurred_at"`
+	ID           uuid.UUID  `json:"id"`
+	LeadID       uuid.UUID  `json:"lead_id"`
+	ActivityType string     `json:"activity_type"`
+	Summary      string     `json:"summary"`
+	OccurredAt   time.Time  `json:"occurred_at"`
 	CreatedBy    *uuid.UUID `json:"created_by"`
-	CreatedName  *string   `json:"created_by_name"`
-	CreatedAt    time.Time `json:"created_at"`
+	CreatedName  *string    `json:"created_by_name"`
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 type ActivityInput struct {
@@ -1272,10 +1272,10 @@ func (s *Service) SaleAct(ctx context.Context, id uuid.UUID, action string, in S
 // ---------- Pipeline summary (Unit Sales Management overview) ----------
 
 type SalesSummary struct {
-	Listings     map[string]int `json:"listings"`      // by status
-	Leads        map[string]int `json:"leads"`         // by status
-	Reservations map[string]int `json:"reservations"`  // by status
-	SoldValue    int64          `json:"sold_value"`    // total agreed_price sold/handed_over
+	Listings     map[string]int `json:"listings"`       // by status
+	Leads        map[string]int `json:"leads"`          // by status
+	Reservations map[string]int `json:"reservations"`   // by status
+	SoldValue    int64          `json:"sold_value"`     // total agreed_price sold/handed_over
 	FollowUpsDue int            `json:"follow_ups_due"` // next_follow_up_at <= now, lead terbuka
 }
 
