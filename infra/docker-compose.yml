@@ -258,7 +258,7 @@ services:
     command:
       - |
         sed -e "s|__TELEGRAM_BOT_TOKEN__|${TELEGRAM_BOT_TOKEN}|" -e "s|__TELEGRAM_CHAT_ID__|${TELEGRAM_CHAT_ID:-0}|" /etc/alertmanager/alertmanager.yml > /tmp/alertmanager.yml
-        if [ -z "${TELEGRAM_BOT_TOKEN}" ]; then sed -i "s|receiver: telegram|receiver: \"null\"|" /tmp/alertmanager.yml; fi
+        if [ -z "$${TELEGRAM_BOT_TOKEN}" ]; then cp /etc/alertmanager/alertmanager.null.yml /tmp/alertmanager.yml; fi
         exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
