@@ -166,7 +166,8 @@ services:
       - log_min_duration_statement=500
     volumes:
       - pg-data:/var/lib/postgresql/data
-      - ${PGBACKREST_CONF:-./pgbackrest/pgbackrest.conf}:/etc/pgbackrest/pgbackrest.conf:ro
+      - ./pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - ${BV_BACKUP_DIR:-/opt/bv-backup}:/var/lib/pgbackrest
       - pgbackrest-spool:/var/spool/pgbackrest
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d buildingvision"]
