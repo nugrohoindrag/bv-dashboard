@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/smtp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,10 +37,37 @@ func (l LogMailer) Send(_ context.Context, m Message) error {
 	return nil
 }
 
-// Recorder: menyimpan pesan di memori (integration test).
-type Recorder struct{ Sent []Message }
+// Recorder: menyimpan pesan di memori (integration test). Send dipanggil dari goroutine (email async) → dilindungi mutex;
+// test membaca lewat Messages() setelah menunggu (WaitSent).
+type Recorder struct {
+	mu   sync.Mutex
+	sent []Message
+}
 
-func (r *Recorder) Send(_ context.Context, m Message) error { r.Sent = append(r.Sent, m); return nil }
+func (r *Recorder) Send(_ context.Context, m Message) error {
+	r.mu.Lock()
+	r.sent = append(r.sent, m)
+	r.mu.Unlock()
+	return nil
+}
+
+// Messages: salinan pesan yang sudah terkirim.
+func (r *Recorder) Messages() []Message {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]Message(nil), r.sent...)
+}
+
+// WaitSent: tunggu hingga minimal n pesan terkirim (email dikirim asinkron) atau timeout.
+func (r *Recorder) WaitSent(n int, timeout time.Duration) []Message {
+	deadline := time.Now().Add(timeout)
+	for {
+		if m := r.Messages(); len(m) >= n || time.Now().After(deadline) {
+			return m
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
 
 type SMTP struct {
 	Host, User, Password, From string

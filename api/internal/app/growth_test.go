@@ -31,10 +31,11 @@ func TestGrowthSignupTrialAndAppDownloads(t *testing.T) {
 		SignupID uuid.UUID `json:"signup_id"`
 	}
 	e.mustJSON(st, body, 201, &su)
-	if len(rec.Sent) != 1 || !strings.Contains(rec.Sent[0].Text, "/verify-email?token=") {
-		t.Fatalf("verification email tidak terkirim: %+v", rec.Sent)
+	sent := rec.WaitSent(1, 5*time.Second)
+	if len(sent) != 1 || !strings.Contains(sent[0].Text, "/verify-email?token=") {
+		t.Fatalf("verification email tidak terkirim: %+v", sent)
 	}
-	token := regexp.MustCompile(`token=([A-Za-z0-9_-]+)`).FindStringSubmatch(rec.Sent[0].Text)[1]
+	token := regexp.MustCompile(`token=([A-Za-z0-9_-]+)`).FindStringSubmatch(sent[0].Text)[1]
 
 	// email yang sama ditolak untuk akun yang sudah ada
 	st, body = e.do("", http.MethodPost, "/api/v1/public/signup", map[string]any{"email": "admin@org-a.test", "full_name": "X", "password": "Trial12345!", "organization_name": "Y"})
@@ -250,7 +251,7 @@ func TestGrowthSignupTrialAndAppDownloads(t *testing.T) {
 	}
 	// email ending soon + expired ke admin
 	var subjects []string
-	for _, m := range rec.Sent {
+	for _, m := range rec.WaitSent(1, 5*time.Second) {
 		subjects = append(subjects, m.Subject)
 	}
 	joined := strings.Join(subjects, "|")

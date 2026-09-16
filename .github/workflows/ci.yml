@@ -55,6 +55,8 @@ jobs:
       - name: go test (unit + integration, RLS via bv_app)
         env:
           BV_TEST_ADMIN_DATABASE_URL: postgres://postgres:postgres@localhost:5432/buildingvision_test?sslmode=disable
+          # seed demo & assertion "hari ini" memakai time.Now() lokal; properti demo bertimezone Asia/Jakarta
+          TZ: Asia/Jakarta
         run: go test -race -count=1 ./...
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
