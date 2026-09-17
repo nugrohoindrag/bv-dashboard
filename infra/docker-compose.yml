@@ -13,7 +13,8 @@ x-api-env: &api-env
   BV_JWT_PUBLIC_KEY: ${BV_JWT_PUBLIC_KEY}
   BV_COOKIE_SECURE: "true"
   BV_COOKIE_DOMAIN: ${BV_COOKIE_DOMAIN:-}
-  BV_CORS_ORIGINS: ${BV_PUBLIC_URL:-https://app.example.com}
+  # origin web + app native Capacitor (Android http://localhost, iOS capacitor://localhost) + PWA subdomain
+  BV_CORS_ORIGINS: ${BV_CORS_ORIGINS:-${BV_PUBLIC_URL:-https://app.example.com}}
   BV_S3_ENDPOINT: ${BV_S3_ENDPOINT:-http://minio:9000}
   BV_S3_REGION: ${BV_S3_REGION:-ap-southeast-3}
   BV_S3_BUCKET: ${BV_S3_BUCKET:-buildingvision}
