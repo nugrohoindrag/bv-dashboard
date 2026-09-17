@@ -60,7 +60,7 @@ func DefaultExtensions(a *App) []Extension {
 	a.Hotel = hotel.New(a.DB, a.Jobs, a.Profile, a.Property, hkSvc, a.Billing, a.TenantRelation, a.Operations) // profile Hotel
 	a.Commercial = commercial.New(a.DB, a.Jobs, a.Profile, a.Property, a.Billing, a.TenantRelation)            // profile Apartment: Unit Sales & Rental
 	a.Reports = reports.New(a.DB)
-	a.BVRooms = bvrooms.New(a.DB, a.Jobs, a.Storage, a.Hotel, a.Profile, a.IAM.Signer, a.Log, bvrooms.Config{Env: a.Cfg.Env, PublicURL: a.Cfg.PublicURL, RefreshTTL: a.Cfg.RefreshTokenTTL, VAPIDPublicKey: a.Cfg.VAPIDPublicKey})
+	a.BVRooms = bvrooms.New(a.DB, a.Jobs, a.Storage, a.Hotel, a.Profile, a.IAM.Signer, a.Log, bvrooms.Config{Env: a.Cfg.Env, PublicURL: a.Cfg.PublicURL, RefreshTTL: a.Cfg.RefreshTokenTTL, VAPIDPublicKey: a.Cfg.VAPIDPublicKey, OTPStaticCode: a.Cfg.OTPStaticCode, OTPExposeCode: a.Cfg.OTPExposeCode})
 	a.Demo = demo.New(demo.Deps{DB: a.DB, Storage: a.Storage, Log: a.Log, Env: a.Cfg.Env, IAM: a.IAM, Signer: a.IAM.Signer, PublicURL: a.Cfg.PublicURL, DemoEnabled: a.Cfg.DemoEnabled})
 	if a.Cfg.VAPIDPublicKey != "" && a.Cfg.VAPIDPrivateKey != "" {
 		a.BVRooms.Pusher = bvrooms.VAPIDPusher{PublicKey: a.Cfg.VAPIDPublicKey, PrivateKey: a.Cfg.VAPIDPrivateKey, Subscriber: a.Cfg.VAPIDSubject}

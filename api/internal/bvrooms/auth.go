@@ -143,6 +143,9 @@ func (s *Service) RequestOTP(ctx context.Context, in OTPRequestInput, ip string)
 	if err != nil {
 		return nil, err
 	}
+	if s.Cfg.OTPStaticCode != "" {
+		code = s.Cfg.OTPStaticCode
+	}
 	now := s.now()
 	err = s.DB.WithOrgTx(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
 		var exists bool
@@ -178,7 +181,7 @@ func (s *Service) RequestOTP(ctx context.Context, in OTPRequestInput, ip string)
 		s.Log.Warn("bvrooms sms send", "err", err)
 	}
 	out := &OTPRequestResult{ExpiresIn: int(s.Cfg.OTPTTL.Seconds()), ResendAfter: int(s.Cfg.OTPResend.Seconds()), MaskedPhone: MaskPhone(phone), Provider: s.SMS.Code()}
-	if s.devMode() && s.SMS.Code() == "mock" {
+	if (s.devMode() || s.Cfg.OTPExposeCode) && s.SMS.Code() == "mock" {
 		out.DevCode = code
 	}
 	return out, nil

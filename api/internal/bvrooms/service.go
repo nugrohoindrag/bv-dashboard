@@ -47,6 +47,10 @@ type Config struct {
 	OTPTTL         time.Duration // default 100 detik (Figma 1:39)
 	OTPResend      time.Duration // default 60 detik
 	VAPIDPublicKey string        // dikirim ke client (pushManager.subscribe); kosong = Web Push nonaktif
+	// Vendor SMS di-hold (D3): OTPStaticCode = kode tetap untuk semua nomor (mis. "1234", hanya demo/pilot — nonaktifkan saat vendor
+	// terpasang); OTPExposeCode = kembalikan dev_code di respons walau bukan env local (kode tampil di layar).
+	OTPStaticCode  string
+	OTPExposeCode  bool
 }
 
 type Service struct {
