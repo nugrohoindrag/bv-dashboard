@@ -26,6 +26,7 @@ type Config struct {
 
 	// Object storage (S3 compatible)
 	S3Endpoint         string
+	S3PublicEndpoint   string // endpoint yang dapat diakses browser/app untuk presigned URL (mis. https://app.example.com); kosong = S3Endpoint
 	S3Region           string
 	S3Bucket           string
 	S3AccessKey        string
@@ -85,6 +86,7 @@ func Load() (Config, error) {
 		CookieDomain:          getenv("BV_COOKIE_DOMAIN", ""),
 		CookieSecure:          getbool("BV_COOKIE_SECURE", false),
 		S3Endpoint:            getenv("BV_S3_ENDPOINT", "http://localhost:9000"),
+		S3PublicEndpoint:      getenv("BV_S3_PUBLIC_ENDPOINT", ""),
 		S3Region:              getenv("BV_S3_REGION", "ap-southeast-3"),
 		S3Bucket:              getenv("BV_S3_BUCKET", "buildingvision"),
 		S3AccessKey:           getenv("BV_S3_ACCESS_KEY", "minioadmin"),

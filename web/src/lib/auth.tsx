@@ -64,7 +64,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // /me/permissions mengembalikan principal flat
       const p = (me as unknown as Principal).id ? (me as unknown as Principal) : me.principal;
       setPrincipal(p);
-      const props = await api<{ data: PropertyLite[] }>("properties");
+      // admin_internal (organization internal) tidak punya property/permission property.view → 403 bukan berarti sesi gagal
+      let props: { data: PropertyLite[] } = { data: [] };
+      try {
+        props = await api<{ data: PropertyLite[] }>("properties");
+      } catch {
+        props = { data: [] };
+      }
       setProperties(props.data);
       setPropertyIdState((cur) => {
         if (cur && props.data.some((x) => x.id === cur)) return cur;

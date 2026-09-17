@@ -35,6 +35,12 @@
 		}
 	}
 
+	# Object storage publik: presigned URL (BV_S3_PUBLIC_ENDPOINT=https://{domain}) → MinIO tanpa ubah path/Host
+	# (tanda tangan S3 mencakup keduanya). Hanya bucket aplikasi; bucket backup tidak diekspos.
+	handle /buildingvision/* {
+		reverse_proxy minio:9000
+	}
+
 	# QR deep link (BV_QR_BASE_URL = https://{domain}/q/) → web SPA yang me-resolve lewat /api/v1/qr/{code}/resolve
 	handle /q/* {
 		root * /srv

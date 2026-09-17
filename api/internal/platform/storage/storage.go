@@ -44,7 +44,16 @@ func NewS3(ctx context.Context, cfg config.Config) (*S3Storage, error) {
 		}
 		o.UsePathStyle = cfg.S3UsePathStyle
 	})
-	return &S3Storage{client: client, presign: s3.NewPresignClient(client), bucket: cfg.S3Bucket}, nil
+	// Presigned URL dipakai browser/app (di luar jaringan Docker): tanda tangan dihitung untuk BV_S3_PUBLIC_ENDPOINT
+	// (mis. https://app.example.com → Caddy reverse-proxy path /<bucket>/* ke MinIO tanpa mengubah path & Host).
+	presignClient := client
+	if cfg.S3PublicEndpoint != "" && cfg.S3PublicEndpoint != cfg.S3Endpoint {
+		presignClient = s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+			o.BaseEndpoint = aws.String(cfg.S3PublicEndpoint)
+			o.UsePathStyle = cfg.S3UsePathStyle
+		})
+	}
+	return &S3Storage{client: client, presign: s3.NewPresignClient(presignClient), bucket: cfg.S3Bucket}, nil
 }
 
 // EnsureBucket membuat bucket bila belum ada (local/MinIO).
