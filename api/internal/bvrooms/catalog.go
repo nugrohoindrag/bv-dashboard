@@ -33,6 +33,7 @@ type AppConfig struct {
 		WebPush        bool   `json:"web_push"`
 		VAPIDPublicKey string `json:"vapid_public_key,omitempty"`
 		OTPProvider    string `json:"otp_provider"`
+		AuthMethod     string `json:"auth_method"` // pin | otp (vendor SMS di-hold → pin)
 	} `json:"features"`
 	ListedCount     int     `json:"listed_count"`
 	SingleProperty  *string `json:"single_property_slug"`
@@ -51,6 +52,7 @@ func (s *Service) AppConfig(ctx context.Context, slug string) (*AppConfig, error
 	out.Organization.WelcomeBody = "Pesan kamar dengan harga terpercaya, mudah, dan pelayanan terbaik."
 	out.Features.OnlinePayment = false
 	out.Features.OTPProvider = s.SMS.Code()
+	out.Features.AuthMethod = s.Cfg.AuthMethod
 	out.Features.WebPush = s.Pusher != nil && s.Cfg.VAPIDPublicKey != ""
 	out.Features.VAPIDPublicKey = s.Cfg.VAPIDPublicKey
 	out.DefaultCategory = "all"

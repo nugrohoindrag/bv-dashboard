@@ -64,6 +64,8 @@ func (h *Handler) MountPublic(r chi.Router) {
 		r.Post("/auth/otp/request", h.otpRequest)
 		r.Post("/auth/otp/verify", h.otpVerify)
 		r.Post("/auth/register", h.register)
+		r.Post("/auth/pin/login", h.pinLogin)
+		r.Post("/auth/pin/register", h.pinRegister)
 		r.Post("/auth/refresh", h.refresh)
 		r.Group(func(r chi.Router) {
 			r.Use(h.withOrg, h.optionalCustomer, cacheable)
@@ -82,6 +84,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 				r.Use(httpx.Idempotency(h.DB))
 			}
 			r.Post("/auth/logout", h.logout)
+			r.Post("/auth/pin/change", h.pinChange)
 			r.Get("/customers/me", h.me)
 			r.Patch("/customers/me", h.updateMe)
 			r.Get("/customers/me/wishlist", h.wishlist)
@@ -221,6 +224,47 @@ func (h *Handler) otpVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) pinLogin(w http.ResponseWriter, r *http.Request) {
+	var in PINLoginInput
+	if err := httpx.Decode(r, &in); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	out, err := h.Svc.PINLogin(r.Context(), in, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) pinRegister(w http.ResponseWriter, r *http.Request) {
+	var in PINRegisterInput
+	if err := httpx.Decode(r, &in); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	out, err := h.Svc.PINRegister(r.Context(), in, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, out)
+}
+
+func (h *Handler) pinChange(w http.ResponseWriter, r *http.Request) {
+	var in ChangePINInput
+	if err := httpx.Decode(r, &in); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if err := h.Svc.ChangePIN(r.Context(), in); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {

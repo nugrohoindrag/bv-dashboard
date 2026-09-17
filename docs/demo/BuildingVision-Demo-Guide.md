@@ -62,9 +62,9 @@ Password seluruh akun demo: **`Demo12345!`** (dev/demo saja). Login dashboard `c
 | PIC office lain | bambang@sinarlogistik.test, laras@kreatifmedia.test, melati@konsultanprima.test, gilang@startupvision.test | |
 | Admin Internal (Demo Data) | internal@buildingvision.id / Internal12345! (`bvctl seed --internal`) | organization internal |
 
-**BVRooms customer** (organization `demo`, OTP provider `mock`):
+**BVRooms customer** (organization `demo`, login nomor HP + PIN; PIN default semua customer demo `1234`):
 
-| Customer | Email | Nomor HP (OTP) | Kondisi |
+| Customer | Email | Nomor HP (login + PIN 1234) | Kondisi |
 |---|---|---|---|
 | 1 | bvrooms.customer@buildingvision.local | +62812-0000-0101 | upcoming PAID (transfer diverifikasi), riwayat CHECK OUT + review 5★, wishlist, notifikasi sudah dibaca |
 | 2 | bvrooms.customer2@buildingvision.local | +62812-0000-0102 | UNPAID (transfer dipilih, bukti belum), riwayat 4★, wishlist kosong; apartemen: pay-at-property → CHECK IN |
@@ -72,7 +72,7 @@ Password seluruh akun demo: **`Demo12345!`** (dev/demo saja). Login dashboard `c
 | 4 | bvrooms.customer4@buildingvision.local | +62812-0000-0104 | EXPIRED (sweep), CANCELLED, riwayat 2★; apartemen UNPAID |
 | 5 | bvrooms.customer5@buildingvision.local | +62812-0000-0105 | pay-at-property Suite pada tanggal fully booked, bukti transfer menunggu verifikasi, riwayat 1★ |
 
-Cara memperoleh OTP mock (dev): `POST /api/v1/bvrooms/auth/otp/request {"organization_slug":"demo","phone":"081200000101","purpose":"login"}` → respons memuat `dev_code` (hanya `BV_ENV` local/test; log API juga mencetaknya). Lanjutkan `POST /bvrooms/auth/otp/verify` dengan kode tersebut. Cooldown resend 60 detik per nomor.
+Login PIN: `POST /api/v1/bvrooms/auth/pin/login {"organization_slug":"demo","phone":"081200000101","pin":"1234"}` (akun yang belum mengganti PIN memakai `BV_BVROOMS_DEFAULT_PIN`, bawaan 1234; ganti lewat `auth/pin/change`). Mode OTP (`BV_BVROOMS_AUTH=otp`) memperoleh kode mock (dev): `POST /api/v1/bvrooms/auth/otp/request {"organization_slug":"demo","phone":"081200000101","purpose":"login"}` → respons memuat `dev_code` (hanya `BV_ENV` local/test; log API juga mencetaknya). Lanjutkan `POST /bvrooms/auth/otp/verify` dengan kode tersebut. Cooldown resend 60 detik per nomor.
 
 ## 4. Property yang tersedia
 
@@ -111,7 +111,7 @@ Setiap property memiliki: tim Engineering/Security/Housekeeping/Tenant Relation/
 
 ## 7. Recommended demo journey (golden path)
 
-**Hotel** — login `hotel.guest@…` (Tenant/Guest App): lihat stay Room 501 → buat laporan → dashboard `engineering.demo@…`: WO → teknisi `hotel.technician@…` start → parts → foto → complete → resolve → tamu konfirmasi → CSAT. Lalu Front Office (`hotel.manager@…`): reservasi Sinta Dewi (confirmed) → assign room → check-in → housekeeping turnover kamar 303 → check-out. BVRooms: customer 1 login OTP → katalog → Grand Vision Hotel → pilih tanggal → tipe kamar → breakfast → booking → transfer → unggah bukti → `finance.demo@…` verify → PAID.
+**Hotel** — login `hotel.guest@…` (Tenant/Guest App): lihat stay Room 501 → buat laporan → dashboard `engineering.demo@…`: WO → teknisi `hotel.technician@…` start → parts → foto → complete → resolve → tamu konfirmasi → CSAT. Lalu Front Office (`hotel.manager@…`): reservasi Sinta Dewi (confirmed) → assign room → check-in → housekeeping turnover kamar 303 → check-out. BVRooms: customer 1 login PIN 1234 → katalog → Grand Vision Hotel → pilih tanggal → tipe kamar → breakfast → booking → transfer → unggah bukti → `finance.demo@…` verify → PAID.
 
 **Apartment** — login `apartment.tenant@…`: laporkan AC → E2E-01 → CSAT. Kemudian booking Function Room → registrasi visitor → tagihan service charge → bayar manual. Commercial (`apartment.manager@…`): Unit Sales (lead → reservasi B-1101) & Unit Rental (kuotasi daily/weekly/monthly → booking → onboarding).
 
@@ -138,6 +138,6 @@ Laporan mencakup HOTEL / APARTMENT / OFFICE (≈30 pemeriksaan per profile: prop
 - File evidence/foto adalah JPEG 1×1 deterministik; bila object storage (MinIO/S3) tidak aktif, baris attachment/foto tetap ada namun URL unduh tidak dapat dibuka.
 - Tanggal seed relatif terhadap hari eksekusi (tiket "kemarin", PM "40 hari lalu", stay hotel "H-3…H+2"); jalankan reseed bila demo dipakai setelah beberapa hari agar tetap terlihat "hari ini".
 - Pembayaran online (VA/gateway) tetap **ON HOLD**: BVRooms & Billing memakai alur manual (transfer + verifikasi Finance) dan pay-at-property; VA tampil sebagai opsi mockup nonaktif.
-- OTP SMS memakai provider mock (`dev_code` hanya di env local/test); Web Push aktif hanya bila kunci VAPID dikonfigurasi.
+- Login BVRooms memakai PIN (vendor SMS di-hold); OTP SMS memakai provider mock (`dev_code` hanya di env local/test) bila `BV_BVROOMS_AUTH=otp`; Web Push aktif hanya bila kunci VAPID dikonfigurasi.
 - Notifikasi seed dikirim sinkron; notifikasi yang dipicu interaksi UI setelah seed tetap membutuhkan worker (`worker.exe`) seperti biasa.
 - `bvctl demo` menolak koneksi superuser Postgres (RLS dilewati superuser); gunakan role `bv_app`.

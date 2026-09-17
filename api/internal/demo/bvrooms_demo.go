@@ -15,7 +15,7 @@ import (
 	"github.com/buildingvision/api/internal/platform/storage"
 )
 
-// BVRooms customer demo (§21A.2 / §21A.22): identitas deterministik; login lewat OTP mock (dev_code di respons env local/test).
+// BVRooms customer demo (§21A.2 / §21A.22): identitas deterministik; login nomor HP + PIN default 1234 (pin_hash NULL; mode OTP mock tetap tersedia via BV_BVROOMS_AUTH=otp).
 var bvCustomers = []struct{ Key, Email, Name, Phone string }{
 	{"c1", "bvrooms.customer@buildingvision.local", "Fransiska Wijaya", "+6281200000101"},
 	{"c2", "bvrooms.customer2@buildingvision.local", "Aan Prayitno", "+6281200000102"},

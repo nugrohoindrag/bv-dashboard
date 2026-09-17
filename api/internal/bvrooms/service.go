@@ -51,6 +51,10 @@ type Config struct {
 	// terpasang); OTPExposeCode = kembalikan dev_code di respons walau bukan env local (kode tampil di layar).
 	OTPStaticCode string
 	OTPExposeCode bool
+	// AuthMethod: "pin" (default; nomor HP + PIN 4 digit, tanpa SMS) | "otp". DefaultPIN dipakai akun yang belum pernah
+	// mengatur PIN (pin_hash NULL), bawaan "1234".
+	AuthMethod string
+	DefaultPIN string
 }
 
 type Service struct {
@@ -90,6 +94,12 @@ func New(d *db.DB, j jobs.Enqueuer, store storage.Storage, hotelSvc *hotel.Servi
 	}
 	if cfg.OTPResend == 0 {
 		cfg.OTPResend = 60 * time.Second
+	}
+	if cfg.AuthMethod != "otp" {
+		cfg.AuthMethod = "pin"
+	}
+	if cfg.DefaultPIN == "" {
+		cfg.DefaultPIN = "1234"
 	}
 	if log == nil {
 		log = slog.Default()

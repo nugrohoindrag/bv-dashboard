@@ -215,8 +215,9 @@ type Customer struct {
 
 type AuthResult struct {
 	*TokenPair
-	Customer *Customer `json:"customer,omitempty"`
-	OTPToken string    `json:"otp_token,omitempty"` // register / change_phone (5 menit)
+	Customer     *Customer `json:"customer,omitempty"`
+	OTPToken     string    `json:"otp_token,omitempty"` // register / change_phone (5 menit)
+	PINIsDefault bool      `json:"pin_is_default"`      // login PIN: akun masih memakai PIN default → ajak ganti PIN
 }
 
 // VerifyOTP: login → token sesi; register/change_phone → otp_token untuk langkah berikutnya.
@@ -466,29 +467,40 @@ func (s *Service) Me(ctx context.Context) (*Customer, error) {
 type UpdateMeInput struct {
 	FullName *string `json:"full_name"`
 	Email    *string `json:"email"`
-	Phone    *string `json:"phone"` // ganti nomor → otp_token purpose=change_phone untuk nomor baru
+	Phone    *string `json:"phone"` // ganti nomor → otp_token purpose=change_phone untuk nomor baru, atau pin (mode PIN)
 	OTPToken *string `json:"otp_token"`
+	PIN      *string `json:"pin"`
 	Locale   *string `json:"locale"`
 }
 
-// UpdateMe: Edit Data Akun (Figma AKUN). Ganti nomor HP wajib otp_token yang sudah diverifikasi ke nomor baru.
+// UpdateMe: Edit Data Akun (Figma AKUN). Ganti nomor HP wajib otp_token yang sudah diverifikasi ke nomor baru (mode OTP)
+// atau konfirmasi PIN akun (mode PIN).
 func (s *Service) UpdateMe(ctx context.Context, in UpdateMeInput) (*Customer, error) {
 	p, err := customer(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var newPhone *string
+	var verifyPIN string
 	if in.Phone != nil && strings.TrimSpace(*in.Phone) != "" {
 		ph, err := NormalizePhone(*in.Phone)
 		if err != nil {
 			return nil, err
 		}
-		if in.OTPToken == nil {
-			return nil, apperr.Validation("otp_token wajib untuk mengganti nomor HP").WithField("otp_token", "wajib")
-		}
-		claims, err := s.signer.verify(*in.OTPToken, audOTP)
-		if err != nil || claims.Purpose != "change_phone" || claims.Phone != ph || claims.Org != p.OrganizationID.String() {
-			return nil, apperr.Unauthorized("otp_token tidak valid untuk nomor ini")
+		switch {
+		case in.OTPToken != nil:
+			claims, err := s.signer.verify(*in.OTPToken, audOTP)
+			if err != nil || claims.Purpose != "change_phone" || claims.Phone != ph || claims.Org != p.OrganizationID.String() {
+				return nil, apperr.Unauthorized("otp_token tidak valid untuk nomor ini")
+			}
+		case in.PIN != nil:
+			pin, err := validatePIN(*in.PIN, "pin")
+			if err != nil {
+				return nil, err
+			}
+			verifyPIN = pin
+		default:
+			return nil, apperr.Validation("pin (atau otp_token) wajib untuk mengganti nomor HP").WithField("pin", "wajib")
 		}
 		newPhone = &ph
 	}
@@ -512,6 +524,11 @@ func (s *Service) UpdateMe(ctx context.Context, in UpdateMeInput) (*Customer, er
 			return err
 		}
 		if newPhone != nil && *newPhone != cur.Phone {
+			if verifyPIN != "" {
+				if _, err := s.checkPINTx(ctx, tx, cur, verifyPIN, s.now()); err != nil {
+					return err
+				}
+			}
 			if _, err := tx.Exec(ctx, `UPDATE bvrooms_customers SET phone_e164 = $2 WHERE id = $1`, p.UserID, *newPhone); err != nil {
 				if db.IsUniqueViolation(err) {
 					return apperr.Conflict("PHONE_EXISTS", "Nomor sudah dipakai akun lain")

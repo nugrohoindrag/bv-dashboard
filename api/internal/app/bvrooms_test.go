@@ -286,6 +286,66 @@ func TestBVRoomsHotelFlow(t *testing.T) {
 	if st, body := e.do("", http.MethodPost, "/api/v1/bvrooms/auth/otp/request", map[string]any{"organization_slug": "org-a", "phone": "+628123456789", "purpose": "login"}); st != 429 {
 		t.Fatalf("resend < 60 detik harus 429: %d %s", st, body)
 	}
+	// ---- customer: PIN (pengganti OTP selama vendor SMS di-hold) ----
+	// akun lama (register via OTP, pin_hash NULL) → PIN default 1234, pin_is_default=true
+	var pinLogin struct {
+		AccessToken  string `json:"access_token"`
+		PINIsDefault bool   `json:"pin_is_default"`
+	}
+	st, body = e.do("", http.MethodPost, "/api/v1/bvrooms/auth/pin/login", map[string]any{"organization_slug": "org-a", "phone": "0812 3456 789", "pin": "1234", "device_id": "pin-dev"})
+	e.mustJSON(st, body, 200, &pinLogin)
+	if pinLogin.AccessToken == "" || !pinLogin.PINIsDefault {
+		t.Fatalf("login PIN default harus sukses + pin_is_default: %s", body)
+	}
+	if st, body := e.do("", http.MethodPost, "/api/v1/bvrooms/auth/pin/login", map[string]any{"organization_slug": "org-a", "phone": "0812 3456 789", "pin": "9999"}); st != 401 || !strings.Contains(string(body), "PIN_INVALID") {
+		t.Fatalf("PIN salah harus 401 PIN_INVALID: %d %s", st, body)
+	}
+	if st, body := e.do("", http.MethodPost, "/api/v1/bvrooms/auth/pin/login", map[string]any{"organization_slug": "org-a", "phone": "0899000000", "pin": "1234"}); st != 404 || !strings.Contains(string(body), "PHONE_NOT_REGISTERED") {
+		t.Fatalf("login PIN nomor tak terdaftar harus 404: %d %s", st, body)
+	}
+	// ganti PIN: lama = default → baru 4321; default tidak berlaku lagi
+	if st, body := e.do(pinLogin.AccessToken, http.MethodPost, "/api/v1/bvrooms/auth/pin/change", map[string]any{"current_pin": "1234", "new_pin": "4321"}); st != 200 {
+		t.Fatalf("ganti PIN: %d %s", st, body)
+	}
+	if st, _ := e.do("", http.MethodPost, "/api/v1/bvrooms/auth/pin/login", map[string]any{"organization_slug": "org-a", "phone": "0812 3456 789", "pin": "1234"}); st != 401 {
+		t.Fatalf("PIN default setelah diganti harus 401: %d", st)
+	}
+	pinLogin.PINIsDefault = false
+	st, body = e.do("", http.MethodPost, "/api/v1/bvrooms/auth/pin/login", map[string]any{"organization_slug": "org-a", "phone": "0812 3456 789", "pin": "4321"})
+	e.mustJSON(st, body, 200, &pinLogin)
+	if pinLogin.PINIsDefault {
+		t.Fatalf("setelah ganti PIN pin_is_default harus false: %s", body)
+	}
+	// register langsung dengan PIN (tanpa OTP) → 201 + sesi; nomor sama → 409; PIN bukan 4 digit → 422
+	var pinReg struct {
+		AccessToken string `json:"access_token"`
+		Customer    struct {
+			Phone string `json:"phone"`
+		} `json:"customer"`
+	}
+	st, body = e.do("", http.MethodPost, "/api/v1/bvrooms/auth/pin/register", map[string]any{"organization_slug": "org-a", "phone": "0813 0000 111", "full_name": "Dina Putri", "email": "dina@guest.test", "pin": "2468", "device_id": "pin-dev"})
+	e.mustJSON(st, body, 201, &pinReg)
+	if pinReg.AccessToken == "" || pinReg.Customer.Phone != "+628130000111" {
+		t.Fatalf("register PIN: %s", body)
+	}
+	if st, body := e.do("", http.MethodPost, "/api/v1/bvrooms/auth/pin/register", map[string]any{"organization_slug": "org-a", "phone": "0813 0000 111", "full_name": "Dina Putri", "email": "dina@guest.test", "pin": "2468"}); st != 409 || !strings.Contains(string(body), "PHONE_EXISTS") {
+		t.Fatalf("register PIN nomor sama harus 409: %d %s", st, body)
+	}
+	if st, _ := e.do("", http.MethodPost, "/api/v1/bvrooms/auth/pin/register", map[string]any{"organization_slug": "org-a", "phone": "0813 0000 222", "full_name": "X", "email": "x@guest.test", "pin": "12"}); st != 422 && st != 400 {
+		t.Fatalf("PIN bukan 4 digit harus validation error: %d", st)
+	}
+	// ganti nomor HP lewat PATCH customers/me + pin
+	if st, body := e.do(pinReg.AccessToken, http.MethodPatch, "/api/v1/bvrooms/customers/me", map[string]any{"phone": "0813 0000 333", "pin": "0000"}); st != 401 {
+		t.Fatalf("ganti nomor dengan PIN salah harus 401: %d %s", st, body)
+	}
+	if st, body := e.do(pinReg.AccessToken, http.MethodPatch, "/api/v1/bvrooms/customers/me", map[string]any{"phone": "0813 0000 333", "pin": "2468"}); st != 200 || !strings.Contains(string(body), "+628130000333") {
+		t.Fatalf("ganti nomor dengan PIN: %d %s", st, body)
+	}
+	// app-config mengumumkan metode auth
+	if st, body := e.do("", http.MethodGet, "/api/v1/bvrooms/app-config?organization_slug=org-a", nil); st != 200 || !strings.Contains(string(body), `"auth_method":"pin"`) {
+		t.Fatalf("app-config auth_method: %d %s", st, body)
+	}
+
 	// token customer tidak diterima endpoint staf, dan sebaliknya
 	if st, _ := e.do(cust, http.MethodGet, "/api/v1/hotel/reservations?property_id="+prop.ID.String(), nil); st != 401 {
 		t.Fatalf("token customer di endpoint staf harus 401: %d", st)

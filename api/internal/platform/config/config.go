@@ -29,6 +29,8 @@ type Config struct {
 	S3PublicEndpoint   string // endpoint yang dapat diakses browser/app untuk presigned URL (mis. https://app.example.com); kosong = S3Endpoint
 	OTPStaticCode      string // BVRooms: kode OTP tetap (demo/pilot tanpa vendor SMS); kosong = acak 4 digit
 	OTPExposeCode      bool   // BVRooms: kembalikan dev_code di respons OTP walau production (provider mock)
+	BVRoomsAuthMethod  string // BVRooms: pin (default, tanpa SMS) | otp
+	BVRoomsDefaultPIN  string // BVRooms: PIN default akun yang belum mengatur PIN (bawaan 1234)
 	S3Region           string
 	S3Bucket           string
 	S3AccessKey        string
@@ -91,6 +93,8 @@ func Load() (Config, error) {
 		S3PublicEndpoint:      getenv("BV_S3_PUBLIC_ENDPOINT", ""),
 		OTPStaticCode:         getenv("BV_OTP_STATIC_CODE", ""),
 		OTPExposeCode:         getenv("BV_OTP_EXPOSE_CODE", "") == "true",
+		BVRoomsAuthMethod:     getenv("BV_BVROOMS_AUTH", "pin"),
+		BVRoomsDefaultPIN:     getenv("BV_BVROOMS_DEFAULT_PIN", "1234"),
 		S3Region:              getenv("BV_S3_REGION", "ap-southeast-3"),
 		S3Bucket:              getenv("BV_S3_BUCKET", "buildingvision"),
 		S3AccessKey:           getenv("BV_S3_ACCESS_KEY", "minioadmin"),
