@@ -182,7 +182,7 @@ export default function HomePage() {
       <StatRow items={[{ value: "3", label: "Property profiles on one platform" }, { value: "9", label: "Operational modules" }, { value: "Offline", label: "Staff App keeps working without signal" }, { value: "14 days", label: "Free trial, no credit card" }]} />
       <Quote quote="We stopped asking 'did anyone check?'. The answer is on the timeline, with a photo and a time." name="Property operations lead" role="pilot customer, mixed-use building" tone="muted" />
 
-      {/* Pricing (disembunyikan sampai harga final — SHOW_PRICING) */}
+      {/* Pricing (disembunyikan sampai harga final, lihat SHOW_PRICING) */}
       {SHOW_PRICING && (
       <Section>
         <div className="max-w-2xl"><Eyebrow>Pricing</Eyebrow><Heading>Simple plans per property</Heading><Lead>Start with a free trial. Choose a plan when your team is ready. No surprises.</Lead></div>
