@@ -326,13 +326,19 @@ func (s *Service) seedBVRoomsApartment(ctx context.Context, env *Env, p *prop, u
 		DescriptionSections: &desc, Facilities: ptr([]string{"wifi", "parking", "pool", "gym", "elevator", "cctv", "no_smoking"}), Policies: ptr([]string{"Penghuni wajib menunjukkan KTP saat check in.", "Dilarang membawa hewan peliharaan."}), CancellationPolicy: ptr(cancelPolicyMD), PaymentWindowHours: ptr(6), AllowPayAtProperty: ptr(true), BankAccounts: ptr(jsonRaw(`[{"bank":"BCA","account_number":"3000108765499","account_name":"PT Vision Residence Management"}]`))}, nil); err != nil {
 		return fmt.Errorf("bvrooms apt listing: %w", err)
 	}
-	if err := s.bvPhoto(ctx, env, p.ID, "facade", nil, nil, "Vision Residence Tower A & B", 0, true); err != nil {
+	if err := s.bvPhoto(ctx, env, p.ID, "facade", nil, nil, "Vision Residence Tower A & B", 0, true, "apartment-exterior"); err != nil {
 		return err
 	}
-	if err := s.bvPhoto(ctx, env, p.ID, "room", nil, &ut.ID, "Studio furnished", 1, false); err != nil {
+	if err := s.bvPhoto(ctx, env, p.ID, "room", nil, &ut.ID, "Studio furnished", 1, false, "apartment-living"); err != nil {
 		return err
 	}
-	if err := s.bvPhoto(ctx, env, p.ID, "pool", nil, nil, "Kolam renang podium", 2, false); err != nil {
+	if err := s.bvPhoto(ctx, env, p.ID, "room", nil, &ut.ID, "Dapur & area makan", 3, false, "apartment-kitchen"); err != nil {
+		return err
+	}
+	if err := s.bvPhoto(ctx, env, p.ID, "lobby", nil, nil, "Lounge penghuni", 4, false, "apartment-lounge"); err != nil {
+		return err
+	}
+	if err := s.bvPhoto(ctx, env, p.ID, "pool", nil, nil, "Kolam renang podium", 2, false, "hotel-pool"); err != nil {
 		return err
 	}
 	cust, err := s.bvCustomerIDs(ctx, env)

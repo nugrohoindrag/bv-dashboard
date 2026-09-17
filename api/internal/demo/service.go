@@ -370,6 +370,9 @@ func (s *Service) Seed(ctx context.Context, profiles []string) (*SeedResult, err
 		switch p {
 		case ProfileHotel:
 			propID, err = s.seedHotel(ctx, env, logf)
+			if err == nil {
+				err = s.seedBVRoomsExtraHotels(ctx, env, logf)
+			}
 		case ProfileApartment:
 			propID, err = s.seedApartment(ctx, env, logf)
 		case ProfileOffice:

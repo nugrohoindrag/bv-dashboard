@@ -41,11 +41,12 @@ func (s *Service) bvCustomerIDs(ctx context.Context, env *Env) (map[string]uuid.
 }
 
 // bvPhoto: foto listing deterministik (file JPEG kecil; diunggah ke storage bila tersedia) — §21A.4.
-func (s *Service) bvPhoto(ctx context.Context, env *Env, propertyID uuid.UUID, category string, roomTypeID, unitTypeID *uuid.UUID, caption string, sort int, cover bool) error {
+func (s *Service) bvPhoto(ctx context.Context, env *Env, propertyID uuid.UUID, category string, roomTypeID, unitTypeID *uuid.UUID, caption string, sort int, cover bool, img string) error {
 	id := uuid.Must(uuid.NewV7())
 	key := storage.ObjectKey(env.OrgID.String(), "bvrooms-photo-demo-"+id.String(), time.Now(), ".jpg")
+	data := demoPhoto(img)
 	if s.Storage != nil {
-		_ = s.Storage.Put(context.WithoutCancel(ctx), key, "image/jpeg", bytes.NewReader(demoJPEG), int64(len(demoJPEG)))
+		_ = s.Storage.Put(context.WithoutCancel(ctx), key, "image/jpeg", bytes.NewReader(data), int64(len(data)))
 	}
 	return s.DB.WithOrgTx(ctx, env.OrgID, func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO bvrooms_property_photos (id, organization_id, property_id, category, room_type_id, unit_type_id, storage_key, content_type, size_bytes, status, caption, sort_order, is_cover, created_by)
@@ -75,18 +76,28 @@ func (s *Service) seedBVRoomsHotel(ctx context.Context, env *Env, p *prop, rtIDs
 	}
 	// foto per kategori + foto tipe kamar
 	photos := []struct {
-		cat, caption string
-		cover        bool
-	}{{"facade", "Tampak depan Grand Vision Hotel", true}, {"facade", "Tampak malam", false}, {"lobby", "Lobby utama", false}, {"receptionist", "Front Office", false}, {"restaurant", "Restoran Sudirman", false}, {"pool", "Kolam renang rooftop", false}, {"other", "Executive Lounge", false}}
+		cat, caption, img string
+		cover             bool
+	}{
+		{"facade", "Tampak depan Grand Vision Hotel", "hotel-exterior", true}, {"facade", "Tampak malam dari Jl. Sudirman", "modern-building", false},
+		{"lobby", "Lobby utama", "office-interior", false}, {"lobby", "Lounge lobby", "apartment-lounge", false},
+		{"receptionist", "Front Office 24 jam", "office-interior", false},
+		{"restaurant", "Restoran Sudirman", "banquet-hall", false}, {"restaurant", "Ballroom & banquet", "banquet-hall", false},
+		{"pool", "Kolam renang rooftop", "hotel-pool", false},
+		{"other", "Executive Lounge", "apartment-lounge", false}, {"other", "Ruang pertemuan 120 orang", "meeting-room", false}, {"other", "Kamar mandi", "clean-bathroom", false},
+	}
 	for i, ph := range photos {
-		if err := s.bvPhoto(ctx, env, p.ID, ph.cat, nil, nil, ph.caption, i, ph.cover); err != nil {
+		if err := s.bvPhoto(ctx, env, p.ID, ph.cat, nil, nil, ph.caption, i, ph.cover, ph.img); err != nil {
 			return err
 		}
 	}
+	roomImg := map[string][]string{"standard": {"hotel-room", "clean-bathroom"}, "deluxe": {"hotel-room", "apartment-living"}, "executive": {"hotel-suite", "apartment-lounge"}, "suite": {"hotel-suite", "apartment-living", "apartment-kitchen"}}
 	for i, k := range []string{"standard", "deluxe", "executive", "suite"} {
 		id := rtIDs[k]
-		if err := s.bvPhoto(ctx, env, p.ID, "room", &id, nil, "Kamar "+k, 10+i, false); err != nil {
-			return err
+		for j, img := range roomImg[k] {
+			if err := s.bvPhoto(ctx, env, p.ID, "room", &id, nil, "Kamar "+k, 10+i*4+j, false, img); err != nil {
+				return err
+			}
 		}
 	}
 	// add-on (D5): default breakfast & extra bed diaktifkan dengan harga dashboard
