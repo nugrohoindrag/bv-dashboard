@@ -3,7 +3,7 @@ import { API_BASE } from "./config";
 
 export interface PublicApp {
   name: string;
-  app_type: "staff" | "tenant";
+  app_type: "staff" | "tenant" | "customer";
   platform: "android" | "ios" | "other";
   downloadUrl: string;
   status: "active";

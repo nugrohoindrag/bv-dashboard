@@ -38,7 +38,7 @@ func New(d *db.DB) *Service { return &Service{DB: d} }
 type AppDownload struct {
 	ID            uuid.UUID  `json:"id"`
 	Name          string     `json:"name"`
-	AppType       string     `json:"app_type"` // staff | tenant
+	AppType       string     `json:"app_type"` // staff | tenant | customer
 	Platform      string     `json:"platform"` // android | ios | other
 	DownloadURL   string     `json:"download_url"`
 	Status        string     `json:"status"` // active | inactive
@@ -88,7 +88,7 @@ func ValidateDriveURL(raw string) error {
 	return apperr.Validation("Download URL harus berada di domain Google Drive (drive.google.com / docs.google.com)").WithField("download_url", "domain tidak diizinkan")
 }
 
-func validAppType(s string) bool  { return s == "staff" || s == "tenant" }
+func validAppType(s string) bool  { return s == "staff" || s == "tenant" || s == "customer" }
 func validPlatform(s string) bool { return s == "android" || s == "ios" || s == "other" }
 func validStatus(s string) bool   { return s == "active" || s == "inactive" }
 
@@ -145,7 +145,7 @@ func (s *Service) Create(ctx context.Context, in Input) (*AppDownload, error) {
 	}
 	appType := strings.ToLower(deref(in.AppType))
 	if !validAppType(appType) {
-		return nil, apperr.Validation("App Type harus staff|tenant").WithField("app_type", "tidak valid")
+		return nil, apperr.Validation("App Type harus staff|tenant|customer").WithField("app_type", "tidak valid")
 	}
 	platform := strings.ToLower(deref(in.Platform))
 	if !validPlatform(platform) {
@@ -188,7 +188,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in Input, ifVersion 
 		}
 	}
 	if in.AppType != nil && !validAppType(strings.ToLower(*in.AppType)) {
-		return nil, apperr.Validation("App Type harus staff|tenant").WithField("app_type", "tidak valid")
+		return nil, apperr.Validation("App Type harus staff|tenant|customer").WithField("app_type", "tidak valid")
 	}
 	if in.Platform != nil && !validPlatform(strings.ToLower(*in.Platform)) {
 		return nil, apperr.Validation("Platform harus android|ios|other").WithField("platform", "tidak valid")

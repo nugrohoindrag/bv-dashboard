@@ -13,7 +13,7 @@ import { useAuth } from "@/lib/auth";
 interface AppDownload {
   id: string;
   name: string;
-  app_type: "staff" | "tenant";
+  app_type: "staff" | "tenant" | "customer";
   platform: "android" | "ios" | "other";
   download_url: string;
   status: "active" | "inactive";
@@ -23,7 +23,7 @@ interface AppDownload {
   version: number;
 }
 
-const APP_TYPE_LABEL = { staff: "Staff App", tenant: "Tenant App" } as const;
+const APP_TYPE_LABEL = { staff: "Staff App", tenant: "Tenant App", customer: "Customer App (BVRooms)" } as const;
 const PLATFORM_LABEL = { android: "Android", ios: "iOS", other: "Lainnya" } as const;
 const DRIVE_HOSTS = ["drive.google.com", "docs.google.com", "drive.usercontent.google.com"];
 
@@ -101,7 +101,7 @@ function AppDialog({ item, onClose, onSaved }: { item: AppDownload | null; onClo
   });
   const [busy, setBusy] = useState(false);
   const [urlError, setUrlError] = useState<string | null>(null);
-  const suggestName = (t: "staff" | "tenant") => (t === "staff" ? "BuildingVision Staff App" : "BuildingVision Tenant App");
+  const suggestName = (t: "staff" | "tenant" | "customer") => (t === "staff" ? "BuildingVision Staff App" : t === "tenant" ? "BuildingVision Tenant App" : "BVRooms Customer App");
 
   const save = async () => {
     if (!form.name.trim()) return toast.error(new Error("App Name wajib diisi"));
@@ -130,9 +130,10 @@ function AppDialog({ item, onClose, onSaved }: { item: AppDownload | null; onClo
       <DialogContent side="right" title={item ? `App Download · ${item.name}` : "Add App"} description="Tautan Google Drive yang ditampilkan di halaman Download Apps website.">
         <div className="space-y-4">
           <Field label="App Type" required>
-            <NativeSelect value={form.app_type} onChange={(e) => { const t = e.target.value as "staff" | "tenant"; setForm((f) => ({ ...f, app_type: t, name: f.name === "" || f.name === suggestName(f.app_type) ? suggestName(t) : f.name })); }}>
+            <NativeSelect value={form.app_type} onChange={(e) => { const t = e.target.value as "staff" | "tenant" | "customer"; setForm((f) => ({ ...f, app_type: t, name: f.name === "" || f.name === suggestName(f.app_type) ? suggestName(t) : f.name })); }}>
               <option value="staff">Staff App (staf & tim operasional)</option>
               <option value="tenant">Tenant App (tenant, penghuni, tamu)</option>
+              <option value="customer">Customer App — BVRooms (booking kamar & unit)</option>
             </NativeSelect>
           </Field>
           <Field label="App Name" required><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={suggestName(form.app_type)} /></Field>

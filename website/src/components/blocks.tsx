@@ -150,6 +150,7 @@ export function Quote({ quote, name, role, tone }: { quote: string; name: string
 const APP_COPY = {
   staff: { title: "Staff App", who: "For building staff and operational teams.", icon: "engineering", points: ["Tasks, work orders, and checklists", "QR checkpoint scans and photo evidence", "Works offline and syncs when back online"] },
   tenant: { title: "Tenant App", who: "For tenants, residents, and guests.", icon: "apartment", points: ["Report issues and follow progress", "Book facilities and register visitors", "View bills and announcements"] },
+  customer: { title: "Customer App (BVRooms)", who: "For hotel guests and daily-rental customers.", icon: "hotel", points: ["Browse rooms and units, see live availability", "Book with add-ons and pay by transfer or on arrival", "Track booking status, directions, and reviews"] },
 } as const;
 
 export function useApps() {
@@ -167,8 +168,8 @@ export function useApps() {
 export function DownloadCards({ apps, loading, error, compact }: { apps: PublicApp[] | null; loading: boolean; error: boolean; compact?: boolean }) {
   const platformLabel = (p: PublicApp["platform"]) => (p === "android" ? "Android" : p === "ios" ? "iOS" : "Other");
   return (
-    <div className="grid gap-5 md:grid-cols-2">
-      {(["staff", "tenant"] as const).map((type) => {
+    <div className="grid gap-5 md:grid-cols-3">
+      {(["staff", "tenant", "customer"] as const).map((type) => {
         const c = APP_COPY[type];
         const links = (apps ?? []).filter((a) => a.app_type === type);
         return (
