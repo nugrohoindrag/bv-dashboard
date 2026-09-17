@@ -6,7 +6,7 @@ import { BuildingVisionLogo } from "@bv/logo";
 import { Icon } from "./Icon";
 import { ButtonLink, Container, cn } from "./ui";
 import { COMPANY, LEGAL, PLATFORM, RESOURCES, SOLUTIONS, type NavLeaf } from "@/content/site";
-import { LINKS, SITE_NAME, TAGLINE, signupHref } from "@/lib/config";
+import { LINKS, SITE_NAME, TAGLINE, signupHref, SHOW_PRICING } from "@/lib/config";
 import { track } from "@/lib/analytics";
 
 function Dropdown({ label, items, to, wide }: { label: string; items: NavLeaf[]; to: string; wide?: boolean }) {
@@ -52,7 +52,7 @@ export function Header() {
         <nav className="hidden items-center gap-0.5 lg:flex" aria-label="Main">
           <Dropdown label="Solutions" items={SOLUTIONS} to="/solutions/hotel" />
           <Dropdown label="Platform" items={PLATFORM} to="/platform" wide />
-          <NavLink to="/pricing" className={({ isActive }) => cn("inline-flex h-10 items-center rounded-[var(--radius-pill)] px-3 text-sm font-medium hover:bg-surface-container-low", isActive ? "text-primary" : "text-on-surface")}>Pricing</NavLink>
+          {SHOW_PRICING && <NavLink to="/pricing" className={({ isActive }) => cn("inline-flex h-10 items-center rounded-[var(--radius-pill)] px-3 text-sm font-medium hover:bg-surface-container-low", isActive ? "text-primary" : "text-on-surface")}>Pricing</NavLink>}
           <Dropdown label="Resources" items={RESOURCES} to="/resources" />
           <NavLink to="/download" className={({ isActive }) => cn("inline-flex h-10 items-center gap-1 rounded-[var(--radius-pill)] px-3 text-sm font-medium hover:bg-surface-container-low", isActive ? "text-primary" : "text-on-surface")}><Icon name="download" size={18} /> Download Apps</NavLink>
         </nav>
@@ -73,7 +73,7 @@ export function Header() {
           <MobileGroup title="Solutions" items={SOLUTIONS} />
           <MobileGroup title="Platform" items={PLATFORM} />
           <MobileGroup title="Resources" items={RESOURCES} />
-          <MobileGroup title="More" items={[{ to: "/pricing", label: "Pricing" }, { to: "/download", label: "Download Apps" }, { to: "/about", label: "About" }, { to: "/security", label: "Security & Trust" }, { to: "/book-a-demo", label: "Book a Demo" }]} />
+          <MobileGroup title="More" items={[...(SHOW_PRICING ? [{ to: "/pricing", label: "Pricing" }] : []), { to: "/download", label: "Download Apps" }, { to: "/about", label: "About" }, { to: "/security", label: "Security & Trust" }, { to: "/book-a-demo", label: "Book a Demo" }]} />
         </div>
       )}
     </header>

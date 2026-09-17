@@ -1,4 +1,5 @@
 // Struktur situs (Website PRD §4–§5, §12): navigasi, solutions, platform pages. Sumber tunggal untuk header, footer, sitemap.
+import { SHOW_PRICING } from "@/lib/config";
 export interface NavLeaf { to: string; label: string; blurb?: string; icon?: string }
 
 export const SOLUTIONS: NavLeaf[] = [
@@ -29,7 +30,7 @@ export const RESOURCES: NavLeaf[] = [
 export const COMPANY: NavLeaf[] = [
   { to: "/about", label: "About" },
   { to: "/security", label: "Security & Trust" },
-  { to: "/pricing", label: "Pricing" },
+  ...(SHOW_PRICING ? [{ to: "/pricing", label: "Pricing" }] : []),
   { to: "/book-a-demo", label: "Book a Demo" },
   { to: "/download", label: "Download Apps" },
 ];
@@ -45,7 +46,7 @@ export const ALL_ROUTES: string[] = [
   ...SOLUTIONS.map((s) => s.to),
   "/platform",
   ...PLATFORM.map((p) => p.to),
-  "/pricing",
+  ...(SHOW_PRICING ? ["/pricing"] : []),
   "/resources",
   ...RESOURCES.map((r) => r.to),
   "/download",

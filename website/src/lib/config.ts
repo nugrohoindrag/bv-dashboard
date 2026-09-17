@@ -3,6 +3,8 @@
 export const SITE_URL = (import.meta.env.VITE_SITE_URL as string | undefined)?.replace(/\/$/, "") || "https://buildingvision.id";
 export const APP_URL = (import.meta.env.VITE_APP_URL as string | undefined)?.replace(/\/$/, "") || "http://localhost:5173";
 // API publik: same-origin (/api → Caddy/Vite proxy) atau absolut lewat VITE_API_URL
+// Halaman & seksi Pricing disembunyikan sampai harga final (VITE_SHOW_PRICING=true untuk menampilkan).
+export const SHOW_PRICING = (import.meta.env.VITE_SHOW_PRICING as string | undefined) === "true";
 export const API_BASE = ((import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "") || "") + "/api/v1";
 
 export const SITE_NAME = "BuildingVision";

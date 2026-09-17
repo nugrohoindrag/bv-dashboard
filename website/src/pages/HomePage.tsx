@@ -10,7 +10,7 @@ import { Icon } from "@/components/Icon";
 import { ButtonLink, Card, Check, Eyebrow, Heading, Lead, Section, cn } from "@/components/ui";
 import { SOLUTIONS, PLATFORM } from "@/content/site";
 import { HOME_FAQ } from "@/content/faq";
-import { SITE_URL, TRIAL_DAYS, signupHref } from "@/lib/config";
+import { SITE_URL, TRIAL_DAYS, signupHref, SHOW_PRICING } from "@/lib/config";
 import { track } from "@/lib/analytics";
 import { PlansPreview } from "@/components/PlansPreview";
 
@@ -182,12 +182,14 @@ export default function HomePage() {
       <StatRow items={[{ value: "3", label: "Property profiles on one platform" }, { value: "9", label: "Operational modules" }, { value: "Offline", label: "Staff App keeps working without signal" }, { value: "14 days", label: "Free trial, no credit card" }]} />
       <Quote quote="We stopped asking 'did anyone check?'. The answer is on the timeline, with a photo and a time." name="Property operations lead" role="pilot customer, mixed-use building" tone="muted" />
 
-      {/* Pricing */}
+      {/* Pricing (disembunyikan sampai harga final — SHOW_PRICING) */}
+      {SHOW_PRICING && (
       <Section>
         <div className="max-w-2xl"><Eyebrow>Pricing</Eyebrow><Heading>Simple plans per property</Heading><Lead>Start with a free trial. Choose a plan when your team is ready. No surprises.</Lead></div>
         <div className="mt-10"><PlansPreview /></div>
         <div className="mt-6"><ButtonLink to="/pricing" variant="secondary" icon="arrow_forward">See full pricing</ButtonLink></div>
       </Section>
+      )}
 
       {/* Security & Trust */}
       <Section tone="muted">

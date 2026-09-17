@@ -5,6 +5,7 @@ import HomePage from "./pages/HomePage";
 import SolutionPage from "./pages/SolutionPage";
 import PlatformPage, { PlatformIndexPage } from "./pages/PlatformPage";
 import PricingPage from "./pages/PricingPage";
+import { SHOW_PRICING } from "@/lib/config";
 import DownloadPage from "./pages/DownloadPage";
 import ResourcePage, { ResourcesIndexPage } from "./pages/ResourcesPages";
 import { AboutPage, BookDemoPage, LegalPage, LoginRedirect, NotFoundPage, SecurityPage, StartTrialRedirect } from "./pages/misc";
@@ -18,7 +19,7 @@ export function App() {
         <Route path="/solutions/:slug" element={<SolutionPage />} />
         <Route path="/platform" element={<PlatformIndexPage />} />
         <Route path="/platform/:slug" element={<PlatformPage />} />
-        <Route path="/pricing" element={<PricingPage />} />
+        <Route path="/pricing" element={SHOW_PRICING ? <PricingPage /> : <Navigate to="/" replace />} />
         <Route path="/resources" element={<ResourcesIndexPage />} />
         <Route path="/resources/:section" element={<ResourcePage />} />
         <Route path="/download" element={<DownloadPage />} />
