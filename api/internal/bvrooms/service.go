@@ -49,8 +49,8 @@ type Config struct {
 	VAPIDPublicKey string        // dikirim ke client (pushManager.subscribe); kosong = Web Push nonaktif
 	// Vendor SMS di-hold (D3): OTPStaticCode = kode tetap untuk semua nomor (mis. "1234", hanya demo/pilot — nonaktifkan saat vendor
 	// terpasang); OTPExposeCode = kembalikan dev_code di respons walau bukan env local (kode tampil di layar).
-	OTPStaticCode  string
-	OTPExposeCode  bool
+	OTPStaticCode string
+	OTPExposeCode bool
 }
 
 type Service struct {
