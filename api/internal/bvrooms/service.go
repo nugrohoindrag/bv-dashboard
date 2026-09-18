@@ -24,6 +24,7 @@ import (
 	"github.com/buildingvision/api/internal/iam"
 	"github.com/buildingvision/api/internal/platform/apperr"
 	"github.com/buildingvision/api/internal/platform/authctx"
+	"github.com/buildingvision/api/internal/platform/cache"
 	"github.com/buildingvision/api/internal/platform/db"
 	"github.com/buildingvision/api/internal/platform/jobs"
 	"github.com/buildingvision/api/internal/platform/storage"
@@ -55,6 +56,8 @@ type Config struct {
 	// mengatur PIN (pin_hash NULL), bawaan "1234".
 	AuthMethod string
 	DefaultPIN string
+	// MaxImageBytes: batas foto (bukti transfer gambar, foto listing). 0 = 500 KB.
+	MaxImageBytes int64
 }
 
 type Service struct {
@@ -69,7 +72,7 @@ type Service struct {
 	Cfg     Config
 
 	signer     *customerSigner
-	orgCache   sync.Map // slug → orgEntry
+	orgCache   *cache.TTLMap[string, orgEntry] // slug → org (TTL 60 s)
 	ipLimiter  *ipLimiter
 	nowFn      func() time.Time
 	uploadTTL  time.Duration
@@ -95,6 +98,9 @@ func New(d *db.DB, j jobs.Enqueuer, store storage.Storage, hotelSvc *hotel.Servi
 	if cfg.OTPResend == 0 {
 		cfg.OTPResend = 60 * time.Second
 	}
+	if cfg.MaxImageBytes <= 0 {
+		cfg.MaxImageBytes = 500 * 1024
+	}
 	if cfg.AuthMethod != "otp" {
 		cfg.AuthMethod = "pin"
 	}
@@ -106,7 +112,8 @@ func New(d *db.DB, j jobs.Enqueuer, store storage.Storage, hotelSvc *hotel.Servi
 	}
 	priv, pub := signer.Keys()
 	s := &Service{DB: d, Jobs: j, Storage: store, Hotel: hotelSvc, Profile: prof, Log: log, Cfg: cfg,
-		signer: newCustomerSigner(priv, pub), ipLimiter: newIPLimiter(20, time.Hour), nowFn: time.Now, uploadTTL: 15 * time.Minute, downloadTT: time.Hour}
+		signer: newCustomerSigner(priv, pub), ipLimiter: newIPLimiter(20, time.Hour), nowFn: time.Now, uploadTTL: 15 * time.Minute, downloadTT: time.Hour,
+		orgCache: cache.New[string, orgEntry](time.Minute)}
 	s.SMS = MockSMS{Log: log}
 	s.Pusher = nil // diisi VAPIDPusher oleh app bila kunci tersedia; nil = notifikasi inbox saja
 	if hotelSvc != nil {
@@ -154,11 +161,8 @@ func (s *Service) ResolveOrg(ctx context.Context, slug string) (uuid.UUID, strin
 	if slug == "" {
 		return uuid.Nil, "", apperr.Validation("organization_slug wajib")
 	}
-	if v, ok := s.orgCache.Load(slug); ok {
-		e := v.(orgEntry)
-		if time.Since(e.loaded) < time.Minute {
-			return e.id, e.name, nil
-		}
+	if e, ok := s.orgCache.Get(slug); ok {
+		return e.id, e.name, nil
 	}
 	var id uuid.UUID
 	var name string
@@ -166,7 +170,7 @@ func (s *Service) ResolveOrg(ctx context.Context, slug string) (uuid.UUID, strin
 	if err := s.DB.Pool.QueryRow(ctx, `SELECT id, name, is_active FROM organizations WHERE slug = $1`, slug).Scan(&id, &name, &active); err != nil || !active {
 		return uuid.Nil, "", apperr.NotFound("Organization")
 	}
-	s.orgCache.Store(slug, orgEntry{id: id, name: name, loaded: time.Now()})
+	s.orgCache.Set(slug, orgEntry{id: id, name: name, loaded: time.Now()})
 	return id, name, nil
 }
 

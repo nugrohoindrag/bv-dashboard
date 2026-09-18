@@ -15,6 +15,7 @@ import (
 	"github.com/buildingvision/api/internal/iam/catalog"
 	"github.com/buildingvision/api/internal/platform/apperr"
 	"github.com/buildingvision/api/internal/platform/authctx"
+	"github.com/buildingvision/api/internal/platform/cache"
 	"github.com/buildingvision/api/internal/platform/db"
 )
 
@@ -24,7 +25,8 @@ type Service struct {
 	RefreshTTL time.Duration
 	Catalog    *catalog.Catalog
 
-	permCache    sync.Map // userID -> cachedPrincipal
+	permOnce     sync.Once
+	permCache    *cache.TTLMap[uuid.UUID, cachedPrincipal] // userID -> principal (TTL 60 s, disapu otomatis)
 	loginLimiter *loginLimiter
 }
 
@@ -178,7 +180,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, *authct
 	if err != nil {
 		return nil, nil, err
 	}
-	s.permCache.Delete(principal.UserID)
+	s.principalCache().Delete(principal.UserID)
 	return pair, principal, nil
 }
 
@@ -207,7 +209,7 @@ func (s *Service) Refresh(ctx context.Context, rawRefresh, client, ip, ua string
 						_, _ = tx2.Exec(ctx, `UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, reuseUser)
 						return audit.LogAs(ctx, tx2, reuseOrg, &reuseUser, ip, ua, audit.AuditEntry{Action: audit.AuditTokenReuse, EntityType: "session", EntityID: &sid})
 					})
-					s.permCache.Delete(reuseUser)
+					s.principalCache().Delete(reuseUser)
 					return apperr.Unauthorized("Sesi tidak valid; silakan login ulang")
 				}
 				return apperr.Unauthorized("Sesi tidak ditemukan")
@@ -257,7 +259,7 @@ func (s *Service) Logout(ctx context.Context, rawRefresh string) error {
 			_, _ = tx.Exec(ctx, `UPDATE sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL`, p.SessionID)
 			_, _ = tx.Exec(ctx, `DELETE FROM device_tokens WHERE user_id = $1 AND device_id = (SELECT device_id FROM sessions WHERE id = $2)`, p.UserID, p.SessionID)
 			_ = audit.LogAs(ctx, tx, p.OrganizationID, &p.UserID, p.IP, p.UserAgent, audit.AuditEntry{Action: audit.AuditLogout, EntityType: "user", EntityID: &p.UserID})
-			s.permCache.Delete(p.UserID)
+			s.principalCache().Delete(p.UserID)
 		}
 		return nil
 	})
@@ -282,13 +284,10 @@ func (s *Service) PrincipalFromClaims(ctx context.Context, c *Claims) (*authctx.
 		return nil, apperr.Unauthorized("token tidak valid")
 	}
 	sid, _ := uuid.Parse(c.Sid)
-	if v, ok := s.permCache.Load(userID); ok {
-		cp := v.(cachedPrincipal)
-		if cp.version == c.Ver && time.Since(cp.loaded) < 60*time.Second {
-			cl := *cp.p
-			cl.SessionID = sid
-			return &cl, nil
-		}
+	if cp, ok := s.principalCache().Get(userID); ok && cp.version == c.Ver {
+		cl := *cp.p
+		cl.SessionID = sid
+		return &cl, nil
 	}
 	var p *authctx.Principal
 	err = s.DB.WithOrgTx(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
@@ -316,11 +315,19 @@ func (s *Service) PrincipalFromClaims(ctx context.Context, c *Claims) (*authctx.
 	if err != nil {
 		return nil, err
 	}
-	s.permCache.Store(userID, cachedPrincipal{p: p, loaded: time.Now(), version: c.Ver})
+	s.principalCache().Set(userID, cachedPrincipal{p: p, loaded: time.Now(), version: c.Ver})
 	return p, nil
 }
 
-func (s *Service) InvalidateUser(userID uuid.UUID) { s.permCache.Delete(userID) }
+const principalCacheTTL = 60 * time.Second
+
+// principalCache: lazy agar Service yang dibuat literal (test) tetap punya cache.
+func (s *Service) principalCache() *cache.TTLMap[uuid.UUID, cachedPrincipal] {
+	s.permOnce.Do(func() { s.permCache = cache.New[uuid.UUID, cachedPrincipal](principalCacheTTL) })
+	return s.permCache
+}
+
+func (s *Service) InvalidateUser(userID uuid.UUID) { s.principalCache().Delete(userID) }
 
 func (s *Service) loadPrincipalTx(ctx context.Context, tx pgx.Tx, userID, orgID, sid uuid.UUID, ver int) (*authctx.Principal, error) {
 	p := &authctx.Principal{UserID: userID, OrganizationID: orgID, SessionID: sid, PermissionVersion: ver}
@@ -427,7 +434,8 @@ func (l *loginLimiter) Allow(ip string) bool {
 var ErrNotFound = errors.New("not found")
 
 func (s *Service) invalidateAll() {
-	s.permCache.Range(func(k, _ any) bool { s.permCache.Delete(k); return true })
+	s.permOnce.Do(func() {})
+	s.permCache = cache.New[uuid.UUID, cachedPrincipal](principalCacheTTL)
 }
 
 // LoadPrincipal: principal penuh untuk user (dipakai worker export agar permission tetap berlaku).
@@ -478,6 +486,6 @@ func (s *Service) IssueSessionTx(ctx context.Context, tx pgx.Tx, userID, orgID u
 		return nil, err
 	}
 	_ = audit.LogAs(ctx, tx, orgID, &userID, ip, ua, audit.AuditEntry{Action: audit.AuditLogin, EntityType: "user", EntityID: &userID, EntityLabel: fullName, After: map[string]any{"client": client, "via": "email_verification"}})
-	s.permCache.Delete(userID)
+	s.principalCache().Delete(userID)
 	return &TokenPair{AccessToken: access, AccessExpiresAt: exp, RefreshToken: raw, RefreshExpiresAt: now.Add(s.RefreshTTL), TokenType: "Bearer"}, nil
 }

@@ -227,6 +227,8 @@ const PRIMARY: Record<string, true> = { start: true, complete: true, resolve: tr
 
 const ACTION_ICON: Record<string, string> = { start: "play_arrow", resume: "play_arrow", complete: "check_circle", close: "task_alt", verify: "verified", hold: "pause_circle", reopen: "replay", cancel: "cancel", schedule: "event", acknowledge: "mark_email_read", resolve: "done_all", wait_tenant: "hourglass_top", escalate: "priority_high", skip: "skip_next" };
 
+const NON_TRANSITION = new Set(["assign", "unassign", "update", "answer", "scan", "comment", "attach", "view", "create_work_order", "create_incident", "acknowledge_conflict"]);
+
 export function TransitionActions({ objectType, item, onAssign, compact, size = "sm" }: { objectType: ActionObjectType; item: { id: string; allowed_actions: string[]; status: string; assignee?: { user_id: string | null; team_id: string | null } }; onAssign?: () => void; compact?: boolean; size?: "sm" | "md" }) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -234,7 +236,10 @@ export function TransitionActions({ objectType, item, onAssign, compact, size = 
   const [pending, setPending] = useState<string | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [schedule, setSchedule] = useState({ start: "", due: "" });
-  const actions = item.allowed_actions.filter((a) => a !== "assign" && a !== "unassign" && a !== "update" && a !== "answer" && a !== "scan");
+  // Hanya transisi status yang menjadi tombol. `allowed_actions` server juga memuat aksi non-transisi
+  // (comment/attach/view/update/create_*) — sebelumnya ikut dirender sebagai tombol "comment"/"attach"/"Lihat"
+  // yang memanggil POST /{resource}/{id}/comment dan gagal.
+  const actions = item.allowed_actions.filter((a) => !NON_TRANSITION.has(a));
   const run = async (action: string, body: Record<string, unknown> = {}) => {
     try {
       await transition.mutateAsync({ id: item.id, action, body });

@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +12,7 @@ import (
 	"github.com/buildingvision/api/internal/audit"
 	"github.com/buildingvision/api/internal/platform/apperr"
 	"github.com/buildingvision/api/internal/platform/authctx"
+	"github.com/buildingvision/api/internal/platform/cache"
 	"github.com/buildingvision/api/internal/platform/httpx"
 	"github.com/buildingvision/api/internal/platform/mailer"
 )
@@ -173,28 +173,21 @@ func (s *Service) Cancel(ctx context.Context, reason string) (*TrialInfo, error)
 
 // ---------- Trial guard: workspace expired/cancelled hanya boleh membaca (§31 "Trial expiration is handled") ----------
 
-type trialCacheEntry struct {
-	locked bool
-	at     time.Time
-}
-
-var trialCache sync.Map // orgID → trialCacheEntry
+// trialCache: orgID → locked (TTL 60 s; entri org yang terhapus disapu otomatis).
+var trialCache = cache.New[uuid.UUID, bool](60 * time.Second)
 
 func (s *Service) invalidateTrial(orgID uuid.UUID) { trialCache.Delete(orgID) }
 
 func (s *Service) isLocked(ctx context.Context, orgID uuid.UUID) bool {
-	if v, ok := trialCache.Load(orgID); ok {
-		e := v.(trialCacheEntry)
-		if time.Since(e.at) < 60*time.Second {
-			return e.locked
-		}
+	if locked, ok := trialCache.Get(orgID); ok {
+		return locked
 	}
 	var status string
 	if err := s.DB.Pool.QueryRow(ctx, `SELECT trial_status FROM organizations WHERE id = $1`, orgID).Scan(&status); err != nil {
 		return false
 	}
 	locked := status == TrialExpired || status == TrialCancelled
-	trialCache.Store(orgID, trialCacheEntry{locked: locked, at: time.Now()})
+	trialCache.Set(orgID, locked)
 	return locked
 }
 

@@ -127,7 +127,7 @@ func New(opts Options) (*App, error) {
 	a.IAM = iam.NewService(opts.DB, signer, opts.Cfg.RefreshTokenTTL)
 	a.Profile = profile.New(opts.DB, opts.Jobs)
 	a.Property = &property.Service{DB: opts.DB, Jobs: opts.Jobs}
-	a.Attachments = &attachments.Service{DB: opts.DB, Storage: opts.Storage, Jobs: opts.Jobs, UploadTTL: opts.Cfg.PresignUploadTTL, DownloadTTL: opts.Cfg.PresignDownloadTTL, MaxBytes: opts.Cfg.MaxUploadBytes}
+	a.Attachments = &attachments.Service{DB: opts.DB, Storage: opts.Storage, Jobs: opts.Jobs, UploadTTL: opts.Cfg.PresignUploadTTL, DownloadTTL: opts.Cfg.PresignDownloadTTL, MaxBytes: opts.Cfg.MaxUploadBytes, MaxImageBytes: opts.Cfg.MaxImageBytes}
 	a.Operations = operations.NewService(opts.DB, opts.Jobs, a.Attachments)
 	a.Operations.RegisterHook("work_order:*", operations.FindingHook(a.Operations))
 	a.Operations.RegisterHook("task:*", operations.FindingHook(a.Operations))

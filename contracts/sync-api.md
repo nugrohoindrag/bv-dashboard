@@ -38,7 +38,7 @@ Isi: item milik user/team-nya yang **dijadwalkan hari ini (timezone property)** 
 | `checklist_item_result` | task, work_order | `{ item_id, result_value: ok|not_ok|na|yes|no, result_number, result_text, attachment_id|client_attachment_id, note, create_finding, finding_severity }` | `{run_id}` |
 | `checkpoint_scan` | task (patrol) | `{ checkpoint_id | qr_code, scan_method: qr|manual, gps_lat, gps_lng, gps_status, note, client_scan_id }` | — |
 | `add_comment` | task, work_order, service_request, incident, finding | `{ body }` | `{comment_id}` |
-| `attach_photo` | semua di atas | `{ client_attachment_id, attachment_type: before|after|photo|checklist, content_type, size_bytes, sha256, captured_at, gps_lat, gps_lng, gps_status: captured|unavailable|denied, caption }` | `{ attachment_id, upload_url, storage_key, confirm_path }` |
+| `attach_photo` | semua di atas | `{ client_attachment_id, attachment_type: photo|photo_before|photo_after|checklist_item_photo (alias: before|after|checklist), content_type, size_bytes, sha256, captured_at, gps_lat, gps_lng, gps_status: captured|unavailable|denied, caption }` | `{ attachment_id, upload_url, storage_key, confirm_path }` |
 | `add_finding` | task, work_order | `CreateFindingInput` (`finding_type`, `title`, `severity`, `location_id`, `asset_id`, `attachment_id`) — `source_*` otomatis | `{finding_id}` |
 | `report_incident` | task | `CreateIncidentInput` | `{incident_id}` |
 

@@ -28,11 +28,45 @@ type Service struct {
 	UploadTTL   time.Duration
 	DownloadTTL time.Duration
 	MaxBytes    int64
+	// MaxImageBytes: batas foto (image/*). Klien wajib mengompres ke ≤ batas ini sebelum unggah;
+	// server tetap menolak di presign (size_bytes) dan confirm (ukuran nyata di storage). 0 = pakai MaxBytes.
+	MaxImageBytes int64
 	// ObjectAccess memvalidasi user boleh menyentuh object (object_type, object_id) → property_id.
 	ObjectAccess func(ctx context.Context, tx pgx.Tx, objectType string, objectID uuid.UUID, write bool) error
 }
 
 var allowedTypes = map[string]bool{"photo": true, "photo_before": true, "photo_after": true, "checklist_item_photo": true, "document": true, "signature": true}
+
+// LimitFor: batas byte per content type — foto memakai MaxImageBytes (default 500 KB), lainnya MaxBytes.
+func (s *Service) LimitFor(contentType string) int64 {
+	if IsImage(contentType) && s.MaxImageBytes > 0 && s.MaxImageBytes < s.MaxBytes {
+		return s.MaxImageBytes
+	}
+	return s.MaxBytes
+}
+
+// IsImage: content type foto.
+func IsImage(contentType string) bool { return strings.HasPrefix(contentType, "image/") }
+
+// AllowedType: nilai attachment_type yang diterima kolom.
+func AllowedType(t string) bool { return allowedTypes[t] }
+
+// NormalizeType: alias pendek dari kontrak sync (`before|after|checklist`, contracts/sync-api.md) →
+// nilai kolom `attachments.attachment_type` (CHECK constraint migrasi 00004).
+func NormalizeType(t string) string {
+	switch t {
+	case "", "photo":
+		return "photo"
+	case "before":
+		return "photo_before"
+	case "after":
+		return "photo_after"
+	case "checklist":
+		return "checklist_item_photo"
+	}
+	return t
+}
+
 var allowedContent = map[string]string{"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
 
 type PresignInput struct {
@@ -57,6 +91,7 @@ type PresignOutput struct {
 
 func (s *Service) Presign(ctx context.Context, in PresignInput) (*PresignOutput, error) {
 	p := authctx.Must(ctx)
+	in.AttachmentType = NormalizeType(in.AttachmentType)
 	if !allowedTypes[in.AttachmentType] {
 		return nil, apperr.Validation("attachment_type tidak valid")
 	}
@@ -64,8 +99,8 @@ func (s *Service) Presign(ctx context.Context, in PresignInput) (*PresignOutput,
 	if !ok {
 		return nil, apperr.Validation("content_type harus image/jpeg|image/png|image/webp|application/pdf")
 	}
-	if in.SizeBytes <= 0 || in.SizeBytes > s.MaxBytes {
-		return nil, apperr.Validation(fmt.Sprintf("size_bytes harus 1..%d", s.MaxBytes))
+	if limit := s.LimitFor(in.ContentType); in.SizeBytes <= 0 || in.SizeBytes > limit {
+		return nil, apperr.Validation(fmt.Sprintf("size_bytes harus 1..%d", limit)).WithField("size_bytes", fmt.Sprintf("maksimal %d KB", limit/1024))
 	}
 	if in.ObjectType == "" || in.ObjectID == uuid.Nil {
 		return nil, apperr.Validation("object_type dan object_id wajib")
@@ -149,9 +184,9 @@ func (s *Service) Confirm(ctx context.Context, id uuid.UUID, in ConfirmInput) (*
 		if err != nil {
 			return apperr.Conflict("UPLOAD_NOT_FOUND", "File belum diunggah ke storage")
 		}
-		if size > s.MaxBytes {
+		if limit := s.LimitFor(a.ContentType); size > limit {
 			_, _ = tx.Exec(ctx, `UPDATE attachments SET status = 'failed' WHERE id = $1`, id)
-			return apperr.Validation("ukuran file melebihi batas")
+			return apperr.Validation(fmt.Sprintf("ukuran file melebihi batas %d KB", limit/1024))
 		}
 		captured := time.Now().UTC()
 		if in.CapturedAt != nil {
@@ -359,6 +394,20 @@ func CountByType(ctx context.Context, q db.Querier, objectType string, objectID 
 		statuses = append(statuses, "pending")
 	}
 	err := q.QueryRow(ctx, `SELECT count(*) FROM attachments WHERE object_type = $1 AND object_id = $2 AND attachment_type = $3 AND status = ANY($4) AND deleted_at IS NULL`, objectType, objectID, attachmentType, statuses).Scan(&n)
+	return n, err
+}
+
+// PhotoTypes: semua tipe foto (evidence Task menerima tipe apa pun; WO menuntut photo_after).
+var PhotoTypes = []string{"photo", "photo_before", "photo_after", "checklist_item_photo"}
+
+// CountPhotos: jumlah attachment bertipe foto apa pun (lihat PhotoTypes).
+func CountPhotos(ctx context.Context, q db.Querier, objectType string, objectID uuid.UUID, includePending bool) (int, error) {
+	var n int
+	statuses := []string{"ready"}
+	if includePending {
+		statuses = append(statuses, "pending")
+	}
+	err := q.QueryRow(ctx, `SELECT count(*) FROM attachments WHERE object_type = $1 AND object_id = $2 AND attachment_type = ANY($3) AND status = ANY($4) AND deleted_at IS NULL`, objectType, objectID, PhotoTypes, statuses).Scan(&n)
 	return n, err
 }
 

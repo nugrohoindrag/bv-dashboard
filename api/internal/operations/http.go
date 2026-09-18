@@ -158,6 +158,10 @@ func parseListFilter(r *http.Request) (ListFilter, error) {
 		b := v == "true"
 		f.SLARisk = &b
 	}
+	if v := q.Get("undated"); v != "" {
+		b := v == "true"
+		f.Undated = &b
+	}
 	if v := q.Get("open"); v != "" {
 		b := v == "true"
 		f.Open = &b

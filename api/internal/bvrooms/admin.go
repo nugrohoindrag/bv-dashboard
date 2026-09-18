@@ -349,8 +349,8 @@ func (s *Service) PhotoPresign(ctx context.Context, propertyID uuid.UUID, in Pho
 	if !ok || in.ContentType == "application/pdf" {
 		return nil, apperr.Validation("content_type harus image/jpeg|image/png|image/webp")
 	}
-	if in.SizeBytes <= 0 || in.SizeBytes > 10<<20 {
-		return nil, apperr.Validation("size_bytes harus 1..10MB")
+	if in.SizeBytes <= 0 || in.SizeBytes > s.Cfg.MaxImageBytes {
+		return nil, apperr.Validation(fmt.Sprintf("size_bytes harus 1..%d KB", s.Cfg.MaxImageBytes/1024))
 	}
 	p := authctx.Must(ctx)
 	var out *PhotoPresignResult
@@ -388,6 +388,10 @@ func (s *Service) PhotoConfirm(ctx context.Context, propertyID, photoID uuid.UUI
 		size, _, err := s.Storage.Head(ctx, key)
 		if err != nil {
 			return apperr.Conflict("UPLOAD_NOT_FOUND", "File belum diunggah ke storage")
+		}
+		if size > s.Cfg.MaxImageBytes {
+			_, _ = tx.Exec(ctx, `UPDATE bvrooms_property_photos SET status = 'failed' WHERE id = $1`, photoID)
+			return apperr.Validation(fmt.Sprintf("ukuran foto melebihi batas %d KB", s.Cfg.MaxImageBytes/1024))
 		}
 		if isCover {
 			_, _ = tx.Exec(ctx, `UPDATE bvrooms_property_photos SET is_cover = false WHERE property_id = $1 AND id <> $2`, propertyID, photoID)

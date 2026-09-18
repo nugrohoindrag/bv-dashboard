@@ -438,15 +438,18 @@ func (s *Service) GetRun(ctx context.Context, runID uuid.UUID) (*ChecklistRun, e
 }
 
 type AnswerInput struct {
-	ResultValue      *string    `json:"result_value"` // ok | not_ok | na | yes | no
-	ResultNumber     *float64   `json:"result_number"`
-	ResultText       *string    `json:"result_text"`
-	AttachmentID     *uuid.UUID `json:"attachment_id"`
-	Note             *string    `json:"note"`
-	ClientRecordedAt *time.Time `json:"client_recorded_at"`
-	CreateFinding    *bool      `json:"create_finding"` // not_ok → Finding otomatis (PRD §12.4, §15.2)
-	FindingSeverity  *string    `json:"finding_severity"`
-	FromSync         bool       `json:"-"`
+	ResultValue  *string    `json:"result_value"` // ok | not_ok | na | yes | no
+	ResultNumber *float64   `json:"result_number"`
+	ResultText   *string    `json:"result_text"`
+	AttachmentID *uuid.UUID `json:"attachment_id"`
+	// ClientAttachmentID: foto per item dari mobile (attach_photo diantrekan lebih dulu); di-resolve ke AttachmentID
+	// milik user yang sama. Dipakai sync maupun HTTP.
+	ClientAttachmentID *string    `json:"client_attachment_id"`
+	Note               *string    `json:"note"`
+	ClientRecordedAt   *time.Time `json:"client_recorded_at"`
+	CreateFinding      *bool      `json:"create_finding"` // not_ok → Finding otomatis (PRD §12.4, §15.2)
+	FindingSeverity    *string    `json:"finding_severity"`
+	FromSync           bool       `json:"-"`
 }
 
 // AnswerItem: jawaban checklist (C7: jawaban ulang = nilai baru; jawaban lama tetap di activity).
@@ -496,6 +499,12 @@ func (s *Service) AnswerItemTx(ctx context.Context, tx pgx.Tx, itemID uuid.UUID,
 		}
 		if w.Status != "in_progress" && !gi.HasManage {
 			return uuid.Nil, apperr.Conflict("WORKFLOW_GUARD_FAILED", "Checklist hanya dapat diisi saat status In Progress (Start dulu)")
+		}
+	}
+	if in.AttachmentID == nil && in.ClientAttachmentID != nil && *in.ClientAttachmentID != "" {
+		var aid uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT id FROM attachments WHERE uploaded_by = $1 AND client_attachment_id = $2 AND deleted_at IS NULL`, p.UserID, *in.ClientAttachmentID).Scan(&aid); err == nil {
+			in.AttachmentID = &aid
 		}
 	}
 	// validasi per tipe

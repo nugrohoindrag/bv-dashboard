@@ -190,8 +190,12 @@ func (s *Service) ProofPresign(ctx context.Context, code string, in ProofPresign
 	if !ok {
 		return nil, apperr.Validation("content_type harus image/jpeg|image/png|image/webp|application/pdf")
 	}
-	if in.SizeBytes <= 0 || in.SizeBytes > 5<<20 {
-		return nil, apperr.Validation("size_bytes harus 1..5MB")
+	limit := int64(5 << 20)
+	if strings.HasPrefix(in.ContentType, "image/") {
+		limit = s.Cfg.MaxImageBytes
+	}
+	if in.SizeBytes <= 0 || in.SizeBytes > limit {
+		return nil, apperr.Validation(fmt.Sprintf("size_bytes harus 1..%d KB", limit/1024))
 	}
 	var out *ProofPresignResult
 	err = s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {

@@ -243,6 +243,95 @@ func TestOfflineSync(t *testing.T) {
 	if len(bundle.Removed) == 0 {
 		t.Fatal("bundle.removed harus memuat WO yang sudah closed/reassigned")
 	}
+
+	// Bundle harus memuat: WO ad-hoc tanpa tanggal (assigned) dan WO in_progress yang jadwalnya bukan hari ini.
+	var woUndated, woFuture workItem
+	st, body = e.do(spv, http.MethodPost, "/api/v1/work-orders", map[string]any{"work_order_type": "repair", "title": "AC bocor (ad-hoc)", "location_id": e.refs.MechRoomA12, "assignee_user_id": budiID, "requires_evidence": false})
+	e.mustJSON(st, body, 201, &woUndated)
+	st, body = e.do(spv, http.MethodPost, "/api/v1/work-orders", map[string]any{"work_order_type": "repair", "title": "Pompa (mulai kemarin, tempo minggu depan)", "location_id": e.refs.MechRoomA12, "assignee_user_id": budiID, "requires_evidence": false, "scheduled_start_at": now.Add(-48 * time.Hour), "due_at": now.Add(7 * 24 * time.Hour)})
+	e.mustJSON(st, body, 201, &woFuture)
+	st, body = e.do(tech, http.MethodPost, "/api/v1/work-orders/"+woFuture.ID.String()+"/start", map[string]any{"gps_status": "denied"})
+	e.mustJSON(st, body, 200, &woFuture)
+	st, body = e.do(tech, http.MethodGet, "/api/v1/sync/work-bundle?device_id=dev-1", nil)
+	e.mustJSON(st, body, 200, &bundle)
+	inBundle := func(id uuid.UUID) bool {
+		for _, w := range bundle.WorkOrders {
+			if w.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !inBundle(woUndated.ID) {
+		t.Fatal("bundle harus memuat WO assigned tanpa tanggal")
+	}
+	if !inBundle(woFuture.ID) {
+		t.Fatal("bundle harus memuat WO in_progress walau jadwal bukan hari ini")
+	}
+
+	// Checklist item photo_required: mobile mengirim attach_photo (seq n) + checklist_item_result dengan
+	// client_attachment_id (seq n+1) → server menautkan attachment_id sehingga complete tidak diblokir.
+	engMgr := e.login("eng.manager@demo.buildingvision.id")
+	var tpl struct {
+		ID uuid.UUID `json:"id"`
+	}
+	st, body = e.do(engMgr, http.MethodPost, "/api/v1/checklist-templates", map[string]any{
+		"name": "Foto panel", "applies_to": []string{"work_order"},
+		"items": []map[string]any{{"label": "Kondisi panel", "item_type": "ok_notok_na", "is_required": true, "photo_required": true}},
+	})
+	e.mustJSON(st, body, 201, &tpl)
+	st, body = e.do(engMgr, http.MethodPost, "/api/v1/checklist-templates/"+tpl.ID.String()+"/publish", nil)
+	e.mustJSON(st, body, 200, nil)
+	var run struct {
+		ID    uuid.UUID `json:"id"`
+		Items []struct {
+			ID           uuid.UUID  `json:"id"`
+			AttachmentID *uuid.UUID `json:"attachment_id"`
+		} `json:"items"`
+	}
+	st, body = e.do(spv, http.MethodPost, "/api/v1/work-orders/"+woUndated.ID.String()+"/checklist-runs", map[string]any{"template_id": tpl.ID})
+	e.mustJSON(st, body, 201, &run)
+	m8, m9, m10 = uuid.New(), uuid.New(), uuid.New()
+	st, body = e.do(tech, http.MethodPost, "/api/v1/sync/mutations", map[string]any{"device_id": "dev-1", "mutations": []map[string]any{
+		mut(uuid.New(), "work_order", woUndated.ID, "start", 1, map[string]any{"gps_status": "denied"}, now),
+		mut(m8, "work_order", woUndated.ID, "attach_photo", 2, map[string]any{"client_attachment_id": "cl-photo-1", "attachment_type": "checklist", "content_type": "image/jpeg", "size_bytes": 1000, "gps_status": "denied", "checklist_item_id": run.Items[0].ID}, now),
+		mut(m9, "work_order", woUndated.ID, "checklist_item_result", 3, map[string]any{"item_id": run.Items[0].ID, "run_id": run.ID, "result_value": "ok", "client_attachment_id": "cl-photo-1"}, now),
+		mut(m10, "work_order", woUndated.ID, "complete", 4, map[string]any{"completion_notes": "ok"}, now),
+	}})
+	e.mustJSON(st, body, 200, &res)
+	for i, r := range res.Results {
+		if r.Status != "applied" {
+			t.Fatalf("checklist foto via sync: mutation %d harus applied, got %s %s %s", i, r.Status, r.ReasonCode, r.Detail)
+		}
+	}
+	st, body = e.do(spv, http.MethodGet, "/api/v1/work-orders/"+woUndated.ID.String()+"/checklist-runs", nil)
+	var runs struct {
+		Data []struct {
+			Items []struct {
+				AttachmentID *uuid.UUID `json:"attachment_id"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	e.mustJSON(st, body, 200, &runs)
+	if len(runs.Data) == 0 || len(runs.Data[0].Items) == 0 || runs.Data[0].Items[0].AttachmentID == nil {
+		t.Fatalf("attachment_id item checklist harus tertaut dari client_attachment_id: %s", body)
+	}
+
+	// Task requires_evidence: foto tipe apa pun (mobile mengirim alias `before`) memenuhi guard complete.
+	var task workItem
+	st, body = e.do(spv, http.MethodPost, "/api/v1/tasks", map[string]any{"task_type": "inspection", "title": "Cek APAR lantai 12", "location_id": e.refs.MechRoomA12, "assignee_user_id": budiID, "requires_photo": true, "scheduled_start_at": now, "due_at": now.Add(2 * time.Hour)})
+	e.mustJSON(st, body, 201, &task)
+	st, body = e.do(tech, http.MethodPost, "/api/v1/sync/mutations", map[string]any{"device_id": "dev-1", "mutations": []map[string]any{
+		mut(uuid.New(), "task", task.ID, "start", 1, map[string]any{"gps_status": "denied"}, now),
+		mut(uuid.New(), "task", task.ID, "attach_photo", 2, map[string]any{"client_attachment_id": "cl-photo-task-1", "attachment_type": "before", "content_type": "image/jpeg", "size_bytes": 1000, "gps_status": "denied"}, now),
+		mut(uuid.New(), "task", task.ID, "complete", 3, map[string]any{"completion_notes": "ok"}, now),
+	}})
+	e.mustJSON(st, body, 200, &res)
+	for i, r := range res.Results {
+		if r.Status != "applied" {
+			t.Fatalf("task evidence foto before via sync: mutation %d harus applied, got %s %s %s", i, r.Status, r.ReasonCode, r.Detail)
+		}
+	}
 }
 
 // PRD §19 Overview: Today counters, Attention Required CTA, Today's Operations, Building State, Tenant Requests, PM Due, Team Workload.

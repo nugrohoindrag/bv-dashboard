@@ -118,6 +118,7 @@ export function useSearch(q: string, propertyId?: string | null) {
 // ---------- Attachments (presign → PUT → confirm; kompresi ≤1600px di client, TAD §5.13) ----------
 export async function uploadAttachment(file: File, objectType: string, objectId: string, attachmentType: string, onProgress?: (p: number) => void): Promise<T.Attachment> {
   const blob = file.type.startsWith("image/") ? await compressImage(file) : file;
+  if (blob.type.startsWith("image/") && blob.size > MAX_IMAGE_BYTES) throw new Error(`Foto masih ${Math.round(blob.size / 1024)} KB setelah kompresi — batas ${MAX_IMAGE_BYTES / 1024} KB`);
   const presign = await api<{ attachment_id: string; upload_url: string }>("attachments/presign", {
     body: { object_type: objectType, object_id: objectId, attachment_type: attachmentType, content_type: blob.type || file.type, size_bytes: blob.size, original_filename: file.name, client_attachment_id: uuid() },
   });
@@ -130,17 +131,45 @@ export async function uploadAttachment(file: File, objectType: string, objectId:
   return att;
 }
 
-async function compressImage(file: File, max = 1600, quality = 0.8): Promise<Blob> {
-  try {
-    const bmp = await createImageBitmap(file);
-    const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
-    if (scale === 1 && file.size < 400_000) return file;
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bmp.width * scale);
-    canvas.height = Math.round(bmp.height * scale);
-    canvas.getContext("2d")!.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-    return await new Promise<Blob>((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error("compress"))), "image/jpeg", quality));
-  } catch {
-    return file;
+/** Batas ukuran foto yang diterima server (BV_MAX_IMAGE_BYTES, default 500 KB). */
+export const MAX_IMAGE_BYTES = 500 * 1024;
+
+/**
+ * Kompres foto sampai ≤ MAX_IMAGE_BYTES: skala ≤ max px, lalu turunkan kualitas JPEG bertahap (0.8 → 0.4),
+ * lalu perkecil dimensi 0.8× berulang. Non-gambar / gagal decode → file asli (server tetap memvalidasi).
+ */
+export async function compressImage(file: File | Blob, max = 1600, quality = 0.8, limit = MAX_IMAGE_BYTES): Promise<Blob> {
+  if (!file.type.startsWith("image/")) return file;
+  const bitmap = await createImageBitmap(file).catch(() => null);
+  if (!bitmap) return file;
+  let w = bitmap.width;
+  let h = bitmap.height;
+  const scale = Math.min(1, max / Math.max(w, h));
+  w = Math.round(w * scale);
+  h = Math.round(h * scale);
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return file;
+  const encode = (q: number) =>
+    new Promise<Blob | null>((resolve) => {
+      canvas.width = w;
+      canvas.height = h;
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      canvas.toBlob((b) => resolve(b), "image/jpeg", q);
+    });
+  let q = quality;
+  let out: Blob | null = null;
+  for (let i = 0; i < 12; i++) {
+    out = await encode(q);
+    if (!out) break;
+    if (out.size <= limit) break;
+    if (q > 0.4) q = Math.max(0.4, q - 0.1);
+    else {
+      w = Math.round(w * 0.8);
+      h = Math.round(h * 0.8);
+    }
   }
+  bitmap.close?.();
+  return out ?? file;
 }
+

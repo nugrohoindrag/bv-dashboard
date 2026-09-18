@@ -39,6 +39,7 @@ type Config struct {
 	PresignUploadTTL   time.Duration
 	PresignDownloadTTL time.Duration
 	MaxUploadBytes     int64
+	MaxImageBytes      int64 // batas foto (image/*) semua kanal; dokumen/PDF memakai MaxUploadBytes
 
 	// Push
 	FCMProjectID          string
@@ -103,6 +104,7 @@ func Load() (Config, error) {
 		PresignUploadTTL:      getdur("BV_PRESIGN_UPLOAD_TTL", 15*time.Minute),
 		PresignDownloadTTL:    getdur("BV_PRESIGN_DOWNLOAD_TTL", 10*time.Minute),
 		MaxUploadBytes:        getint64("BV_MAX_UPLOAD_BYTES", 10*1024*1024),
+		MaxImageBytes:         getint64("BV_MAX_IMAGE_BYTES", 500*1024),
 		FCMProjectID:          getenv("BV_FCM_PROJECT_ID", ""),
 		FCMServiceAccountJSON: getenv("BV_FCM_SERVICE_ACCOUNT", ""),
 		VAPIDPublicKey:        getenv("BV_VAPID_PUBLIC_KEY", ""),

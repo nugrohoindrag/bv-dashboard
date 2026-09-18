@@ -271,6 +271,7 @@ type ListFilter struct {
 	DueFrom, DueTo         *time.Time
 	CreatedFrom, CreatedTo *time.Time
 	ScheduledOn            *time.Time // tanggal (timezone property) — Today's Operations
+	Undated                *bool      // true: tanpa scheduled_start_at & due_at (mis. WO ad-hoc) — dipakai work bundle
 	AssetID                *uuid.UUID
 	SourceType             string
 	SourceID               *uuid.UUID

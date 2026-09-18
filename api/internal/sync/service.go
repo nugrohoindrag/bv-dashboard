@@ -100,10 +100,16 @@ func (s *Service) WorkBundle(ctx context.Context, deviceID string, since string)
 	mine := operations.ListFilter{Mine: true, ScheduledOn: &now, Sort: "due_at"}
 	overdue := true
 	openMine := operations.ListFilter{Mine: true, Overdue: &overdue, Sort: "due_at"}
+	// Pekerjaan yang sedang berjalan/ditunda tetap ikut walau jadwalnya bukan hari ini (mis. dimulai kemarin,
+	// tempo minggu depan) — tanpa ini item hilang dari daftar worker setelah pull berikutnya.
+	activeMine := operations.ListFilter{Mine: true, Statuses: []string{string(workflow.InProgress), string(workflow.OnHold)}, Sort: "due_at"}
+	// WO/task ad-hoc tanpa tanggal (assigned/new) juga tidak pernah masuk filter ScheduledOn.
+	undated := true
+	undatedMine := operations.ListFilter{Mine: true, Undated: &undated, Statuses: []string{string(workflow.New), string(workflow.Assigned), string(workflow.Scheduled)}, Sort: "created_at"}
 	collect := func(ot string) ([]operations.WorkItem, error) {
 		seen := map[uuid.UUID]bool{}
 		var out []operations.WorkItem
-		for _, f := range []operations.ListFilter{mine, openMine} {
+		for _, f := range []operations.ListFilter{mine, openMine, activeMine, undatedMine} {
 			items, _, err := s.Ops.List(ctx, ot, f, page)
 			if err != nil {
 				return nil, err
@@ -576,6 +582,7 @@ func (s *Service) dispatch(ctx context.Context, tx pgx.Tx, m Mutation) (any, err
 		}
 		in.FromSync = true
 		in.ClientRecordedAt = m.ClientTime
+		// client_attachment_id (foto per item, attach_photo seq lebih kecil) di-resolve di AnswerItemTx.
 		runID, err := s.Ops.AnswerItemTx(ctx, tx, in.ItemID, in.AnswerInput)
 		if err != nil {
 			return nil, err
@@ -656,14 +663,18 @@ func (s *Service) attachPhoto(ctx context.Context, tx pgx.Tx, m Mutation) (any, 
 	if err := json.Unmarshal(m.Payload, &in); err != nil || in.ClientAttachmentID == "" {
 		return nil, apperr.Validation("payload.client_attachment_id wajib")
 	}
-	if in.AttachmentType == "" {
-		in.AttachmentType = "photo"
+	in.AttachmentType = attachments.NormalizeType(in.AttachmentType)
+	if !attachments.AllowedType(in.AttachmentType) {
+		return nil, apperr.Validation("attachment_type tidak valid: " + in.AttachmentType)
 	}
 	if in.ContentType == "" {
 		in.ContentType = "image/jpeg"
 	}
 	if in.SizeBytes <= 0 {
 		in.SizeBytes = 1
+	}
+	if limit := s.Attachments.LimitFor(in.ContentType); in.SizeBytes > limit {
+		return nil, apperr.Validation(fmt.Sprintf("ukuran foto %d KB melebihi batas %d KB — kompres di perangkat", in.SizeBytes/1024, limit/1024))
 	}
 	p := authctx.Must(ctx)
 	// idempotent

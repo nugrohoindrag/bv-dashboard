@@ -294,17 +294,14 @@ func (s *Service) evidenceSatisfied(ctx context.Context, tx pgx.Tx, w *WorkItem,
 		return false, fmt.Sprintf("%d item checklist memerlukan foto", photoMissing)
 	}
 	if w.RequiresEvidence {
-		atype := "photo_after"
+		var n int
 		label := "After Photo"
 		if w.ObjectType == ObjTask {
-			atype = "photo"
+			// task: foto tipe apa pun diterima (photo / before / after / checklist)
 			label = "Photo evidence"
-		}
-		n, _ := attachments.CountByType(ctx, tx, w.ObjectType, w.ID, atype, fromSync)
-		if n == 0 && w.ObjectType == ObjTask {
-			// task: foto tipe apa pun diterima
-			n2, _ := attachments.CountByType(ctx, tx, w.ObjectType, w.ID, "checklist_item_photo", fromSync)
-			n += n2
+			n, _ = attachments.CountPhotos(ctx, tx, w.ObjectType, w.ID, fromSync)
+		} else {
+			n, _ = attachments.CountByType(ctx, tx, w.ObjectType, w.ID, "photo_after", fromSync)
 		}
 		if n == 0 {
 			return false, label + " wajib sebelum complete"
@@ -529,6 +526,9 @@ func (s *Service) List(ctx context.Context, objectType string, f ListFilter, pag
 		if f.ScheduledOn != nil {
 			d := add(f.ScheduledOn.Format("2006-01-02"))
 			where += " AND ((COALESCE(" + tb + ".scheduled_start_at, " + tb + ".due_at) AT TIME ZONE COALESCE((SELECT timezone FROM properties WHERE location_id = " + tb + ".property_id), 'Asia/Jakarta'))::date = " + d + "::date)"
+		}
+		if f.Undated != nil && *f.Undated {
+			where += " AND " + tb + ".scheduled_start_at IS NULL AND " + tb + ".due_at IS NULL"
 		}
 		if f.AssetID != nil {
 			where += " AND " + tb + ".asset_id = " + add(*f.AssetID)

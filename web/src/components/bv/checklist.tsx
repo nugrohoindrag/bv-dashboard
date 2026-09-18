@@ -108,8 +108,9 @@ export function PhotoEvidenceUploader({ objectType, objectId, attachmentType = "
   const onDrop = useCallback(
     async (files: File[]) => {
       for (const f of files) {
-        if (f.size > 10 * 1024 * 1024) {
-          toast.error(new Error("Ukuran file maksimal 10 MB"));
+        // Foto dikompres ke ≤500 KB oleh uploadAttachment; dokumen (PDF) maks 10 MB.
+        if (!f.type.startsWith("image/") && f.size > 10 * 1024 * 1024) {
+          toast.error(new Error("Ukuran dokumen maksimal 10 MB"));
           continue;
         }
         setProgress(0);

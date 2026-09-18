@@ -39,6 +39,7 @@ export default function WorkItemDetailPage({ objectType }: { objectType: "task" 
   const toast = useToast();
   const label = objectTypeLabel[objectType];
   const canEdit = can(objectType === "task" ? "operations.tasks.update" : "operations.work_orders.update");
+  const canManage = can(objectType === "task" ? "operations.tasks.manage" : "operations.work_orders.manage");
 
   return (
     <AsyncState query={item} skeleton={<DetailSkeleton />}>
@@ -91,13 +92,22 @@ export default function WorkItemDetailPage({ objectType }: { objectType: "task" 
                   <AsyncState query={runs}>
                     {(list) => list.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">{w.checklist_template_id ? "Checklist run belum dibuat." : "Tidak ada checklist pada item ini."}</p> : (
                       <div className="space-y-6">
-                        {list.map((run) => <ChecklistRunner key={run.id} run={run} editable={w.allowed_actions.includes("answer") || (canEdit && !["closed", "cancelled", "completed"].includes(w.status))} objectType={objectType} objectId={w.id} attachmentsById={attById} />)}
+                        {/* Server hanya menerima jawaban saat In Progress (assignee) atau pemegang *.manage (on-behalf). */}
+                        {w.status !== "in_progress" && !canManage && !["closed", "cancelled", "completed"].includes(w.status) && <p className="rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-warning-text">Checklist dapat diisi setelah pekerjaan dimulai (Mulai).</p>}
+                        {list.map((run) => <ChecklistRunner key={run.id} run={run} editable={w.status === "in_progress" ? (canEdit || w.allowed_actions.includes("answer")) : canManage && !["closed", "cancelled"].includes(w.status)} objectType={objectType} objectId={w.id} attachmentsById={attById} />)}
                       </div>
                     )}
                   </AsyncState>
                 </TabsContent>
                 <TabsContent value="evidence" className="space-y-4 pt-4">
-                  {!["closed", "cancelled"].includes(w.status) && <PhotoEvidenceUploader objectType={objectType} objectId={w.id} attachmentType={w.status === "completed" ? "after" : "before"} label={w.status === "completed" ? "Unggah foto After" : "Unggah foto Before"} />}
+                  {/* Before saat belum dimulai; Before + After saat dikerjakan (guard complete WO requires_evidence menuntut photo_after
+                      SEBELUM complete — sebelumnya After hanya bisa diunggah setelah completed sehingga WO tak pernah bisa diselesaikan). */}
+                  {!["closed", "cancelled"].includes(w.status) && (
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {w.status !== "completed" && <PhotoEvidenceUploader objectType={objectType} objectId={w.id} attachmentType="photo_before" label="Unggah foto Before" />}
+                      {["in_progress", "on_hold", "completed"].includes(w.status) && <PhotoEvidenceUploader objectType={objectType} objectId={w.id} attachmentType="photo_after" label="Unggah foto After" />}
+                    </div>
+                  )}
                   <EvidenceSections items={attachments.data ?? []} />
                 </TabsContent>
                 <TabsContent value="activity" className="pt-4">
