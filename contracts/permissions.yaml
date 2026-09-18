@@ -8,6 +8,7 @@ modules:
     audit_logs: [view]
     exports: [create]
     app_downloads: [view, manage]       # Website PRD §16–§19: hanya role admin_internal pada organization internal (dicek server-side)
+    demo_data: [view, manage]           # Demo Seed Database §29: Admin Internal → Demo Data (seed / reset / verify)
   iam:
     users: [view, create, update, deactivate, reset_password]
     roles: [view, create, update, delete]
@@ -89,6 +90,14 @@ modules:
     rental_reservations: [view, create, update, confirm, activate, complete, cancel]
   reports:
     reports: [view, export]
+  bvrooms:                              # BVRooms customer booking channel (white-label per org; Requirements v0.2 §5.6)
+    listing: [view, manage]
+    inventory: [view, manage]
+    addons: [view, manage]
+    marketing: [view, manage]
+    bookings: [view, manage]
+    payments: [verify]
+    customers: [view, manage]
   notification:
     inbox: [view]
   overview:
@@ -109,13 +118,13 @@ roles:
     permissions: ["*"]
   property_manager:
     label: Property Manager
-    permissions: ["platform.*", "iam.*.view", "property.*", "operations.*", "engineering.*", "security.*", "housekeeping.*", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "tenant_relation.*", "booking.*", "billing.*", "vendor.*", "inventory.*", "hotel.*", "commercial.*", "reports.*"]
+    permissions: ["platform.*", "iam.*.view", "property.*", "operations.*", "engineering.*", "security.*", "housekeeping.*", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "tenant_relation.*", "booking.*", "billing.*", "vendor.*", "inventory.*", "hotel.*", "commercial.*", "reports.*", "bvrooms.*"]
   building_manager:
     label: Building Manager
-    permissions: ["iam.*.view", "property.*.view", "operations.*", "engineering.*.view", "security.*.view", "housekeeping.*.view", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "tenant_relation.*", "booking.*", "billing.*.view", "vendor.*", "inventory.*", "hotel.*", "commercial.*", "reports.*"]
+    permissions: ["iam.*.view", "property.*.view", "operations.*", "engineering.*.view", "security.*.view", "housekeeping.*.view", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "tenant_relation.*", "booking.*", "billing.*.view", "vendor.*", "inventory.*", "hotel.*", "commercial.*", "reports.*", "bvrooms.*"]
   operations_manager:
     label: Operations Manager
-    permissions: ["property.*.view", "operations.*", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "tenant_relation.*", "booking.*", "security.visitors.*", "vendor.*.view", "inventory.*.view", "hotel.*.view", "commercial.*.view", "reports.*"]
+    permissions: ["property.*.view", "operations.*", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "tenant_relation.*", "booking.*", "security.visitors.*", "vendor.*.view", "inventory.*.view", "hotel.*.view", "commercial.*.view", "reports.*", "bvrooms.bookings.view"]
   engineering_manager:
     label: Engineering Manager
     permissions: ["property.*.view", "operations.tasks.*", "operations.work_orders.*", "operations.findings.*", "operations.checklists.*", "operations.comments.*", "operations.attachments.*", "engineering.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "vendor.*", "inventory.*", "reports.reports.view"]
@@ -146,23 +155,23 @@ roles:
   # ---- P1 roles (NC §32; PRD §6 persona Tenant Relation, Receptionist, Finance, Tenant) ----
   tenant_relation_manager:
     label: Tenant Relation Manager
-    permissions: ["property.*.view", "tenant.*", "tenant_relation.*", "operations.tasks.view", "operations.tasks.create", "operations.work_orders.view", "operations.work_orders.create", "operations.incidents.view", "operations.incidents.create", "operations.findings.view", "operations.comments.*", "operations.attachments.*", "booking.*", "security.visitors.view", "billing.*.view", "hotel.reservations.view", "commercial.*.view", "notification.*", "overview.*", "search.*", "platform.exports.create", "reports.reports.view"]
+    permissions: ["property.*.view", "tenant.*", "tenant_relation.*", "operations.tasks.view", "operations.tasks.create", "operations.work_orders.view", "operations.work_orders.create", "operations.incidents.view", "operations.incidents.create", "operations.findings.view", "operations.comments.*", "operations.attachments.*", "booking.*", "security.visitors.view", "billing.*.view", "hotel.reservations.view", "commercial.*.view", "notification.*", "overview.*", "search.*", "platform.exports.create", "reports.reports.view", "bvrooms.bookings.*", "bvrooms.listing.view", "bvrooms.customers.view"]
   tenant_relation_officer:
     label: Tenant Relation Officer
     permissions: ["property.*.view", "tenant.*", "tenant_relation.*", "operations.tasks.view", "operations.tasks.create", "operations.work_orders.view", "operations.work_orders.create", "operations.incidents.view", "operations.incidents.create", "operations.comments.*", "operations.attachments.*", "booking.*.view", "booking.bookings.create", "booking.bookings.approve", "booking.bookings.reject", "booking.bookings.cancel", "security.visitors.view", "billing.*.view", "notification.*", "overview.dashboard.view", "search.*"]
   receptionist:
     label: Receptionist
-    permissions: ["property.*.view", "tenant.service_requests.view", "tenant.service_requests.create", "tenant.service_requests.acknowledge", "tenant_relation.messages.*", "tenant_relation.tenant_users.view", "hotel.*.view", "hotel.reservations.*", "hotel.rooms.set_status", "booking.*", "security.visitors.view", "security.visitors.create", "security.visitors.verify", "billing.invoices.view", "billing.payments.view", "billing.payments.create", "operations.tasks.view", "operations.tasks.create", "operations.comments.create", "operations.attachments.create", "notification.*", "search.*", "overview.dashboard.view"]
+    permissions: ["property.*.view", "tenant.service_requests.view", "tenant.service_requests.create", "tenant.service_requests.acknowledge", "tenant_relation.messages.*", "tenant_relation.tenant_users.view", "hotel.*.view", "hotel.reservations.*", "hotel.rooms.set_status", "booking.*", "security.visitors.view", "security.visitors.create", "security.visitors.verify", "billing.invoices.view", "billing.payments.view", "billing.payments.create", "operations.tasks.view", "operations.tasks.create", "operations.comments.create", "operations.attachments.create", "notification.*", "search.*", "overview.dashboard.view", "bvrooms.bookings.*", "bvrooms.listing.view", "bvrooms.customers.view"]
   finance_manager:
     label: Finance Manager
-    permissions: ["property.*.view", "billing.*", "vendor.*.view", "commercial.*.view", "hotel.reservations.view", "reports.*", "notification.*", "overview.*", "search.*", "platform.exports.create"]
+    permissions: ["property.*.view", "billing.*", "vendor.*.view", "commercial.*.view", "hotel.reservations.view", "reports.*", "notification.*", "overview.*", "search.*", "platform.exports.create", "bvrooms.bookings.view", "bvrooms.payments.verify"]
   finance_staff:
     label: Finance Staff
-    permissions: ["property.*.view", "billing.*", "notification.*", "overview.dashboard.view", "search.*", "platform.exports.create"]
+    permissions: ["property.*.view", "billing.*", "notification.*", "overview.dashboard.view", "search.*", "platform.exports.create", "bvrooms.bookings.view", "bvrooms.payments.verify"]
   # ---- Internal BuildingVision (Website PRD §18): di-seed HANYA ke organization is_internal (bvctl seed --internal) ----
   admin_internal:
     label: Admin Internal
-    permissions: ["platform.app_downloads.*", "platform.organizations.view", "platform.audit_logs.view", "notification.inbox.view", "search.global.view"]
+    permissions: ["platform.app_downloads.*", "platform.demo_data.*", "platform.organizations.view", "platform.audit_logs.view", "notification.inbox.view", "search.global.view"]
   tenant_admin:
     label: Tenant Admin
     permissions: ["tenant_app.*", "notification.inbox.view"]
