@@ -320,7 +320,7 @@ export function AppShell() {
 
         {/* Footer panel: versi + tombol ciutkan */}
         <div className="flex items-center justify-between px-3 py-2" style={{ backgroundColor: "var(--bv-sidebar-fill-raised)", borderRadius: "0 0 var(--radius-xl) 0", color: "var(--bv-sidebar-ink-muted)" }}>
-          {!collapsed && <span className="text-[10.5px] font-semibold">BuildingVision · P0</span>}
+          {!collapsed && <span className="text-[10.5px] font-semibold">BuildingVision</span>}
           <button type="button" onClick={() => setCollapsed((c) => !c)} className="mx-auto flex h-8 w-8 items-center justify-center rounded-full hover:bg-[var(--bv-sidebar-fill)]" style={{ color: "var(--bv-sidebar-ink)", marginLeft: collapsed ? "auto" : 0 }} aria-label={collapsed ? "Buka sidebar" : "Ciutkan sidebar"}>
             <Icon name={collapsed ? "keyboard_double_arrow_right" : "keyboard_double_arrow_left"} size={18} />
           </button>

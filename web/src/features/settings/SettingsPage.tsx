@@ -1,11 +1,10 @@
 // Settings (PRD §22–§24): organization · users · roles · teams · checklists · sla-policies · master-data · notifications · sync-conflicts · audit-logs
 import { lazy, Suspense } from "react";
-import { NavLink, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/shell/AppShell";
 import { DetailSkeleton } from "@/components/bv/common";
 import { useAuth } from "@/lib/auth";
-import { cn } from "@/lib/utils";
 
 const OrganizationSection = lazy(() => import("./OrganizationSection"));
 const PropertyProfileSection = lazy(() => import("./PropertyProfileSection"));
@@ -50,21 +49,11 @@ export default function SettingsPage() {
   const visible = SECTIONS.filter((s) => can(s.perm) && (!s.internalOnly || principal?.is_internal_admin));
   const current = visible.find((s) => s.key === section) ?? visible[0];
   const Section = current?.el;
+  // Navigasi antar seksi sudah ada di submenu sidebar "Settings" (AppShell) — tidak diulang di halaman.
   return (
     <div>
-      <PageHeader title={t("nav.settings")} />
-      <div className="grid grid-cols-12 gap-5">
-        <nav className="col-span-2">
-          <ul className="space-y-0.5">
-            {visible.map((s) => (
-              <li key={s.key}><NavLink to={`/settings/${s.key}`} className={({ isActive }) => cn("block rounded-md px-3 py-1.5 text-sm hover:bg-muted", isActive && "bg-brand-50 font-medium text-brand-700")}>{t(s.label)}</NavLink></li>
-            ))}
-          </ul>
-        </nav>
-        <div className="col-span-10">
-          <Suspense fallback={<DetailSkeleton />}>{Section ? <Section /> : <p className="text-sm text-muted-foreground">Tidak ada akses ke pengaturan.</p>}</Suspense>
-        </div>
-      </div>
+      <PageHeader breadcrumb={<><Link to="/settings" className="hover:underline">{t("nav.settings")}</Link>{current && <> / {t(current.label)}</>}</>} title={current ? t(current.label) : t("nav.settings")} />
+      <Suspense fallback={<DetailSkeleton />}>{Section ? <Section /> : <p className="text-sm text-muted-foreground">Tidak ada akses ke pengaturan.</p>}</Suspense>
     </div>
   );
 }
