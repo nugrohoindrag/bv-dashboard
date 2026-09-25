@@ -475,6 +475,31 @@ func TestTenantAppFlow(t *testing.T) {
 		t.Fatalf("notifikasi announcement ke tenant B tidak ada: %+v", ib.Data)
 	}
 
+	// News Staff App: hanya audience staff|all yang published; tenant ditolak
+	st, body = e.do(tr, http.MethodPost, "/api/v1/announcements", map[string]any{"property_id": e.refs.PropertyID, "title": "Briefing K3 teknisi", "body": "Senin 07.30 di ruang engineering", "audience": "staff"})
+	e.mustJSON(st, body, 201, &ann)
+	staffAnnID := ann.ID
+	st, body = e.do(tech, http.MethodGet, "/api/v1/staff/announcements", nil)
+	if st != 200 || strings.Contains(string(body), "Pemadaman") || strings.Contains(string(body), "Briefing K3") {
+		t.Fatalf("staff news: audience tenant & draft tidak boleh tampil: %d %s", st, body)
+	}
+	st, body = e.do(tr, http.MethodPost, "/api/v1/announcements/"+staffAnnID.String()+"/publish", nil)
+	e.mustJSON(st, body, 200, nil)
+	st, body = e.do(tech, http.MethodGet, "/api/v1/staff/announcements", nil)
+	if st != 200 || !strings.Contains(string(body), "Briefing K3") {
+		t.Fatalf("staff news published: %d %s", st, body)
+	}
+	if st, body = e.do(tech, http.MethodGet, "/api/v1/staff/announcements/"+staffAnnID.String(), nil); st != 200 || !strings.Contains(string(body), "ruang engineering") {
+		t.Fatalf("staff news detail: %d %s", st, body)
+	}
+	if st, _ := e.do(tenA, http.MethodGet, "/api/v1/staff/announcements", nil); st != 403 {
+		t.Fatalf("tenant tidak boleh membaca pengumuman staf: %d", st)
+	}
+	st, body = e.do(tenA, http.MethodGet, "/api/v1/tenant/announcements", nil)
+	if st != 200 || strings.Contains(string(body), "Briefing K3") {
+		t.Fatalf("pengumuman audience staff bocor ke tenant: %d %s", st, body)
+	}
+
 	// suspend → sesi diputus
 	st, body = e.do(tr, http.MethodPost, "/api/v1/tenant-users/"+tuB.String()+"/suspend", map[string]any{"reason": "Pindah unit"})
 	e.mustJSON(st, body, 200, nil)

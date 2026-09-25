@@ -46,6 +46,37 @@ func (h *Handler) Mount(r chi.Router) {
 	r.With(req("tenant_relation.announcements.update")).Patch("/announcements/{id}", h.updateAnn)
 	r.With(req("tenant_relation.announcements.publish")).Post("/announcements/{id}/publish", h.annAction("publish"))
 	r.With(req("tenant_relation.announcements.publish")).Post("/announcements/{id}/archive", h.annAction("archive"))
+	// News Staff App: baca pengumuman audience staff|all (semua staf terautentikasi, bukan tenant)
+	r.Get("/staff/announcements", h.staffAnnouncements)
+	r.Get("/staff/announcements/{id}", h.staffAnnouncement)
+}
+
+func (h *Handler) staffAnnouncements(w http.ResponseWriter, r *http.Request) {
+	page, err := httpx.ParsePage(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	items, next, err := h.Svc.StaffAnnouncements(r.Context(), page)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, httpx.NewList(items, next))
+}
+
+func (h *Handler) staffAnnouncement(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Svc.StaffAnnouncement(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {

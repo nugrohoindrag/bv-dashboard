@@ -167,6 +167,95 @@ func (s *Service) GetAnnouncement(ctx context.Context, id uuid.UUID) (*Announcem
 	return out, err
 }
 
+// staffPropertyScope: property tempat staf punya grant apa pun; all=true bila ada grant level organization.
+func staffPropertyScope(p *authctx.Principal) (ids []uuid.UUID, all bool) {
+	for _, g := range p.Grants {
+		if g.PropertyID == nil {
+			return nil, true
+		}
+		ids = append(ids, *g.PropertyID)
+	}
+	return ids, false
+}
+
+// staffAnnWhere: published, audience staff|all, belum kedaluwarsa, property global atau dalam scope staf.
+func staffAnnWhere(p *authctx.Principal) (string, []any, error) {
+	if p.IsTenant {
+		return "", nil, apperr.Forbidden("Pengumuman staf hanya untuk akun staf")
+	}
+	where := ` WHERE a.status = 'published' AND a.audience IN ('staff','all') AND (a.expires_at IS NULL OR a.expires_at > now())`
+	var args []any
+	if pids, all := staffPropertyScope(p); !all {
+		args = append(args, pids)
+		where += fmt.Sprintf(" AND (a.property_id IS NULL OR a.property_id = ANY($%d))", len(args))
+	}
+	return where, args, nil
+}
+
+// StaffAnnouncements: menu News di Staff App — baca saja, tanpa permission Tenant Relation.
+func (s *Service) StaffAnnouncements(ctx context.Context, page httpx.Page) ([]Announcement, *string, error) {
+	p := authctx.Must(ctx)
+	where, args, err := staffAnnWhere(p)
+	if err != nil {
+		return nil, nil, err
+	}
+	var out []Announcement
+	var next *string
+	err = s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		if page.Cursor != nil {
+			args = append(args, page.Cursor.Value, page.Cursor.ID)
+			where += fmt.Sprintf(" AND (a.created_at, a.id) < ($%d::timestamptz, $%d)", len(args)-1, len(args))
+		}
+		rows, err := tx.Query(ctx, annSelect+where+fmt.Sprintf(" ORDER BY a.created_at DESC, a.id DESC LIMIT %d", page.Limit+1), args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			a, err := scanAnn(rows)
+			if err != nil {
+				return err
+			}
+			a.AllowedActions = []string{"view"}
+			out = append(out, *a)
+		}
+		if len(out) > page.Limit {
+			last := out[page.Limit-1]
+			c := httpx.EncodeCursor(last.CreatedAt.UTC().Format(time.RFC3339Nano), last.ID)
+			next = &c
+			out = out[:page.Limit]
+		}
+		return rows.Err()
+	})
+	if out == nil {
+		out = []Announcement{}
+	}
+	return out, next, err
+}
+
+func (s *Service) StaffAnnouncement(ctx context.Context, id uuid.UUID) (*Announcement, error) {
+	p := authctx.Must(ctx)
+	where, args, err := staffAnnWhere(p)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, id)
+	var out *Announcement
+	err = s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		a, err := scanAnn(tx.QueryRow(ctx, annSelect+where+fmt.Sprintf(" AND a.id = $%d", len(args)), args...))
+		if err != nil {
+			if db.IsNoRows(err) {
+				return apperr.NotFound("Announcement")
+			}
+			return err
+		}
+		a.AllowedActions = []string{"view"}
+		out = a
+		return nil
+	})
+	return out, err
+}
+
 func (s *Service) CreateAnnouncement(ctx context.Context, in AnnouncementInput) (*Announcement, error) {
 	p := authctx.Must(ctx)
 	if in.PropertyID != nil {

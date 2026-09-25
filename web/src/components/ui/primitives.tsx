@@ -322,7 +322,8 @@ export function Popover({ open, onOpenChange, trigger, children, align = "end", 
             data-bv-popover
             initial={{ opacity: 0, y: -4 }}
             animate={{ opacity: 1, y: 0 }}
-            className={cn("fixed z-[997] rounded-[var(--radius-lg)] border border-border bg-surface p-2 text-on-surface", className)}
+            // di atas drawer/dialog (998–999) & snackbar (1000), sejajar RowActionMenu DS (1100)
+            className={cn("fixed z-[1100] rounded-[var(--radius-lg)] border border-border bg-surface p-2 text-on-surface", className)}
             style={{ top: pos.top, ...(align === "end" ? { right: pos.right } : { left: pos.left }), width, boxShadow: "var(--elevation-3)" }}
           >
             {children}
