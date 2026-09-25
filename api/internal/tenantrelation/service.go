@@ -647,6 +647,7 @@ type FeedbackRow struct {
 	RequestNumber    string    `json:"request_number"`
 	Title            string    `json:"title"`
 	CategoryCode     string    `json:"category_code"`
+	CategoryName     *string   `json:"category_name"`
 	Rating           int       `json:"rating"`
 	Comment          *string   `json:"comment"`
 	TenantName       *string   `json:"tenant_name"`
@@ -674,8 +675,8 @@ func (s *Service) ListFeedback(ctx context.Context, propertyID *uuid.UUID, page 
 			args = append(args, page.Cursor.Value, page.Cursor.ID)
 			where += fmt.Sprintf(" AND (fb.created_at, fb.service_request_id) < ($%d::timestamptz, $%d)", len(args)-1, len(args))
 		}
-		rows, err := tx.Query(ctx, `SELECT fb.service_request_id, sr.request_number, sr.title, sr.category_code, fb.rating, fb.comment, u.full_name, fb.created_at
-			FROM service_request_feedback fb JOIN service_requests sr ON sr.id = fb.service_request_id LEFT JOIN users u ON u.id = fb.tenant_user_id`+where+fmt.Sprintf(" ORDER BY fb.created_at DESC, fb.service_request_id DESC LIMIT %d", page.Limit+1), args...)
+		rows, err := tx.Query(ctx, `SELECT fb.service_request_id, sr.request_number, sr.title, sr.category_code, c.name, fb.rating, fb.comment, u.full_name, fb.created_at
+			FROM service_request_feedback fb JOIN service_requests sr ON sr.id = fb.service_request_id LEFT JOIN service_request_categories c ON c.id = sr.category_id LEFT JOIN users u ON u.id = fb.tenant_user_id`+where+fmt.Sprintf(" ORDER BY fb.created_at DESC, fb.service_request_id DESC LIMIT %d", page.Limit+1), args...)
 		if err != nil {
 			return err
 		}
@@ -683,7 +684,7 @@ func (s *Service) ListFeedback(ctx context.Context, propertyID *uuid.UUID, page 
 		var items []FeedbackRow
 		for rows.Next() {
 			var r FeedbackRow
-			if err := rows.Scan(&r.ServiceRequestID, &r.RequestNumber, &r.Title, &r.CategoryCode, &r.Rating, &r.Comment, &r.TenantName, &r.CreatedAt); err != nil {
+			if err := rows.Scan(&r.ServiceRequestID, &r.RequestNumber, &r.Title, &r.CategoryCode, &r.CategoryName, &r.Rating, &r.Comment, &r.TenantName, &r.CreatedAt); err != nil {
 				return err
 			}
 			items = append(items, r)
