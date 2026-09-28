@@ -39,7 +39,8 @@
 .bv-sidebar__tab {
   position: relative;
   background-color: var(--color-background);
-  color: var(--color-primary);
+  /* teal sidebar identity: the active tab text keeps the panel colour, not the content accent */
+  color: var(--bv-sidebar-fill);
   border-radius: var(--radius-pill) 0 0 var(--radius-pill);
 }
 

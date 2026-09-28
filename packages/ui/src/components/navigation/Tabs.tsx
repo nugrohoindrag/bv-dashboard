@@ -3,7 +3,9 @@
  * Tabs Component — Material Design 3 Navigation
  * 
  * Features:
- * - Primary, Secondary, and Pill Tabs with continuous sliding indicator (layoutId)
+ * - Primary & Pill tabs: Soft Frame pill track with an ink (secondary) active pill
+ *   that slides between tabs (layoutId); Secondary: underline tabs
+
  * - M3 Spring Physics & Emphasized Easing
  * - Icon, Badge, and Disabled states
  * 
@@ -46,17 +48,27 @@ export const Tabs: React.FC<TabsProps> = ({
     return icon;
   };
 
+  // Soft Frame (29 Sep 2026): `primary` = pill track (white + hairline) holding the tabs; `pills` = the same
+  // pills without the track; `secondary` keeps the underline style for dense sub-navigation.
+  const pill = variant !== 'secondary';
+  const track = variant === 'primary';
   return (
     <div
       role="tablist"
       className={`m3-tabs m3-tabs-${variant} ${className}`}
       style={{
-        display: 'flex',
+        display: fullWidth ? 'flex' : 'inline-flex',
         alignItems: 'center',
-        gap: variant === 'pills' ? '6px' : '0',
-        borderBottom: variant !== 'pills' ? '1px solid var(--md-sys-color-border)' : 'none',
+        gap: pill ? '2px' : '0',
+        borderBottom: pill ? 'none' : '1px solid var(--md-sys-color-border)',
+        padding: track ? '4px' : 0,
+        borderRadius: track ? 'var(--radius-pill)' : undefined,
+        backgroundColor: track ? 'var(--md-sys-color-surface)' : undefined,
+        border: track ? '1px solid var(--md-sys-color-border)' : undefined,
+        boxShadow: track ? 'var(--md-sys-elevation-level1)' : undefined,
         position: 'relative',
         width: fullWidth ? '100%' : 'auto',
+        maxWidth: '100%',
         overflowX: 'auto',
         scrollbarWidth: 'none',
       }}
@@ -64,7 +76,7 @@ export const Tabs: React.FC<TabsProps> = ({
       {tabs.map((tab) => {
         const isActive = tab.id === activeTab;
 
-        if (variant === 'pills') {
+        if (pill) {
           return (
             <button
               key={tab.id}
@@ -78,15 +90,17 @@ export const Tabs: React.FC<TabsProps> = ({
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '8px',
-                padding: '8px 16px',
+                height: '34px',
+                padding: '0 14px',
                 borderRadius: 'var(--radius-pill)',
                 border: 'none',
                 backgroundColor: 'transparent',
                 color: isActive
-                  ? 'var(--md-sys-color-on-primary-container)'
+                  ? 'var(--md-sys-color-on-secondary)'
                   : 'var(--md-sys-color-on-surface-variant)',
                 fontSize: '13px',
-                fontWeight: isActive ? 700 : 500,
+                fontWeight: isActive ? 600 : 500,
+                whiteSpace: 'nowrap',
                 cursor: tab.disabled ? 'not-allowed' : 'pointer',
                 opacity: tab.disabled ? 0.38 : 1,
                 userSelect: 'none',
@@ -96,13 +110,13 @@ export const Tabs: React.FC<TabsProps> = ({
             >
               {isActive && (
                 <motion.div
-                  layoutId="m3ActivePillTab"
+                  layoutId={track ? 'm3ActiveTrackTab' : 'm3ActivePillTab'}
                   transition={M3_SPRING.responsive}
                   style={{
                     position: 'absolute',
                     inset: 0,
                     borderRadius: 'var(--radius-pill)',
-                    backgroundColor: 'var(--md-sys-color-primary-container)',
+                    backgroundColor: 'var(--md-sys-color-secondary)',
                     zIndex: 0,
                   }}
                 />
@@ -118,8 +132,8 @@ export const Tabs: React.FC<TabsProps> = ({
                       fontWeight: 700,
                       padding: '1px 6px',
                       borderRadius: 'var(--radius-pill)',
-                      backgroundColor: isActive ? 'var(--md-sys-color-primary)' : 'var(--md-sys-color-surface-container-high)',
-                      color: isActive ? 'var(--md-sys-color-on-primary)' : 'var(--md-sys-color-on-surface-variant)',
+                      backgroundColor: isActive ? 'var(--md-sys-color-tertiary)' : 'var(--md-sys-color-surface-container-high)',
+                      color: isActive ? 'var(--md-sys-color-on-tertiary)' : 'var(--md-sys-color-on-surface-variant)',
                     }}
                   >
                     {tab.badge}

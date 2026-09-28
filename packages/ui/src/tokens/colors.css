@@ -5,139 +5,132 @@
  * Spec: Morphic-Design-System-adjusted.md
  *   §6  Theme Architecture      — components consume semantic tokens only
  *   §7  Theme Token Groups      — required token surface area
- *   §20 Color System            — light reference palette
- *   §5  Dark Theme              — true dark-green dark mode
+ *   §20 Color System            — reference palette
+ *   §5  Dark Theme              — dark mode
  *   §29 Data Visualization      — one dominant colour + small semantic palette
  *   §30 Dark Mode Rules         — swap semantic colour only, never geometry
  *
- * The Lime (green) theme is the REFERENCE preset, not the mandatory product
- * identity. Every preset re-tints surfaces as well as accent, because Morphic's
- * signature is tonal surface contrast rather than a neutral page with a
- * coloured button on it.
+ * REFERENCE PALETTE (29 Sep 2026) — "Soft Frame". Adopted from the Building
+ * Management Overview reference: a light grey frame, borderless white cards
+ * with large radii, grey inset panels, pill controls, one blue accent, ink
+ * (near-black) as the second accent for dark buttons / active tabs / feature
+ * cards, and lime as the data-highlight colour. Red / green / amber carry
+ * status only. The previous Lime reference palette is preserved in
+ * `src.backup-2026-09-29/tokens/colors.css` and as the `lime` accent preset
+ * in themes.css.
+ *
+ *   frame #F1F1F3 · card #FFFFFF · inset #F4F4F6 · hairline #E8E8EC
+ *   ink #18181B / #52525B / #8B8B93
+ *   blue #1F66FF · ink accent #252527 · lime #C9F23D
+ *   green #1FAA3B · red #EF3326 · amber #D97A06
  *
  * Open Source Standard: W3C Design Tokens Community Group
  */
 
 /* ========================================================================= */
-/* LIGHT — LIME REFERENCE THEME (§20)                                        */
+/* LIGHT — SOFT FRAME REFERENCE THEME (§20)                                  */
 /* ========================================================================= */
 
 :root {
   color-scheme: light;
 
-  /* Primary — bright lime/green accent */
-  --md-sys-color-primary: #6FAF39;
-  /* AA-safe sibling of `primary` (≥3:1 on surface) for focus rings, thin chart
-     strokes and any 1px boundary that carries meaning (§9). `primary` itself
-     stays exactly as §20 specifies and is used as a fill, where `on-primary`
-     supplies the text contrast. */
-  --md-sys-color-primary-strong: #588B2D;
-  --md-sys-color-on-primary: #F0F4EC;
-  --md-sys-color-primary-container: #B8EA86;
-  --md-sys-color-on-primary-container: #1B3D05;
-  --md-sys-color-primary-soft: #C7ECA2;
+  /* Primary — blue accent: primary buttons, links, selected state, charts */
+  --md-sys-color-primary: #1F66FF;
+  /* AA-safe sibling of `primary` for focus rings, thin strokes and small text
+     on white (§9). */
+  --md-sys-color-primary-strong: #1652D9;
+  --md-sys-color-on-primary: #FFFFFF;
+  --md-sys-color-primary-container: #DCE7FF;
+  --md-sys-color-on-primary-container: #0B2E80;
+  --md-sys-color-primary-soft: #EEF3FF;
 
-  /* Secondary — muted olive, for supporting emphasis (§20 colour rule) */
-  --md-sys-color-secondary: #546B41;
+  /* Secondary — ink: dark buttons, active pill tabs, feature (dark) cards */
+  --md-sys-color-secondary: #252527;
   --md-sys-color-on-secondary: #FFFFFF;
-  --md-sys-color-secondary-container: #DDE8CC;
-  --md-sys-color-on-secondary-container: #26350F;
+  --md-sys-color-secondary-container: #ECECEF;
+  --md-sys-color-on-secondary-container: #18181B;
 
-  /* Tertiary — deep sage, still inside the green family */
-  --md-sys-color-tertiary: #3E7A52;
-  --md-sys-color-on-tertiary: #FFFFFF;
-  --md-sys-color-tertiary-container: #CDE6D4;
-  --md-sys-color-on-tertiary-container: #10301C;
+  /* Tertiary — lime: data highlight, secondary chart series, accents */
+  --md-sys-color-tertiary: #C9F23D;
+  --md-sys-color-on-tertiary: #1A2600;
+  --md-sys-color-tertiary-container: #F1FBD2;
+  --md-sys-color-on-tertiary-container: #3A4A00;
 
   /* Semantic data states — used for meaning, never decoration (§20) */
-  --md-sys-color-success: #457B20;
+  --md-sys-color-success: #1FAA3B;
   --md-sys-color-on-success: #FFFFFF;
-  --md-sys-color-success-container: #D3ECBB;
-  --md-sys-color-on-success-container: #1F3D07;
-  --md-sys-color-warning: #A15E1E;
+  --md-sys-color-success-container: #E3F6E6;
+  --md-sys-color-on-success-container: #14622A;
+  --md-sys-color-warning: #D97A06;
   --md-sys-color-on-warning: #FFFFFF;
-  --md-sys-color-warning-container: #F7DCC1;
-  --md-sys-color-on-warning-container: #4A2803;
-  --md-sys-color-error: #C0392B;
+  --md-sys-color-warning-container: #FDF0DC;
+  --md-sys-color-on-warning-container: #8A4B00;
+  --md-sys-color-error: #EF3326;
   --md-sys-color-on-error: #FFFFFF;
-  --md-sys-color-error-container: #FBD8D2;
-  --md-sys-color-on-error-container: #4E120B;
-  --md-sys-color-info: #2F6E8F;
+  --md-sys-color-error-container: #FDE6E4;
+  --md-sys-color-on-error-container: #9B1C13;
+  --md-sys-color-info: #1F66FF;
   --md-sys-color-on-info: #FFFFFF;
-  --md-sys-color-info-container: #CFE4EF;
-  --md-sys-color-on-info-container: #0C2E3F;
+  --md-sys-color-info-container: #DCE7FF;
+  --md-sys-color-on-info-container: #0B2E80;
 
-  /* Surfaces — neutral grey page, white cards.
-     NOTE: this is a deliberate product decision that departs from §20, which
-     specifies a pale green surface (#F0F7E5) for both background and surface,
-     and from §19/§32, which ask cards to merge into the page rather than read
-     as separate white boxes. Green now lives in the accent, text and hairline
-     rather than in the page itself. To return to the spec palette, restore:
-       background #F0F7E5 · surface #F0F7E5 · variant #E5EFD4
-       container-lowest #F7FBEF · low #EAF3DC · container #E5EFD4
-       container-high #D5E3BE · container-highest #C7DAAB
-     and point the card surfaces back at `surface-container`. */
-  --md-sys-color-background: #F1F3F5;
-  --md-sys-color-on-background: #254E09;
+  /* Surfaces — the grey frame is the page; cards are white and borderless. */
+  --md-sys-color-background: #F1F1F3;
+  --md-sys-color-on-background: #18181B;
   --md-sys-color-surface: #FFFFFF;
-  --md-sys-color-on-surface: #254E09;
-  --md-sys-color-on-surface-variant: #526940;
-  --md-sys-color-surface-variant: #F3F5F7;
+  --md-sys-color-on-surface: #18181B;
+  --md-sys-color-on-surface-variant: #52525B;
+  --md-sys-color-surface-variant: #F4F4F6;
 
-  /* Surface container tonal hierarchy (§19 surface hierarchy).
-     TEXT CONTRACT (§9): `on-surface` and `on-surface-variant` are guaranteed
-     WCAG AA through `surface-container-high`. `surface-container-highest` is
-     a NON-TEXT surface — progress tracks, sliders, pressed/dragged state
-     layers, skeleton bases. Put body or metadata text on it and the muted
-     tone drops to ~3.6:1. Use `surface-container-high` instead. */
+  /* Surface container tonal hierarchy (§19).
+     TEXT CONTRACT (§9): `on-surface` and `on-surface-variant` are AA through
+     `surface-container-high`. `surface-container-highest` is a NON-TEXT
+     surface (tracks, sliders, skeletons, pressed state layers). */
   --md-sys-color-surface-container-lowest: #FFFFFF;
-  --md-sys-color-surface-container-low: #FAFBFC;
-  /* Filled elements that must read as solid against a white card: table
-     headers, tonal buttons, chips, drawers, sheets, inset panels. */
-  --md-sys-color-surface-container: #F3F5F7;
-  --md-sys-color-surface-container-high: #E8EBEE;
-  --md-sys-color-surface-container-highest: #DDE1E5;
+  --md-sys-color-surface-container-low: #F8F8FA;
+  /* Inset panels inside a white card, table hover, tonal buttons, chips. */
+  --md-sys-color-surface-container: #F4F4F6;
+  --md-sys-color-surface-container-high: #ECECEF;
+  --md-sys-color-surface-container-highest: #E2E2E6;
 
-  /* Outline — subtle, low contrast (§22) */
-  --md-sys-color-outline: #71825E;
-  --md-sys-color-outline-variant: #D5E3BE;
-  --md-sys-color-border: #D5E3BE;
+  /* Outline — control boundary / muted text; border is the hairline. */
+  --md-sys-color-outline: #8B8B93;
+  --md-sys-color-outline-variant: #D4D4D8;
+  --md-sys-color-border: #E8E8EC;
 
-  /* Data visualisation palette (§29) */
-  --md-sys-color-chart-primary: #6FAF39;
-  --md-sys-color-chart-secondary: #9CEC5D;
-  --md-sys-color-chart-tertiary: #E2934F;
-  --md-sys-color-chart-quaternary: #FD7C69;
-  --md-sys-color-chart-neutral: #A8BC94;
-  --md-sys-color-chart-grid: rgba(37, 78, 9, 0.08);
-  --md-sys-color-chart-axis: #7B8F67;
-  --md-sys-color-chart-area-from: rgba(111, 175, 57, 0.24);
-  --md-sys-color-chart-area-to: rgba(111, 175, 57, 0);
+  /* Data visualisation palette (§29): blue dominant, lime highlight, ink */
+  --md-sys-color-chart-primary: #1F66FF;
+  --md-sys-color-chart-secondary: #C9F23D;
+  --md-sys-color-chart-tertiary: #252527;
+  --md-sys-color-chart-quaternary: #D97A06;
+  --md-sys-color-chart-neutral: #BDBDC4;
+  --md-sys-color-chart-grid: rgba(24, 24, 27, 0.06);
+  --md-sys-color-chart-axis: #8B8B93;
+  --md-sys-color-chart-area-from: rgba(31, 102, 255, 0.22);
+  --md-sys-color-chart-area-to: rgba(31, 102, 255, 0);
 
-  /* Hero card (§11) — tonal green surface with organic decoration */
-  --hero-banner-bg: linear-gradient(135deg, #C7ECA2 0%, #B8EA86 45%, #9CDC5E 100%);
-  --hero-banner-text: #143503;
-  --hero-banner-subtext: #26540B;
-  --hero-banner-pill-bg: #254E09;
-  --hero-banner-pill-text: #F0F7E5;
-  --hero-banner-pill-icon: #B8EA86;
-  --hero-banner-tag-bg: rgba(37, 78, 9, 0.12);
-  --hero-banner-tag-text: #1B3D05;
-  --hero-banner-blob-1: rgba(37, 78, 9, 0.07);
-  --hero-banner-blob-2: rgba(255, 255, 255, 0.38);
-  --hero-banner-arc: rgba(37, 78, 9, 0.16);
+  /* Hero card (§11) — the ink feature card with a lime pill */
+  --hero-banner-bg: #252527;
+  --hero-banner-text: #FFFFFF;
+  --hero-banner-subtext: #C9C9CF;
+  --hero-banner-pill-bg: #C9F23D;
+  --hero-banner-pill-text: #1A2600;
+  --hero-banner-pill-icon: #1A2600;
+  --hero-banner-tag-bg: rgba(255, 255, 255, 0.12);
+  --hero-banner-tag-text: #FFFFFF;
+  --hero-banner-blob-1: rgba(255, 255, 255, 0.05);
+  --hero-banner-blob-2: rgba(31, 102, 255, 0.18);
+  --hero-banner-arc: rgba(201, 242, 61, 0.28);
 
   /* Inverse */
-  --md-sys-color-inverse-surface: #2C3A22;
-  --md-sys-color-inverse-on-surface: #EDF4E2;
-  --md-sys-color-inverse-primary: #9CEC5D;
+  --md-sys-color-inverse-surface: #252527;
+  --md-sys-color-inverse-on-surface: #FFFFFF;
+  --md-sys-color-inverse-primary: #7FA8FF;
 
   /* Scrim */
-  --md-sys-color-scrim: rgba(21, 33, 11, 0.42);
+  --md-sys-color-scrim: rgba(24, 24, 27, 0.42);
 
-  /* Foreground for content sitting on a user-supplied image or video. No
-     theme colour can be correct there, so it is a named token (§6) and stays
-     the same in both themes (§30). */
+  /* Foreground for content sitting on a user-supplied image or video (§6). */
   --md-sys-color-on-media: #FFFFFF;
   --md-sys-color-media-scrim: rgba(0, 0, 0, 0.45);
 
@@ -151,7 +144,7 @@
 }
 
 /* ========================================================================= */
-/* DARK — TRUE DARK-GREEN (§5 Dark Theme, §30 Dark Mode Rules)               */
+/* DARK — SOFT FRAME DARK (§5 Dark Theme, §30 Dark Mode Rules)               */
 /* Only semantic colour changes. Geometry, spacing, radius stay identical.   */
 /* ========================================================================= */
 
@@ -159,84 +152,85 @@
 .dark {
   color-scheme: dark;
 
-  --md-sys-color-primary: #9CEC5D;
-  --md-sys-color-primary-strong: #9CEC5D;
-  --md-sys-color-on-primary: #0F2A03;
-  --md-sys-color-primary-container: #74AF42;
-  --md-sys-color-on-primary-container: #0F2A03;
-  --md-sys-color-primary-soft: #4C7526;
+  --md-sys-color-primary: #4D86FF;
+  --md-sys-color-primary-strong: #7FA8FF;
+  --md-sys-color-on-primary: #FFFFFF;
+  --md-sys-color-primary-container: #1E3566;
+  --md-sys-color-on-primary-container: #DCE7FF;
+  --md-sys-color-primary-soft: #16233F;
 
-  --md-sys-color-secondary: #B5CBA2;
-  --md-sys-color-on-secondary: #1F2E12;
-  --md-sys-color-secondary-container: #3B4631;
-  --md-sys-color-on-secondary-container: #DDE8CC;
+  /* Ink accent inverts to near-white so dark buttons stay the strongest mark */
+  --md-sys-color-secondary: #EEF0F3;
+  --md-sys-color-on-secondary: #121418;
+  --md-sys-color-secondary-container: #262B34;
+  --md-sys-color-on-secondary-container: #EEF0F3;
 
-  --md-sys-color-tertiary: #8FCBA0;
-  --md-sys-color-on-tertiary: #0C2415;
-  --md-sys-color-tertiary-container: #2C4936;
-  --md-sys-color-on-tertiary-container: #CDE6D4;
+  --md-sys-color-tertiary: #C9F23D;
+  --md-sys-color-on-tertiary: #1A2600;
+  --md-sys-color-tertiary-container: #33400F;
+  --md-sys-color-on-tertiary-container: #E6F9A8;
 
-  --md-sys-color-success: #9CEC5D;
-  --md-sys-color-on-success: #0F2A03;
-  --md-sys-color-success-container: #33511A;
-  --md-sys-color-on-success-container: #D9F5BC;
-  --md-sys-color-warning: #E2934F;
-  --md-sys-color-on-warning: #351B02;
-  --md-sys-color-warning-container: #5C3612;
-  --md-sys-color-on-warning-container: #F7DCC1;
-  --md-sys-color-error: #FD7C69;
-  --md-sys-color-on-error: #3E0C05;
-  --md-sys-color-error-container: #6B221A;
-  --md-sys-color-on-error-container: #FFDAD3;
-  --md-sys-color-info: #86C2E0;
-  --md-sys-color-on-info: #05222F;
-  --md-sys-color-info-container: #1F4557;
-  --md-sys-color-on-info-container: #CFE4EF;
+  --md-sys-color-success: #3CCF5C;
+  --md-sys-color-on-success: #06260E;
+  --md-sys-color-success-container: #173A20;
+  --md-sys-color-on-success-container: #BDF0C8;
+  --md-sys-color-warning: #FFAD3B;
+  --md-sys-color-on-warning: #2E1A00;
+  --md-sys-color-warning-container: #4A3210;
+  --md-sys-color-on-warning-container: #FFE2BA;
+  --md-sys-color-error: #FF5A4F;
+  --md-sys-color-on-error: #2E0602;
+  --md-sys-color-error-container: #4F1B17;
+  --md-sys-color-on-error-container: #FFD7D3;
+  --md-sys-color-info: #4D86FF;
+  --md-sys-color-on-info: #FFFFFF;
+  --md-sys-color-info-container: #1E3566;
+  --md-sys-color-on-info-container: #DCE7FF;
 
-  --md-sys-color-background: #0F150C;
-  --md-sys-color-on-background: #E6F0DD;
-  --md-sys-color-surface: #191E14;
-  --md-sys-color-on-surface: #E6F0DD;
-  --md-sys-color-on-surface-variant: #A1B49F;
-  --md-sys-color-surface-variant: #272F20;
+  --md-sys-color-background: #0F1115;
+  --md-sys-color-on-background: #EEF0F3;
+  --md-sys-color-surface: #171A20;
+  --md-sys-color-on-surface: #EEF0F3;
+  --md-sys-color-on-surface-variant: #B3B8C2;
+  --md-sys-color-surface-variant: #1E222A;
 
-  --md-sys-color-surface-container-lowest: #0A0F08;
-  --md-sys-color-surface-container-low: #1F2618;
-  --md-sys-color-surface-container: #272F20;
-  --md-sys-color-surface-container-high: #3B4631;
-  --md-sys-color-surface-container-highest: #4A573D;
+  --md-sys-color-surface-container-lowest: #0B0D10;
+  --md-sys-color-surface-container-low: #1A1D24;
+  --md-sys-color-surface-container: #1E222A;
+  --md-sys-color-surface-container-high: #262B34;
+  --md-sys-color-surface-container-highest: #313743;
 
-  --md-sys-color-outline: #84927A;
-  --md-sys-color-outline-variant: #3B4631;
-  --md-sys-color-border: #3B4631;
+  --md-sys-color-outline: #858B96;
+  --md-sys-color-outline-variant: #3A404B;
+  --md-sys-color-border: #2A2F38;
 
-  --md-sys-color-chart-primary: #9CEC5D;
-  --md-sys-color-chart-secondary: #6FAF39;
-  --md-sys-color-chart-tertiary: #E2934F;
-  --md-sys-color-chart-quaternary: #FD7C69;
-  --md-sys-color-chart-neutral: #6E7F63;
-  --md-sys-color-chart-grid: rgba(230, 240, 221, 0.09);
-  --md-sys-color-chart-axis: #8BA289;
-  --md-sys-color-chart-area-from: rgba(156, 236, 93, 0.22);
-  --md-sys-color-chart-area-to: rgba(156, 236, 93, 0);
+  --md-sys-color-chart-primary: #4D86FF;
+  --md-sys-color-chart-secondary: #C9F23D;
+  --md-sys-color-chart-tertiary: #EEF0F3;
+  --md-sys-color-chart-quaternary: #FFAD3B;
+  --md-sys-color-chart-neutral: #4A505C;
+  --md-sys-color-chart-grid: rgba(238, 240, 243, 0.08);
+  --md-sys-color-chart-axis: #858B96;
+  --md-sys-color-chart-area-from: rgba(77, 134, 255, 0.24);
+  --md-sys-color-chart-area-to: rgba(77, 134, 255, 0);
 
-  --hero-banner-bg: linear-gradient(135deg, #3B4631 0%, #45691F 55%, #507B29 100%);
-  --hero-banner-text: #EEF9E2;
-  --hero-banner-subtext: #C7ECA2;
-  --hero-banner-pill-bg: #9CEC5D;
-  --hero-banner-pill-text: #0F2A03;
-  --hero-banner-pill-icon: #0F2A03;
-  --hero-banner-tag-bg: rgba(230, 240, 221, 0.14);
-  --hero-banner-tag-text: #E6F0DD;
-  --hero-banner-blob-1: rgba(156, 236, 93, 0.10);
-  --hero-banner-blob-2: rgba(230, 240, 221, 0.06);
-  --hero-banner-arc: rgba(199, 236, 162, 0.22);
+  --hero-banner-bg: #EEF0F3;
+  --hero-banner-text: #121418;
+  --hero-banner-subtext: #4A505C;
+  --hero-banner-pill-bg: #C9F23D;
+  --hero-banner-pill-text: #1A2600;
+  --hero-banner-pill-icon: #1A2600;
+  --hero-banner-tag-bg: rgba(18, 20, 24, 0.08);
+  --hero-banner-tag-text: #121418;
+  --hero-banner-blob-1: rgba(18, 20, 24, 0.05);
+  --hero-banner-blob-2: rgba(77, 134, 255, 0.16);
+  --hero-banner-arc: rgba(58, 90, 0, 0.28);
 
-  --md-sys-color-inverse-surface: #E6F0DD;
-  --md-sys-color-inverse-on-surface: #1B2214;
-  --md-sys-color-inverse-primary: #4E8C24;
+  --md-sys-color-inverse-surface: #EEF0F3;
+  --md-sys-color-inverse-on-surface: #121418;
+  --md-sys-color-inverse-primary: #1F66FF;
 
-  --md-sys-color-scrim: rgba(6, 10, 4, 0.72);
+  --md-sys-color-scrim: rgba(0, 0, 0, 0.62);
 
   --md-sys-state-hover-opacity: 0.10;
   --md-sys-state-focus-opacity: 0.14;

@@ -102,10 +102,12 @@ html {
 
 .morphic-card {
   background-color: var(--color-surface);
-  border: var(--md-sys-border-width) solid var(--color-border);
+  /* Soft Frame: borderless white card on the grey frame; the transparent
+     border keeps geometry identical to bordered variants. */
+  border: var(--md-sys-border-width) solid transparent;
   border-radius: var(--radius-card);
   padding: var(--padding-card);
-  box-shadow: var(--elevation-0);
+  box-shadow: var(--elevation-1);
   transition: transform var(--motion-standard),
               background-color var(--motion-standard),
               border-color var(--motion-standard),
@@ -114,9 +116,7 @@ html {
 
 /* §19 Micro-interactions: brighter surface → subtle elevation → -1px */
 .morphic-card:hover {
-  background-color: var(--color-surface-container-low);
-  border-color: var(--color-outline-variant);
-  box-shadow: var(--elevation-1);
+  box-shadow: var(--elevation-2);
   transform: translateY(-1px);
 }
 
@@ -125,6 +125,7 @@ html {
   background-color: var(--color-surface-container);
   border-radius: var(--radius-card-nested);
   padding: var(--md-sys-padding-card-compact);
+  box-shadow: none;
 }
 
 .morphic-card--flat:hover {

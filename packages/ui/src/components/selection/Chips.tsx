@@ -34,7 +34,7 @@ export const Chip: React.FC<ChipProps> = ({
       disabled={disabled}
       style={{
         height: '32px', // Official M3 32px height for Chips
-        borderRadius: 'var(--radius-sm)', // Official M3 8px radius
+        borderRadius: 'var(--radius-pill)', // Soft Frame: pill chips
         padding: selected && isFilter ? '0 12px 0 8px' : '0 16px',
         display: 'inline-flex',
         alignItems: 'center',

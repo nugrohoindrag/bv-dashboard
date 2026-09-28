@@ -7,7 +7,7 @@ import type { AdvancedDataTableProps } from '../components/data-display/Advanced
  * reference configuration as its defaults.
  *
  * The reference is the Customer Order list — a title with the row count under
- * it, the search box and density toggle, a solid primary header, and only the
+ * it, the search box and density toggle, the Soft Frame table header (muted uppercase, no fill), and only the
  * columns the screen needs. The mirror component reaches that look only when
  * every caller remembers the same three props, and across forty-odd tables
  * they did not: some opened with a checkbox column and a "Delete Selected"

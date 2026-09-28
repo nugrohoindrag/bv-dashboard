@@ -8,8 +8,8 @@ import { useItemVariants } from './PageMotion.js';
  *
  * Every card-shaped surface the design system ships, MetricCard,
  * PlantMetricCard, HorizontalBarChart, ThroughputChartCard, DefectParetoCard,
- * is built from one recipe: a filled `surface` panel, a hairline `border`, a
- * 22px radius and elevation 1. This component is that recipe, named.
+ * is built from one recipe: a white `surface` panel with no border (Soft
+ * Frame), a 22px radius and elevation 1. This component is that recipe, named.
  *
  * Product pages should reach for this rather than `Card variant="filled"`,
  * whose `surface-container-highest` fill reads as a tinted box next to the
@@ -52,7 +52,8 @@ export const SurfaceCard: React.FC<SurfaceCardProps> = ({
       style={{
         borderRadius: 'var(--radius-xl)',
         backgroundColor: 'var(--color-surface)',
-        border: '1px solid var(--color-border)',
+        // Soft Frame: borderless white card on the grey frame (transparent border keeps geometry)
+        border: '1px solid transparent',
         borderLeft: railTone ? `6px solid ${toneColor[railTone]}` : undefined,
         boxShadow: 'var(--elevation-1)',
         padding: PADDING[padding],

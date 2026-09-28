@@ -33,7 +33,7 @@
 /* LIGHT PRESETS                                                             */
 /* ========================================================================= */
 
-/* Lime — reference preset (§20), identical to :root */
+/* Lime — the former reference accent (before the 29 Sep 2026 Soft Frame palette) */
 [data-accent='lime'] {
   --md-sys-color-primary: #6FAF39;
   --md-sys-color-primary-strong: #588B2D;
@@ -183,7 +183,7 @@
 /* Same geometry, same hierarchy — semantic surfaces only.                   */
 /* ========================================================================= */
 
-/* Lime dark — reference dark theme, identical to [data-theme='dark'] */
+/* Lime dark — the former reference dark accent */
 [data-theme='dark'][data-accent='lime'],
 .dark[data-accent='lime'] {
   --md-sys-color-primary: #9CEC5D;

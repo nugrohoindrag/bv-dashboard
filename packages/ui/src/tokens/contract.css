@@ -166,7 +166,7 @@
   --radius-chart: var(--radius-xl);     /* charts 18–22px */
   --radius-table: var(--radius-lg);     /* list containers 16–20px */
   --radius-input: var(--radius-md);     /* inputs/filters 10–14px */
-  --radius-button: var(--radius-md);    /* pill or 10–14px */
+  --radius-button: var(--radius-pill);  /* Soft Frame: pill buttons */
   --radius-badge: var(--radius-pill);
   --radius-overlay: var(--radius-lg);
 }
