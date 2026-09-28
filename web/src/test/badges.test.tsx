@@ -29,3 +29,14 @@ describe("Priority & flag badges", () => {
     expect(screen.getByText(/sla risk/i)).toBeInTheDocument();
   });
 });
+
+describe("FlagBadges reopened & critical (PRD P0 §20.2)", () => {
+  it("reopened tampil dari reopen_count > 0; critical hanya bila showCritical", () => {
+    const item = { flags: [], reopen_count: 1, priority: "critical" };
+    const { rerender } = render(<FlagBadges item={item} />);
+    expect(screen.getByText(statusMap.flags.reopened.label_id)).toBeInTheDocument();
+    expect(screen.queryByText(statusMap.flags.critical.label_id)).not.toBeInTheDocument();
+    rerender(<FlagBadges item={item} showCritical />);
+    expect(screen.getByText(statusMap.flags.critical.label_id)).toBeInTheDocument();
+  });
+});

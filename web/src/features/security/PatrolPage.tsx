@@ -1,6 +1,8 @@
 // Patrol (PRD §16): tab Patrol Tasks (hari ini/riwayat, checkpoint scan status), Rute, Checkpoint, Jadwal.
+// PRD P2 v2.1: jadwal patrol dapat dikaitkan ke Security Shift (P2-SHF-04); drill-down Security Dashboard ?from&to (patrol per
+// periode) dan /security/patrol-routes/{id} → tab Rute (?route=). Hari = Go time.Weekday (0 = Minggu … 6 = Sabtu).
 import { useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { Icon } from "@buildingvision/ui";
@@ -8,9 +10,10 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shell/AppShell";
 import { Button, Checkbox, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect, Tabs, TabsContent, TabsList, TabsTrigger, Textarea } from "@/components/ui/primitives";
 import { DataGrid, FilterBar, useUrlFilters } from "@/components/bv/datagrid";
-import { FlagBadges, PriorityBadge, StatusBadge } from "@/components/bv/badges";
+import { PriorityBadge, StatusBadge } from "@/components/bv/badges";
+import { CellLocation, CellStatus, CellText, CellTitle } from "@/components/bv/cells";
 import { AsyncState, ReasonDialog, useToast } from "@/components/bv/common";
-import { LocationPicker, TeamPicker, UserPicker } from "@/components/bv/pickers";
+import { LocationPicker, TeamPicker, UserPicker, WeekdayPicker } from "@/components/bv/pickers";
 import { useAction, useAll, useCreate, useList, useTemplates, useUpdate } from "@/api/hooks";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -19,8 +22,10 @@ import { fmtDateTime, fmtTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { Checkpoint, CheckpointScan, PatrolRoute, PatrolSchedule, WorkItem } from "@/api/types";
 import { AssignDialog, TransitionActions } from "@/features/operations/dialogs";
-
-const WEEKDAYS = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
+import { ALL_WEEKDAYS, normalizeWeekdays, weekdaysText } from "@/lib/weekdays";
+import { workItemQuery } from "@/lib/drilldown";
+import { ShiftSelect } from "@/features/workforce/components";
+import { clearableId } from "@/lib/clearable";
 
 export default function PatrolPage() {
   const { t } = useTranslation();
@@ -50,7 +55,8 @@ function PatrolTasksTab() {
   const { propertyId, can } = useAuth();
   const toast = useToast();
   const f = useUrlFilters();
-  const query = useMemo(() => { const q: Record<string, string | undefined> = { ...f.all, property_id: propertyId ?? undefined }; delete q.cursor; return q; }, [f.all, propertyId]);
+  // drill-down dashboard ?from&to (YYYY-MM-DD) → rentang due (patrol terjadwal dalam periode)
+  const query = useMemo(() => { const q: Record<string, string | undefined> = { ...workItemQuery(f.all, "due").query, property_id: propertyId ?? f.all.property_id ?? undefined }; delete q.cursor; return q; }, [f.all, propertyId]);
   const list = useList<WorkItem>("patrol-tasks", query);
   const rows = list.data?.pages.flatMap((p) => p.data) ?? [];
   const [assign, setAssign] = useState<WorkItem | null>(null);
@@ -58,13 +64,14 @@ function PatrolTasksTab() {
   const generate = useAction<void, { generated: number }>(() => "patrol-schedules/generate", { body: () => ({}) });
   const columns = useMemo<ColumnDef<WorkItem, unknown>[]>(
     () => [
-      { id: "number", header: "ID", cell: ({ row }) => <span className="font-mono text-[13px] font-semibold">{row.original.number}</span>, size: 150 },
-      { id: "title", header: "Rute / Judul", cell: ({ row }) => <div className="truncate font-medium">{row.original.title}</div> },
-      { id: "sched", header: "Jadwal", cell: ({ row }) => <span className="tnum">{fmtDateTime(row.original.scheduled_start_at)}</span>, size: 150 },
-      { id: "status", header: t("label.status"), cell: ({ row }) => <div className="flex flex-wrap gap-1"><StatusBadge objectType="task" status={row.original.status} /><FlagBadges flags={row.original.flags} /></div> },
-      { id: "cp", header: "Checkpoint", cell: ({ row }) => { const ex = row.original.extension as { checkpoints_total?: number; checkpoints_scanned?: number; checkpoints_missed?: number } | undefined; return ex ? <span className="tnum">{ex.checkpoints_scanned ?? 0}/{ex.checkpoints_total ?? 0}{(ex.checkpoints_missed ?? 0) > 0 && <span className="text-critical-text"> · {ex.checkpoints_missed} missed</span>}</span> : "—"; }, size: 130 },
-      { id: "assignee", header: t("label.assignee"), cell: ({ row }) => row.original.assignee.user_name ?? row.original.assignee.team_name ?? <em className="text-muted-foreground">belum ditugaskan</em> },
-      { id: "actions", header: "", cell: ({ row }) => <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}><Button size="sm" variant="ghost" onClick={() => setSelected(row.original)}>Checkpoint</Button><TransitionActions objectType="task" item={row.original} compact onAssign={() => setAssign(row.original)} /></div> },
+      // Tabel disederhanakan (29 Sep 2026): nomor + judul rute, jadwal, satu status + satu flag terpenting, progres checkpoint
+      // satu baris, petugas. Detail scan per checkpoint ada di drawer "Checkpoint" / halaman detail task.
+      { id: "title", header: "Patrol", meta: { mobile: "primary" }, cell: ({ row }) => <CellTitle code={row.original.number} title={row.original.title} /> },
+      { id: "sched", header: "Jadwal", meta: { mobile: "secondary" }, cell: ({ row }) => <span className="tnum whitespace-nowrap text-sm">{fmtDateTime(row.original.scheduled_start_at)}</span>, size: 150 },
+      { id: "status", header: t("label.status"), meta: { mobile: "status" }, cell: ({ row }) => <CellStatus objectType="task" status={row.original.status} item={row.original} /> },
+      { id: "cp", header: "Checkpoint", meta: { mobile: "secondary" }, cell: ({ row }) => <CheckpointProgress task={row.original} />, size: 130 },
+      { id: "assignee", header: t("label.assignee"), meta: { mobile: "secondary" }, cell: ({ row }) => { const a = row.original.assignee.user_name ?? row.original.assignee.team_name; return a ? <CellText max={140}>{a}</CellText> : <CellText max={140} muted className="italic">belum ditugaskan</CellText>; } },
+      { id: "actions", header: "", cell: ({ row }) => <div className="flex justify-end gap-1 whitespace-nowrap" onClick={(e) => e.stopPropagation()}><Button size="sm" variant="ghost" onClick={() => setSelected(row.original)}>Checkpoint</Button><TransitionActions objectType="task" item={row.original} compact onAssign={() => setAssign(row.original)} /></div> },
     ],
     [t],
   );
@@ -84,10 +91,23 @@ function PatrolTasksTab() {
           extra: can("security.patrol.manage") ? <Button size="sm" variant="secondary" loading={generate.isPending} onClick={() => generate.mutateAsync().then((r) => toast.success(`${r.generated} patrol task dibuat dari jadwal`)).catch(toast.error)}><Icon name="play_arrow" size={16} /> Generate dari jadwal</Button> : undefined,
         }}
       />
-      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/operations/tasks/${r.id}`} loading={list.isLoading} isFiltered={f.isFiltered} empty={{ message: "Belum ada Patrol Task. Buat jadwal patrol lalu generate." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} rowClassName={(r) => (r.is_overdue ? "border-l-4 border-l-critical" : undefined)} />
+      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/operations/tasks/${r.id}`} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} isFiltered={f.isFiltered} empty={{ message: "Belum ada Patrol Task. Buat jadwal patrol lalu generate." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} rowClassName={(r) => (r.is_overdue ? "border-l-4 border-l-critical" : undefined)} />
       {assign && <AssignDialog objectType="task" id={assign.id} open onOpenChange={(o) => !o && setAssign(null)} current={assign.assignee} domain="security" />}
       {selected && <CheckpointScansDialog task={selected} onClose={() => setSelected(null)} />}
     </div>
+  );
+}
+
+/** Progres checkpoint satu baris: "3/5" + jumlah missed (merah) bila ada. */
+function CheckpointProgress({ task }: { task: WorkItem }) {
+  const ex = task.extension as { checkpoints_total?: number; checkpoints_scanned?: number; checkpoints_missed?: number } | undefined;
+  if (!ex) return <span className="text-sm text-muted-foreground">—</span>;
+  const missed = ex.checkpoints_missed ?? 0;
+  return (
+    <span className="tnum whitespace-nowrap text-sm">
+      {ex.checkpoints_scanned ?? 0}/{ex.checkpoints_total ?? 0}
+      {missed > 0 && <span className="text-critical-text"> · {missed} missed</span>}
+    </span>
   );
 }
 
@@ -140,9 +160,9 @@ function CheckpointsTab() {
   const [edit, setEdit] = useState<Checkpoint | null | "new">(null);
   const columns = useMemo<ColumnDef<Checkpoint, unknown>[]>(
     () => [
-      { id: "name", header: "Checkpoint", cell: ({ row }) => <span className="font-medium">{row.original.name}</span> },
-      { id: "loc", header: t("label.location"), cell: ({ row }) => <span className="text-muted-foreground">{row.original.location_path}</span> },
-      { id: "qr", header: "QR", cell: ({ row }) => <span className="font-mono text-xs">{row.original.qr_code ?? "—"}</span>, size: 200 },
+      { id: "name", header: "Checkpoint", meta: { mobile: "primary" }, cell: ({ row }) => <CellText max={240} className="font-medium">{row.original.name}</CellText> },
+      { id: "loc", header: t("label.location"), meta: { mobile: "secondary" }, cell: ({ row }) => <CellLocation path={row.original.location_path} /> },
+      { id: "qr", header: "QR", cell: ({ row }) => <CellText max={180} muted className="font-mono text-xs">{row.original.qr_code ?? "—"}</CellText>, size: 200 },
       { id: "active", header: "Aktif", cell: ({ row }) => <span className={cn("text-xs", row.original.is_active ? "text-success-text" : "text-muted-foreground")}>{row.original.is_active ? "Aktif" : "Nonaktif"}</span>, size: 80 },
     ],
     [t],
@@ -150,7 +170,7 @@ function CheckpointsTab() {
   return (
     <div className="space-y-3">
       <div className="flex justify-end">{can("security.checkpoints.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Tambah Checkpoint</Button>}</div>
-      <DataGrid columns={columns} rows={list.data ?? []} rowId={(r) => r.id} onRowClick={(r) => { if (can("security.checkpoints.update")) setEdit(r); }} loading={list.isLoading} empty={{ message: "Belum ada checkpoint." }} />
+      <DataGrid columns={columns} rows={list.data ?? []} rowId={(r) => r.id} onRowClick={(r) => { if (can("security.checkpoints.update")) setEdit(r); }} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} empty={{ message: "Belum ada checkpoint." }} />
       {edit && <CheckpointDialog item={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
     </div>
   );
@@ -168,8 +188,9 @@ function CheckpointDialog({ item, onClose }: { item: Checkpoint | null; onClose:
     if (!form.name.trim() || !form.location_id) return toast.error(new Error("Nama dan lokasi wajib"));
     try {
       if (item) await update.mutateAsync({ id: item.id, version: 0, name: form.name, location_id: form.location_id, instructions: form.instructions || null, is_active: form.is_active });
-      else await create.mutateAsync({ property_id: pid, name: form.name, location_id: form.location_id, instructions: form.instructions || null, is_active: form.is_active });
-      toast.success("Checkpoint disimpan");
+      // CheckpointInput server tanpa property_id (property dari lokasi; field JSON tak dikenal → 400)
+      else await create.mutateAsync({ name: form.name, location_id: form.location_id, instructions: form.instructions || null, is_active: form.is_active });
+      toast.action("saved", "Checkpoint");
       onClose();
     } catch (e) {
       toast.error(e);
@@ -195,11 +216,18 @@ function RoutesTab() {
   const { propertyId, can } = useAuth();
   const list = useAll<PatrolRoute>("patrol-routes", { property_id: propertyId ?? undefined });
   const [edit, setEdit] = useState<PatrolRoute | null | "new">(null);
+  // drill-down Security Dashboard per rute: ?route={id} membuka rute tsb
+  const [sp, setSp] = useSearchParams();
+  const routeParam = sp.get("route");
+  const fromParam = routeParam ? list.data?.find((r) => r.id === routeParam) ?? null : null;
+  const current = edit ?? fromParam;
+  const close = () => { setEdit(null); if (routeParam) { const n = new URLSearchParams(sp); n.delete("route"); setSp(n, { replace: true }); } };
   const columns = useMemo<ColumnDef<PatrolRoute, unknown>[]>(
     () => [
-      { id: "name", header: "Rute", cell: ({ row }) => <div><div className="font-medium">{row.original.name}</div><div className="text-xs text-muted-foreground">{row.original.description}</div></div> },
-      { id: "cp", header: "Checkpoint", cell: ({ row }) => <span className="tnum">{row.original.checkpoints.length}</span>, size: 100 },
-      { id: "est", header: "Estimasi", cell: ({ row }) => row.original.estimated_minutes ? `${row.original.estimated_minutes} menit` : "—", size: 100 },
+      // deskripsi rute ada di dialog ubah rute (klik baris)
+      { id: "name", header: "Rute", meta: { mobile: "primary" }, cell: ({ row }) => <CellText max={260} title={row.original.description ? `${row.original.name} — ${row.original.description}` : row.original.name} className="font-medium">{row.original.name}</CellText> },
+      { id: "cp", header: "Checkpoint", cell: ({ row }) => <span className="tnum whitespace-nowrap">{row.original.checkpoints.length}</span>, size: 100 },
+      { id: "est", header: "Estimasi", cell: ({ row }) => <span className="whitespace-nowrap">{row.original.estimated_minutes ? `${row.original.estimated_minutes} menit` : "—"}</span>, size: 100 },
       { id: "active", header: "Aktif", cell: ({ row }) => <span className={cn("text-xs", row.original.is_active ? "text-success-text" : "text-muted-foreground")}>{row.original.is_active ? "Aktif" : "Nonaktif"}</span>, size: 80 },
     ],
     [],
@@ -207,8 +235,9 @@ function RoutesTab() {
   return (
     <div className="space-y-3">
       <div className="flex justify-end">{can("security.patrol_routes.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Buat Rute</Button>}</div>
-      <DataGrid columns={columns} rows={list.data ?? []} rowId={(r) => r.id} onRowClick={(r) => { setEdit(r); }} loading={list.isLoading} empty={{ message: "Belum ada rute patrol." }} />
-      {edit && <RouteDialog item={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
+      <DataGrid columns={columns} rows={list.data ?? []} rowId={(r) => r.id} onRowClick={(r) => { setEdit(r); }} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} empty={{ message: "Belum ada rute patrol." }} />
+      {routeParam && list.data && !fromParam && <p className="text-sm text-on-surface-variant">Rute dari tautan tidak ditemukan di property ini.</p>}
+      {current && <RouteDialog key={current === "new" ? "new" : current.id} item={current === "new" ? null : current} onClose={close} />}
     </div>
   );
 }
@@ -232,7 +261,7 @@ function RouteDialog({ item, onClose }: { item: PatrolRoute | null; onClose: () 
     try {
       if (item) await update.mutateAsync({ id: item.id, version: 0, ...body });
       else await create.mutateAsync(body);
-      toast.success("Rute disimpan");
+      toast.action("saved", "Rute");
       onClose();
     } catch (e) {
       toast.error(e);
@@ -281,9 +310,10 @@ function SchedulesTab() {
   const [edit, setEdit] = useState<PatrolSchedule | null | "new">(null);
   const columns = useMemo<ColumnDef<PatrolSchedule, unknown>[]>(
     () => [
-      { id: "name", header: "Jadwal", cell: ({ row }) => <div><div className="font-medium">{row.original.name}</div><div className="text-xs text-muted-foreground">{row.original.route_name}</div></div> },
-      { id: "time", header: "Mulai", cell: ({ row }) => <span className="tnum">{row.original.start_time.slice(0, 5)} · {row.original.duration_minutes} mnt</span>, size: 130 },
-      { id: "days", header: "Hari", cell: ({ row }) => <span className="text-xs">{row.original.weekdays.map((d) => WEEKDAYS[d - 1] ?? d).join(" ")}</span> },
+      { id: "name", header: "Jadwal", meta: { mobile: "primary" }, cell: ({ row }) => <CellText max={220} className="font-medium">{row.original.name}</CellText> },
+      { id: "route", header: "Rute", meta: { mobile: "secondary" }, cell: ({ row }) => <CellText max={180} muted>{row.original.route_name}</CellText> },
+      { id: "time", header: "Mulai", cell: ({ row }) => <span className="tnum whitespace-nowrap">{row.original.start_time.slice(0, 5)} · {row.original.duration_minutes} mnt</span>, size: 130 },
+      { id: "days", header: "Hari", cell: ({ row }) => <CellText max={180}>{weekdaysText(row.original.weekdays)}</CellText> },
       { id: "prio", header: "Prioritas", cell: ({ row }) => <PriorityBadge priority={row.original.priority} />, size: 100 },
       { id: "active", header: "Aktif", cell: ({ row }) => <span className={cn("text-xs", row.original.is_active ? "text-success-text" : "text-muted-foreground")}>{row.original.is_active ? "Aktif" : "Nonaktif"}</span>, size: 80 },
     ],
@@ -292,20 +322,8 @@ function SchedulesTab() {
   return (
     <div className="space-y-3">
       <div className="flex justify-end">{can("security.patrol.manage") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Buat Jadwal</Button>}</div>
-      <DataGrid columns={columns} rows={list.data ?? []} rowId={(r) => r.id} onRowClick={(r) => { if (can("security.patrol.manage")) setEdit(r); }} loading={list.isLoading} empty={{ message: "Belum ada jadwal patrol." }} />
+      <DataGrid columns={columns} rows={list.data ?? []} rowId={(r) => r.id} onRowClick={(r) => { if (can("security.patrol.manage")) setEdit(r); }} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} empty={{ message: "Belum ada jadwal patrol." }} />
       {edit && <PatrolScheduleDialog item={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
-    </div>
-  );
-}
-
-export function WeekdayPicker({ value, onChange }: { value: number[]; onChange: (v: number[]) => void }) {
-  return (
-    <div className="flex gap-1">
-      {WEEKDAYS.map((d, i) => {
-        const n = i + 1;
-        const on = value.includes(n);
-        return <button key={n} type="button" onClick={() => onChange(on ? value.filter((x) => x !== n) : [...value, n].sort())} className={cn("h-8 w-10 rounded-md border text-xs", on ? "border-brand-600 bg-brand-600 text-white" : "border-border bg-card text-muted-foreground")}>{d}</button>;
-      })}
     </div>
   );
 }
@@ -316,16 +334,18 @@ function PatrolScheduleDialog({ item, onClose }: { item: PatrolSchedule | null; 
   const toast = useToast();
   const [pid, setPid] = useState(item?.property_id ?? propertyId ?? properties[0]?.id ?? "");
   const routes = useAll<PatrolRoute>("patrol-routes", { property_id: pid || undefined }, { enabled: !!pid });
-  const [form, setForm] = useState({ route_id: item?.route_id ?? "", name: item?.name ?? "", start_time: item?.start_time.slice(0, 5) ?? "20:00", duration_minutes: item?.duration_minutes?.toString() ?? "60", weekdays: item?.weekdays ?? [1, 2, 3, 4, 5, 6, 7], responsible_team_id: item?.responsible_team_id ?? null as string | null, default_assignee_user_id: item?.default_assignee_user_id ?? null as string | null, priority: (item?.priority ?? "medium") as string, is_active: item?.is_active ?? true });
+  const [form, setForm] = useState({ route_id: item?.route_id ?? "", name: item?.name ?? "", start_time: item?.start_time.slice(0, 5) ?? "20:00", duration_minutes: item?.duration_minutes?.toString() ?? "60", weekdays: normalizeWeekdays(item?.weekdays ?? ALL_WEEKDAYS), shift_id: item?.shift_id ?? "", responsible_team_id: item?.responsible_team_id ?? null as string | null, default_assignee_user_id: item?.default_assignee_user_id ?? null as string | null, priority: (item?.priority ?? "medium") as string, is_active: item?.is_active ?? true });
   const create = useCreate<Record<string, unknown>>("patrol-schedules");
-  const update = useUpdate<{ id: string; version: number } & Record<string, unknown>>("patrol-schedules");
+  const update = useUpdate<{ id: string; version?: number } & Record<string, unknown>>("patrol-schedules");
   const submit = async () => {
     if (!form.route_id || !form.name.trim() || form.weekdays.length === 0) return toast.error(new Error("Rute, nama, dan hari wajib"));
-    const body = { property_id: pid, route_id: form.route_id, name: form.name.trim(), start_time: form.start_time, duration_minutes: Number(form.duration_minutes), weekdays: form.weekdays, responsible_team_id: form.responsible_team_id, default_assignee_user_id: form.default_assignee_user_id, priority: form.priority, is_active: form.is_active };
+    if (!form.start_time && !form.shift_id) return toast.error(new Error("Isi jam mulai atau pilih shift"));
+    // ScheduleInput server tanpa property_id (property dari rute; field JSON tak dikenal → 400)
+    const body = { route_id: form.route_id, name: form.name.trim(), start_time: form.start_time || null, shift_id: clearableId(form.shift_id, item?.shift_id), duration_minutes: Number(form.duration_minutes), weekdays: form.weekdays, responsible_team_id: form.responsible_team_id, default_assignee_user_id: form.default_assignee_user_id, priority: form.priority, is_active: form.is_active };
     try {
-      if (item) await update.mutateAsync({ id: item.id, version: 0, ...body });
+      if (item) await update.mutateAsync({ id: item.id, ...body });
       else await create.mutateAsync(body);
-      toast.success("Jadwal disimpan");
+      toast.action("saved", "Jadwal");
       onClose();
     } catch (e) {
       toast.error(e);
@@ -335,14 +355,16 @@ function PatrolScheduleDialog({ item, onClose }: { item: PatrolSchedule | null; 
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent side="right" title={item ? `Jadwal · ${item.name}` : "Buat Jadwal Patrol"}>
         <div className="space-y-4">
-          {!item && properties.length > 1 && <Field label="Property" required><NativeSelect value={pid} onChange={(e) => { setPid(e.target.value); setForm({ ...form, route_id: "" }); }}>{properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</NativeSelect></Field>}
+          {!item && properties.length > 1 && <Field label="Property" required><NativeSelect value={pid} onChange={(e) => { setPid(e.target.value); setForm({ ...form, route_id: "", shift_id: "" }); }}>{properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</NativeSelect></Field>}
           <Field label="Rute" required><NativeSelect value={form.route_id} onChange={(e) => setForm({ ...form, route_id: e.target.value })} disabled={!!item}><option value="">Pilih rute…</option>{(routes.data ?? []).filter((r) => r.is_active).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</NativeSelect></Field>
           <Field label="Nama jadwal" required><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="mis. Patrol malam 20:00" /></Field>
           <div className="grid grid-cols-3 gap-3">
-            <Field label="Mulai" required><Input type="time" value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} /></Field>
+            <Field label="Mulai" required={!form.shift_id} help={form.shift_id ? "Kosong = jam mulai shift" : undefined}><Input type="time" value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} /></Field>
             <Field label="Durasi (menit)"><Input type="number" value={form.duration_minutes} onChange={(e) => setForm({ ...form, duration_minutes: e.target.value })} /></Field>
             <Field label={t("label.priority")}><NativeSelect value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>{["low", "medium", "high", "critical"].map((p) => <option key={p} value={p}>{t(`priority.${p}`)}</option>)}</NativeSelect></Field>
           </div>
+          {/* PRD P2 v2.1 P2-SHF-04: shift Security (D-P2-05 per domain); jam mulai default = jam mulai shift */}
+          <Field label="Shift Security" help={item?.shift_id ? "Kosongkan untuk melepas shift (isi jam mulai)." : "Opsional — jam mulai mengikuti shift bila jam dikosongkan."}><ShiftSelect domain="security" propertyId={pid} value={form.shift_id} onChange={(v) => setForm({ ...form, shift_id: v })} /></Field>
           <Field label="Hari" required><WeekdayPicker value={form.weekdays} onChange={(v) => setForm({ ...form, weekdays: v })} /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label={t("label.team")}><TeamPicker propertyId={pid} domain="security" value={form.responsible_team_id} onChange={(v) => setForm({ ...form, responsible_team_id: v, default_assignee_user_id: null })} /></Field>

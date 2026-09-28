@@ -25,7 +25,7 @@ export function AssetDialog({ asset, onClose }: { asset: Asset | null; onClose: 
     try {
       if (asset) await update.mutateAsync({ id: asset.id, version: asset.version, ...body });
       else await create.mutateAsync(body);
-      toast.success("Aset disimpan");
+      toast.action("saved", "Aset");
       onClose();
     } catch (e) {
       toast.error(e);

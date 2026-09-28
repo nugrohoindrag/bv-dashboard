@@ -26,8 +26,10 @@ export function WorkOrderPartsPanel({ woId, propertyId, terminal, editable }: { 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Parts Usage {parts.data ? `(${parts.data.data.length})` : ""}</CardTitle>
-        <CardSubtitle>Pemakaian spare part mengurangi stok gudang dan menambah biaya aktual Work Order.</CardSubtitle>
+        <div className="min-w-0 flex-1 basis-48">
+          <CardTitle>Parts Usage {parts.data ? `(${parts.data.data.length})` : ""}</CardTitle>
+          <CardSubtitle>Pemakaian spare part mengurangi stok gudang dan menambah biaya aktual Work Order.</CardSubtitle>
+        </div>
         {canAdd && <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>Catat pemakaian</Button>}
       </CardHeader>
       <CardContent>

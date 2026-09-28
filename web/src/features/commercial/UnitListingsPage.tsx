@@ -7,15 +7,18 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Icon } from "@buildingvision/ui";
 import { MetricCard } from "@buildingvision/ui/bv";
 import { PageHeader } from "@/components/shell/AppShell";
-import { Alert, Badge, Button, Checkbox, Dialog, DialogContent, DialogFooter, Drawer, Field, Input, NativeSelect, Textarea } from "@/components/ui/primitives";
+import { Alert, Button, Checkbox, Dialog, DialogContent, DialogFooter, Drawer, Field, Input, NativeSelect, Textarea } from "@/components/ui/primitives";
 import { DataGrid } from "@/components/bv/datagrid";
 import { AsyncState, KeyValue, RelativeTime, useToast } from "@/components/bv/common";
 import { useAction, useList, useOne } from "@/api/hooks";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { FURNISHING, LISTING_STATUS, fmtD, num, rp, type Doc, type Listing, type SalesSummary } from "./commercial-api";
+import { FURNISHING, fmtD, num, rp, type Doc, type Listing, type SalesSummary } from "./commercial-api";
 import { DocList, DocumentsEditor, UnitSelect } from "./shared";
+import { StatusBadge } from "@/components/bv/badges";
+import { CellTitle } from "@/components/bv/cells";
+import { statusLabel, statusOptions } from "@/lib/status";
 
 export function useSalesSummary(propertyId: string | null) {
   return useQuery({ queryKey: ["unit-sales-summary", propertyId], enabled: !!propertyId, queryFn: () => api<SalesSummary>("unit-sales/summary", { query: { property_id: propertyId } }) });
@@ -33,11 +36,11 @@ export default function UnitListingsPage() {
   const sum = useSalesSummary(propertyId);
   const rows = list.data?.pages.flatMap((p) => p.data) ?? [];
   const columns = useMemo<ColumnDef<Listing, unknown>[]>(() => [
-    { id: "code", header: "Listing", cell: ({ row }) => <span className="font-mono text-[13px] font-semibold">{row.original.listing_code}</span>, size: 150 },
-    { id: "unit", header: "Unit", cell: ({ row }) => <div><div className="font-medium">{row.original.unit_number} · {row.original.title}</div><div className="text-xs text-muted-foreground">{row.original.floor_name ?? ""}{row.original.bedrooms != null ? ` · ${row.original.bedrooms} KT` : ""}{row.original.area_m2 != null ? ` · ${row.original.area_m2} m²` : ""}{row.original.furnishing ? ` · ${FURNISHING[row.original.furnishing]}` : ""}</div></div> },
-    { id: "price", header: "Harga", cell: ({ row }) => <span className="tnum font-semibold">{rp(row.original.asking_price)}{row.original.price_negotiable ? <span className="ml-1 text-xs font-normal text-muted-foreground">nego</span> : null}</span>, size: 170 },
-    { id: "leads", header: "Lead", cell: ({ row }) => <span className="tnum">{row.original.lead_count}</span>, size: 70 },
-    { id: "status", header: t("label.status"), cell: ({ row }) => <Badge tone={LISTING_STATUS[row.original.status]?.tone ?? "neutral"}>{LISTING_STATUS[row.original.status]?.label ?? row.original.status}</Badge>, size: 120 },
+    // Tabel disederhanakan (29 Sep 2026): kode + unit/judul, harga, status. Lantai, kamar, luas, furnishing & jumlah lead
+    // ada di drawer detail.
+    { id: "unit", header: "Listing", meta: { mobile: "primary" }, cell: ({ row }) => <CellTitle code={row.original.listing_code} title={`${row.original.unit_number} · ${row.original.title}`} /> },
+    { id: "price", header: "Harga", meta: { mobile: "secondary" }, cell: ({ row }) => <div className="tnum whitespace-nowrap text-right font-semibold">{rp(row.original.asking_price)}{row.original.price_negotiable ? <span className="ml-1 text-xs font-normal text-muted-foreground">nego</span> : null}</div>, size: 180 },
+    { id: "status", header: t("label.status"), meta: { mobile: "status" }, cell: ({ row }) => <StatusBadge objectType="unit_listing" status={row.original.status} />, size: 120 },
   ], [t]);
   if (!propertyId) return <Alert variant="info">Pilih property (profile Apartment) di header.</Alert>;
   return (
@@ -45,7 +48,7 @@ export default function UnitListingsPage() {
       <PageHeader title="Unit Sales · Listings" subtitle="Inventori penjualan unit milik property: harga, ketersediaan, dokumen. Reservasi & pipeline ada di Leads." actions={<>{can("commercial.sales_leads.view") && <Link to="/commercial/sales/leads"><Button variant="secondary"><Icon name="group" size={16} /> Leads</Button></Link>}{can("commercial.unit_listings.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Listing Baru</Button>}</>}>
         <div className="flex items-center gap-2">
           <Input className="w-64" placeholder="Cari kode / judul / unit…" value={q} onChange={(e) => setQ(e.target.value)} />
-          <NativeSelect className="w-44" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option>{Object.entries(LISTING_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</NativeSelect>
+          <NativeSelect className="w-44" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option>{statusOptions("unit_listing").map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>
         </div>
       </PageHeader>
       {sum.data && (
@@ -57,7 +60,7 @@ export default function UnitListingsPage() {
           <MetricCard label="Follow-up jatuh tempo" value={String(sum.data.follow_ups_due)} tone={sum.data.follow_ups_due > 0 ? "warning" : "neutral"} />
         </div>
       )}
-      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/commercial/sales/listings/${r.id}`} loading={list.isLoading} isFiltered={!!q || !!status} empty={{ message: "Belum ada listing penjualan." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} />
+      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/commercial/sales/listings/${r.id}`} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} isFiltered={!!q || !!status} empty={{ message: "Belum ada listing penjualan." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} />
       {edit && <ListingDialog propertyId={propertyId} listing={edit === "new" ? null : edit} onClose={() => setEdit(null)} onSaved={(l) => nav(`/commercial/sales/listings/${l.id}`)} />}
       {id && <ListingDrawer id={id} onClose={() => nav("/commercial/sales/listings")} onEdit={(l) => setEdit(l)} />}
     </div>
@@ -69,7 +72,7 @@ export function ListingDrawer({ id, onClose, onEdit }: { id: string; onClose: ()
   const { can } = useAuth();
   const q = useOne<Listing>("unit-sales/listings", id);
   const act = useAction<{ id: string; action: string }, Listing>((i) => `unit-sales/listings/${i.id}/${i.action}`, { body: () => ({}), invalidate: ["list", "one", "all", "unit-sales"] });
-  const run = (action: string) => act.mutateAsync({ id, action }).then((l) => toast.success(`${l.listing_code}: ${LISTING_STATUS[l.status]?.label}`)).catch(toast.error);
+  const run = (action: string) => act.mutateAsync({ id, action }).then((l) => toast.success(`${l.listing_code}: ${statusLabel("unit_listing", l.status)}`)).catch(toast.error);
   return (
     <Drawer open onClose={onClose} title="Unit Listing" width={640}>
       <AsyncState query={q}>
@@ -77,7 +80,7 @@ export function ListingDrawer({ id, onClose, onEdit }: { id: string; onClose: ()
           <div className="space-y-5">
             <div className="flex items-start justify-between gap-3">
               <div><div className="font-mono text-lg font-semibold">{x.listing_code}</div><div className="text-sm text-muted-foreground">Unit {x.unit_number} · {x.title}</div></div>
-              <Badge tone={LISTING_STATUS[x.status]?.tone ?? "neutral"}>{LISTING_STATUS[x.status]?.label}</Badge>
+              <StatusBadge objectType="unit_listing" status={x.status} />
             </div>
             <div className="flex flex-wrap gap-2">
               {x.allowed_actions.includes("publish") && can("commercial.unit_listings.publish") && <Button size="sm" onClick={() => run("publish")} loading={act.isPending} icon="publish">Publikasikan</Button>}

@@ -1,14 +1,20 @@
 // Inventory (PRD P1 v1.3 §25; NC §38): Item Master + stok per lokasi, Stock In/Out/Adjustment, Stock Locations, Stock Movements.
+// PRD P2 v2.1: /inventory?item={id} (notifikasi low stock, consumable terbanyak di Housekeeping Dashboard, parts Asset 360)
+// membuka ringkasan item + mutasi terakhir.
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Icon } from "@buildingvision/ui";
 import { PageHeader } from "@/components/shell/AppShell";
 import { Alert, Badge, Button, Checkbox, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect, Tabs, TabsContent, TabsList, TabsTrigger, Textarea } from "@/components/ui/primitives";
 import { DataGrid } from "@/components/bv/datagrid";
-import { RelativeTime, useToast } from "@/components/bv/common";
+import { CellText, CellTitle } from "@/components/bv/cells";
+import { AsyncState, DetailSkeleton, KeyValue, RelativeTime, useToast } from "@/components/bv/common";
 import { useAction, useAll, useList, useUpdate } from "@/api/hooks";
 import { useAuth } from "@/lib/auth";
+import { api, type ListResponse } from "@/lib/api";
 import { rp } from "@/features/billing/InvoicesPage";
 
 export interface Item { id: string; item_code: string; name: string; description: string | null; category: string; equipment_category_code: string | null; unit: string; min_stock: number; unit_cost: number; barcode: string | null; is_active: boolean; total_quantity: number; low_stock: boolean; levels: { stock_location_id: string; stock_location_name: string; property_id: string; quantity: number }[]; version: number }
@@ -23,14 +29,19 @@ export default function InventoryPage() {
   const [lowOnly, setLowOnly] = useState(false);
   const [edit, setEdit] = useState<Item | "new" | null>(null);
   const [txFor, setTxFor] = useState<{ item: Item; type: "in" | "out" | "adjustment" } | null>(null);
+  const [sp, setSp] = useSearchParams();
+  const itemParam = sp.get("item");
+  const closeItem = () => { const n = new URLSearchParams(sp); n.delete("item"); setSp(n, { replace: true }); };
   const items = useList<Item>("inventory/items", { q: q || undefined, property_id: propertyId ?? undefined, low_stock: lowOnly || undefined });
   const rows = items.data?.pages.flatMap((p) => p.data) ?? [];
   const columns = useMemo<ColumnDef<Item, unknown>[]>(() => [
-    { id: "code", header: "Kode", cell: ({ row }) => <span className="font-mono text-[13px] font-semibold">{row.original.item_code}</span>, size: 120 },
-    { id: "name", header: "Item", cell: ({ row }) => <div><div className="font-medium">{row.original.name}</div><div className="text-xs text-muted-foreground">{CATS[row.original.category] ?? row.original.category}{row.original.equipment_category_code ? ` · ${row.original.equipment_category_code}` : ""}{row.original.barcode ? ` · ${row.original.barcode}` : ""}</div></div> },
-    { id: "stock", header: "Stok", cell: ({ row }) => <div><span className={`tnum font-semibold ${row.original.low_stock ? "text-error" : ""}`}>{row.original.total_quantity}</span> <span className="text-xs text-muted-foreground">{row.original.unit} · min {row.original.min_stock}</span>{row.original.low_stock && <Badge tone="error" className="ml-1">low stock</Badge>}</div>, size: 200 },
-    { id: "levels", header: "Per lokasi", cell: ({ row }) => <span className="text-xs text-muted-foreground">{row.original.levels.map((l) => `${l.stock_location_name}: ${l.quantity}`).join(" · ") || "—"}</span> },
-    { id: "cost", header: "Harga satuan", cell: ({ row }) => <span className="tnum text-sm">{rp(row.original.unit_cost)}</span>, size: 130 },
+    // Pola tabel Tasks (29 Sep 2026): kode + nama satu baris, kategori di kolom sendiri, stok satu baris (+ satu penanda low
+    // stock). Kategori equipment & barcode ada di ringkasan item (klik baris).
+    { id: "name", header: "Item", meta: { mobile: "primary" }, cell: ({ row }) => <CellTitle code={row.original.item_code} title={row.original.name} /> },
+    { id: "category", header: "Kategori", meta: { nowrap: true }, cell: ({ row }) => <span className="text-sm">{CATS[row.original.category] ?? row.original.category}</span>, size: 120 },
+    { id: "stock", header: "Stok", meta: { nowrap: true, mobile: "status" }, cell: ({ row }) => <span className="inline-flex items-center gap-1" title={`Minimum ${row.original.min_stock} ${row.original.unit}`}><span className={`tnum font-semibold ${row.original.low_stock ? "text-error" : ""}`}>{row.original.total_quantity}</span> <span className="text-xs text-muted-foreground">{row.original.unit}</span>{row.original.low_stock && <Badge tone="error" className="ml-1">low stock</Badge>}</span>, size: 170 },
+    { id: "levels", header: "Per lokasi", meta: { mobile: "secondary" }, cell: ({ row }) => { const txt = row.original.levels.map((l) => `${l.stock_location_name}: ${l.quantity}`).join(" · ") || "—"; return <CellText max={220} muted>{txt}</CellText>; } },
+    { id: "cost", header: "Harga satuan", meta: { nowrap: true }, cell: ({ row }) => <span className="tnum text-sm">{rp(row.original.unit_cost)}</span>, size: 130 },
   ], []);
   return (
     <div>
@@ -42,7 +53,7 @@ export default function InventoryPage() {
             <Input className="w-64" placeholder="Cari item / kode / barcode…" value={q} onChange={(e) => setQ(e.target.value)} />
             <Checkbox label="Hanya low stock" checked={lowOnly} onCheckedChange={setLowOnly} />
           </div>
-          <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} loading={items.isLoading} isFiltered={!!q || lowOnly} empty={{ message: "Belum ada item." }} hasMore={items.hasNextPage} onLoadMore={() => items.fetchNextPage()} loadingMore={items.isFetchingNextPage}
+          <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => { const n = new URLSearchParams(sp); n.set("item", r.id); setSp(n, { replace: true }); }} loading={items.isLoading} error={items.error} onRetry={() => items.refetch()} isFiltered={!!q || lowOnly} empty={{ message: "Belum ada item." }} hasMore={items.hasNextPage} onLoadMore={() => items.fetchNextPage()} loadingMore={items.isFetchingNextPage}
             rowActions={(r) => [
               ...(can("inventory.transactions.create") ? [{ label: "Stock In", icon: "add_box", onSelect: () => setTxFor({ item: r, type: "in" }) }, { label: "Stock Out", icon: "indeterminate_check_box", onSelect: () => setTxFor({ item: r, type: "out" }) }] : []),
               ...(can("inventory.stock.adjust") ? [{ label: "Adjustment (opname)", icon: "tune", onSelect: () => setTxFor({ item: r, type: "adjustment" }) }] : []),
@@ -52,6 +63,7 @@ export default function InventoryPage() {
         <TabsContent value="movements" className="pt-4"><MovementsTab /></TabsContent>
         <TabsContent value="locations" className="pt-4"><LocationsTab /></TabsContent>
       </Tabs>
+      {itemParam && !edit && !txFor && <ItemDetailDialog id={itemParam} onClose={closeItem} onEdit={(it) => setEdit(it)} onTx={(it, type) => setTxFor({ item: it, type })} />}
       {edit && <ItemDialog item={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
       {txFor && <TxDialog item={txFor.item} type={txFor.type} onClose={() => setTxFor(null)} />}
     </div>
@@ -64,18 +76,18 @@ function MovementsTab() {
   const list = useList<Movement>("inventory/stock-transactions", { property_id: propertyId ?? undefined, type: type || undefined });
   const rows = list.data?.pages.flatMap((p) => p.data) ?? [];
   const columns = useMemo<ColumnDef<Movement, unknown>[]>(() => [
-    { id: "number", header: "No.", cell: ({ row }) => <span className="font-mono text-[13px] font-semibold">{row.original.transaction_number}</span>, size: 150 },
-    { id: "item", header: "Item", cell: ({ row }) => <div><div className="font-medium">{row.original.item_name}</div><div className="text-xs text-muted-foreground">{row.original.item_code} · {row.original.stock_location_name}</div></div> },
-    { id: "type", header: "Jenis", cell: ({ row }) => <Badge tone={row.original.quantity >= 0 ? "success" : "warning"}>{TX_TYPES[row.original.transaction_type] ?? row.original.transaction_type}</Badge>, size: 130 },
-    { id: "qty", header: "Qty", cell: ({ row }) => <span className={`tnum font-semibold ${row.original.quantity < 0 ? "text-warning" : ""}`}>{row.original.quantity > 0 ? "+" : ""}{row.original.quantity} {row.original.unit}</span>, size: 110 },
-    { id: "balance", header: "Saldo", cell: ({ row }) => <span className="tnum">{row.original.balance_after}</span>, size: 80 },
-    { id: "ref", header: "Referensi", cell: ({ row }) => <span className="text-xs">{row.original.reference_label ?? row.original.reference_type ?? "—"}{row.original.note ? ` · ${row.original.note}` : ""}</span> },
-    { id: "performed_at", header: "Waktu", cell: ({ row }) => <span className="text-xs text-muted-foreground"><RelativeTime value={row.original.performed_at} /> · {row.original.performed_by_name ?? "system"}</span>, size: 170 },
+    // Nomor transaksi + item digabung (gudang di tooltip); referensi & waktu satu baris.
+    { id: "item", header: "Transaksi", meta: { mobile: "primary" }, cell: ({ row }) => <CellTitle code={row.original.transaction_number} title={`${row.original.item_name} · ${row.original.stock_location_name}`} /> },
+    { id: "type", header: "Jenis", meta: { nowrap: true, mobile: "status" }, cell: ({ row }) => <Badge tone={row.original.quantity >= 0 ? "success" : "warning"}>{TX_TYPES[row.original.transaction_type] ?? row.original.transaction_type}</Badge>, size: 130 },
+    { id: "qty", header: "Qty", meta: { nowrap: true, mobile: "secondary" }, cell: ({ row }) => <span className={`tnum font-semibold ${row.original.quantity < 0 ? "text-warning" : ""}`}>{row.original.quantity > 0 ? "+" : ""}{row.original.quantity} {row.original.unit}</span>, size: 110 },
+    { id: "balance", header: "Saldo", meta: { nowrap: true }, cell: ({ row }) => <span className="tnum">{row.original.balance_after}</span>, size: 80 },
+    { id: "ref", header: "Referensi", cell: ({ row }) => { const txt = `${row.original.reference_label ?? row.original.reference_type ?? "—"}${row.original.note ? ` · ${row.original.note}` : ""}`; return <CellText max={220}>{txt}</CellText>; } },
+    { id: "performed_at", header: "Waktu", meta: { mobile: "secondary" }, cell: ({ row }) => <CellText max={180} muted title={row.original.performed_by_name ?? "system"} className="text-xs"><RelativeTime value={row.original.performed_at} /> · {row.original.performed_by_name ?? "system"}</CellText>, size: 170 },
   ], []);
   return (
     <div>
       <div className="mb-3"><NativeSelect className="w-48" value={type} onChange={(e) => setType(e.target.value)}><option value="">Jenis: semua</option>{Object.entries(TX_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</NativeSelect></div>
-      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} loading={list.isLoading} isFiltered={!!type} empty={{ message: "Belum ada mutasi stok." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} />
+      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} isFiltered={!!type} empty={{ message: "Belum ada mutasi stok." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} />
     </div>
   );
 }
@@ -94,7 +106,7 @@ function LocationsTab() {
         {(list.data ?? []).length === 0 && <li className="px-3 py-2 text-muted-foreground">Belum ada stock location — parts usage membutuhkan minimal satu gudang per property.</li>}
       </ul>
       {can("inventory.stock_locations.create") && propertyId && (
-        <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (!name.trim()) return; create.mutateAsync({ property_id: propertyId, name: name.trim(), is_default: (list.data ?? []).length === 0 }).then(() => { setName(""); toast.success("Stock location ditambahkan"); }).catch(toast.error); }}>
+        <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (!name.trim()) return; create.mutateAsync({ property_id: propertyId, name: name.trim(), is_default: (list.data ?? []).length === 0 }).then(() => { setName(""); toast.action("created", "Stock location"); }).catch(toast.error); }}>
           <Input className="w-72" placeholder="Nama gudang, mis. Gudang Teknik B1" value={name} onChange={(e) => setName(e.target.value)} />
           <Button type="submit" variant="secondary" loading={create.isPending} disabled={!name.trim()}>Tambah</Button>
         </form>
@@ -114,7 +126,7 @@ function ItemDialog({ item, onClose }: { item: Item | null; onClose: () => void 
     try {
       if (item) await update.mutateAsync({ id: item.id, version: item.version, ...body, is_active: f.is_active });
       else await create.mutateAsync(body);
-      toast.success("Item disimpan");
+      toast.action("saved", "Item");
       onClose();
     } catch (e) {
       toast.error(e);
@@ -161,6 +173,64 @@ function TxDialog({ item, type, onClose }: { item: Item; type: "in" | "out" | "a
           <Field label="Catatan / referensi"><Input value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder={type === "in" ? "No. PO / surat jalan" : type === "adjustment" ? "Stock opname" : "Keperluan"} /></Field>
         </div>
         <DialogFooter><Button variant="secondary" onClick={onClose}>Batal</Button><Button loading={create.isPending} disabled={f.quantity === "" || (!f.stock_location_id && !loc)} onClick={submit}>Simpan</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Ringkasan item (deep link ?item=): stok per lokasi, minimum, harga, mutasi terakhir, aksi stok sesuai izin. */
+function ItemDetailDialog({ id, onClose, onEdit, onTx }: { id: string; onClose: () => void; onEdit: (it: Item) => void; onTx: (it: Item, type: "in" | "out" | "adjustment") => void }) {
+  const { can } = useAuth();
+  const item = useQuery({ queryKey: ["one", "inventory/items", id], queryFn: ({ signal }) => api<Item>(`inventory/items/${id}`, { signal }) });
+  const moves = useQuery({
+    queryKey: ["list", "inventory/stock-transactions", "item", id],
+    enabled: can("inventory.transactions.view"),
+    queryFn: ({ signal }) => api<ListResponse<Movement>>("inventory/stock-transactions", { query: { item_id: id, limit: 10 }, signal }).then((r) => r.data),
+  });
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent side="right" title={item.data ? `${item.data.item_code} · ${item.data.name}` : "Item inventory"}>
+        <AsyncState query={item} skeleton={<DetailSkeleton />}>
+          {(it) => (
+            <div className="space-y-4" data-testid="inventory-item-detail">
+              <div className="flex flex-wrap items-baseline gap-2">
+                <span className={`text-display font-extrabold tnum ${it.low_stock ? "text-on-error-container" : "text-on-surface"}`}>{it.total_quantity}</span>
+                <span className="text-sm text-on-surface-variant">{it.unit} · minimum {it.min_stock}</span>
+                {it.low_stock && <Badge tone="error">low stock</Badge>}
+                {!it.is_active && <Badge>nonaktif</Badge>}
+              </div>
+              <KeyValue items={[
+                { label: "Kategori", value: CATS[it.category] ?? it.category },
+                { label: "Kategori equipment", value: it.equipment_category_code },
+                { label: "Harga satuan", value: rp(it.unit_cost) },
+                { label: "Barcode", value: it.barcode },
+                { label: "Deskripsi", value: it.description },
+              ]} />
+              <section>
+                <h3 className="mb-1 text-label font-semibold uppercase tracking-wide text-on-surface-variant">Stok per lokasi</h3>
+                <ul className="divide-y divide-border rounded-[var(--radius-md)] border border-border text-sm">
+                  {it.levels.map((l) => <li key={l.stock_location_id} className="flex justify-between px-3 py-2"><span>{l.stock_location_name}</span><span className="tnum font-semibold">{l.quantity} {it.unit}</span></li>)}
+                  {it.levels.length === 0 && <li className="px-3 py-2 text-on-surface-variant">Belum ada stok.</li>}
+                </ul>
+              </section>
+              {can("inventory.transactions.view") && (
+                <section>
+                  <h3 className="mb-1 text-label font-semibold uppercase tracking-wide text-on-surface-variant">Mutasi terakhir</h3>
+                  <ul className="divide-y divide-border rounded-[var(--radius-md)] border border-border text-sm">
+                    {(moves.data ?? []).map((m) => <li key={m.id} className="flex flex-wrap justify-between gap-2 px-3 py-2"><span>{TX_TYPES[m.transaction_type] ?? m.transaction_type}<span className="text-xs text-on-surface-variant"> · {m.reference_label ?? m.stock_location_name} · <RelativeTime value={m.performed_at} /></span></span><span className="tnum font-semibold">{m.quantity > 0 ? "+" : ""}{m.quantity} {m.unit}</span></li>)}
+                    {moves.data && moves.data.length === 0 && <li className="px-3 py-2 text-on-surface-variant">Belum ada mutasi.</li>}
+                  </ul>
+                </section>
+              )}
+            </div>
+          )}
+        </AsyncState>
+        <DialogFooter className="flex-wrap">
+          {item.data && can("inventory.transactions.create") && <Button variant="secondary" size="sm" icon="add_box" onClick={() => onTx(item.data!, "in")}>Stock In</Button>}
+          {item.data && can("inventory.transactions.create") && <Button variant="secondary" size="sm" icon="indeterminate_check_box" onClick={() => onTx(item.data!, "out")}>Stock Out</Button>}
+          {item.data && can("inventory.items.update") && <Button variant="secondary" size="sm" icon="edit" onClick={() => onEdit(item.data!)}>Edit item</Button>}
+          <Button variant="secondary" size="sm" onClick={onClose}>Tutup</Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

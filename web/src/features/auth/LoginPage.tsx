@@ -45,7 +45,7 @@ export function LoginPage() {
           </Field>
           <Button type="submit" className="w-full" loading={busy}>{busy ? t("auth.signing_in") : t("auth.login")}</Button>
         </form>
-        <p className="mt-6 text-center text-xs text-muted-foreground">BuildingVision Web · Desktop ≥1280px</p>
+        <p className="mt-6 text-center text-xs text-muted-foreground">BuildingVision Web</p>
       </Card>
     </div>
   );

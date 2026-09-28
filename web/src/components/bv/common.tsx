@@ -1,10 +1,12 @@
-// LocationPath · AsyncState · ReasonDialog · Toast · EmptyState · SLAProgress · relative time (DS §4, §5.5)
+// LocationPath · AsyncState · ReasonDialog · Toast (+katalog pesan) · SLAProgress · relative time (DS §4, §5.5; PRD P0 §23)
 import * as React from "react";
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Icon } from "@buildingvision/ui";
-import { Alert, Button, Dialog, DialogContent, DialogFooter, Field, Skeleton, Textarea, Tooltip } from "@/components/ui/primitives";
+import { Button, Dialog, DialogContent, DialogFooter, Field, Textarea, Tooltip } from "@/components/ui/primitives";
+import { EmptyState, ListSkeleton, QueryErrorState } from "./states";
+import { TRANSITION_TOAST, isToastAction, toastFailure, toastMessage, type ToastAction } from "@/lib/messages";
 import { fmtDateTime, fmtRelative, fmtMinutes } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { SLAInfo } from "@/api/types";
@@ -35,66 +37,24 @@ export function LocationPath({ path, pathText, locationId, className, linkTo }: 
   );
 }
 
-// ---------- AsyncState: Loading (skeleton) / Error (+retry) / Empty (+CTA) / Offline ----------
-export function AsyncState<T>({ query, children, empty, emptyFilter, isFiltered, skeleton }: { query: { isLoading: boolean; isError: boolean; error?: unknown; refetch: () => unknown; data?: T }; children: (data: T) => React.ReactNode; empty?: { message: string; cta?: React.ReactNode }; emptyFilter?: string; isFiltered?: boolean; skeleton?: React.ReactNode }) {
+// ---------- AsyncState: Loading (skeleton) / Error (ErrorState; 403 → Akses ditolak) / Empty (+aksi) ----------
+export interface AsyncEmpty { title?: string; description?: string; action?: React.ReactNode; icon?: string; /** @deprecated */ message?: string; /** @deprecated */ cta?: React.ReactNode }
+export function AsyncState<T>({ query, children, empty, emptyFilter, isFiltered, skeleton }: { query: { isLoading: boolean; isError: boolean; error?: unknown; refetch: () => unknown; data?: T }; children: (data: T) => React.ReactNode; empty?: AsyncEmpty; emptyFilter?: string; isFiltered?: boolean; skeleton?: React.ReactNode }) {
   const { t } = useTranslation();
-  const online = typeof navigator === "undefined" ? true : navigator.onLine;
   if (query.isLoading) return <>{skeleton ?? <ListSkeleton />}</>;
-  if (query.isError) {
-    const msg = (query.error as { message?: string })?.message;
-    return (
-      <Alert variant={online ? "critical" : "warning"} title={online ? t("state.error") : t("state.offline")} action={<Button size="sm" variant="secondary" onClick={() => query.refetch()}>{t("action.retry")}</Button>}>
-        {msg}
-      </Alert>
-    );
-  }
+  if (query.isError) return <QueryErrorState error={query.error} onRetry={() => query.refetch()} />;
   const data = query.data as T;
   const isEmpty = Array.isArray(data) ? data.length === 0 : data === null || data === undefined;
   if (isEmpty) {
-    if (isFiltered) return <EmptyState message={emptyFilter ?? t("state.empty_filter")} compact />;
-    return <EmptyState message={empty?.message ?? t("empty.generic")} cta={empty?.cta} />;
+    if (isFiltered) return <EmptyState compact title={emptyFilter ?? t("state.empty_filter")} description={t("state.empty_filter_desc")} />;
+    return <EmptyState icon={empty?.icon} title={empty?.title ?? empty?.message ?? t("empty.generic")} description={empty?.description} action={empty?.action ?? empty?.cta} />;
   }
   return <>{children(data)}</>;
 }
 
-export function EmptyState({ message, cta, compact, icon }: { message: string; cta?: React.ReactNode; compact?: boolean; icon?: React.ReactNode }) {
-  return (
-    <div className={cn("flex flex-col items-center justify-center gap-3 text-center", compact ? "py-8" : "py-14")}>
-      {!compact && <div className="text-neutral-300">{icon ?? <Icon name="inbox" size={40} />}</div>}
-      <p className="text-body text-muted-foreground">{message}</p>
-      {cta}
-    </div>
-  );
-}
+// Komponen state dipindah ke ./states (PRD P0 §23); diekspor ulang agar impor lama tetap berlaku.
+export { EmptyState, ErrorState, QueryErrorState, ForbiddenState, NotFoundState, ListSkeleton, DetailSkeleton, TableSkeleton, CardSkeleton, FormSkeleton, KpiSkeleton, PageSkeleton } from "./states";
 
-export function ListSkeleton({ rows = 6 }: { rows?: number }) {
-  return (
-    <div className="space-y-2 py-2" aria-busy>
-      {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="flex items-center gap-3">
-          <Skeleton className="h-4 w-28" />
-          <Skeleton className="h-4 flex-1" />
-          <Skeleton className="h-4 w-24" />
-          <Skeleton className="h-5 w-20 rounded-full" />
-        </div>
-      ))}
-    </div>
-  );
-}
-export function DetailSkeleton() {
-  return (
-    <div className="grid grid-cols-12 gap-6" aria-busy>
-      <div className="col-span-8 space-y-4">
-        <Skeleton className="h-8 w-2/3" />
-        <Skeleton className="h-40 w-full" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-      <div className="col-span-4 space-y-3">
-        <Skeleton className="h-64 w-full" />
-      </div>
-    </div>
-  );
-}
 export function OfflineBanner() {
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const { t } = useTranslation();
@@ -110,7 +70,7 @@ export function OfflineBanner() {
   }, []);
   if (online) return null;
   return (
-    <div className="flex items-center gap-2 bg-warning-soft px-8 py-2 text-sm text-warning-text">
+    <div className="flex items-center gap-2 bg-warning-soft px-4 py-2 text-sm text-warning-text md:px-8">
       <Icon name="wifi_off" size={16} /> {t("state.offline")}
     </div>
   );
@@ -182,7 +142,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastCtx.Provider value={value}>
       {children}
-      <div className="pointer-events-none fixed bottom-4 right-4 z-[60] flex w-[360px] flex-col gap-2" aria-live="polite">
+      <div className="pointer-events-none fixed inset-x-4 bottom-[calc(88px+env(safe-area-inset-bottom))] z-[1200] flex flex-col gap-2 md:inset-x-auto md:bottom-4 md:right-4 md:w-[360px]" aria-live="polite">
         {items.map((it) => (
           <div key={it.id} className={cn("pointer-events-auto flex items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-popover", it.variant === "success" && "border-success/30 bg-success-soft text-success-text", it.variant === "critical" && "border-critical/30 bg-critical-soft text-critical-text", it.variant === "warning" && "border-warning/30 bg-warning-soft text-warning-text", it.variant === "info" && "border-info/30 bg-info-soft text-info-text")}>
             {it.variant === "critical" && <Icon name="error" size={16} className="mt-0.5 shrink-0" />}
@@ -208,6 +168,19 @@ export function useToast() {
     success: (message: string, link?: ToastItem["link"]) => c.push({ variant: "success", message, link }),
     error: (err: unknown) => c.push({ variant: "critical", message: (err as { message?: string })?.message || t("state.error") }),
     info: (message: string) => c.push({ variant: "info", message }),
+    warning: (message: string) => c.push({ variant: "warning", message }),
+    /** Konfirmasi standar dari katalog (lib/messages): `toast.action("created", "Work Order WO-1")`. */
+    action: (action: ToastAction, entity?: string | null, link?: ToastItem["link"]) => c.push({ variant: "success", message: toastMessage(action, entity), link }),
+    /** Konfirmasi untuk nama aksi transisi server (start/complete/close/…); aksi tak dikenal → "<Label> berhasil". */
+    transition: (action: string, entity?: string | null) => {
+      const kind = TRANSITION_TOAST[action] ?? (isToastAction(action) ? action : null);
+      c.push({ variant: "success", message: kind ? toastMessage(kind, entity) : t("toast.transition_generic", { action: t(`action.${action}`, { defaultValue: action }) }) });
+    },
+    /** Error standar: "<Entity> gagal <kata kerja>. <detail problem+json>". */
+    failed: (action: ToastAction, err: unknown, entity?: string | null) => {
+      const e = err as { problem?: { detail?: string; title?: string }; message?: string };
+      c.push({ variant: "critical", message: toastFailure(action, entity, e?.problem?.detail ?? e?.problem?.title ?? e?.message) });
+    },
   };
 }
 

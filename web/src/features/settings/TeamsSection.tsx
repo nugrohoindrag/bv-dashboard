@@ -11,6 +11,15 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import type { Team } from "@/api/types";
+import { CellText, CellTitle } from "@/components/bv/cells";
+
+/** Ringkasan anggota satu baris: lead (atau anggota pertama) + "+N". */
+function membersSummary(members: Team["members"]): string {
+  if (!members.length) return "—";
+  const first = members.find((m) => m.is_lead) ?? members[0];
+  const label = first.full_name + (first.is_lead ? " (lead)" : "");
+  return members.length > 1 ? `${label} +${members.length - 1}` : label;
+}
 
 export default function TeamsSection() {
   const { propertyId, can } = useAuth();
@@ -18,17 +27,18 @@ export default function TeamsSection() {
   const [edit, setEdit] = useState<Team | null | "new">(null);
   const columns = useMemo<ColumnDef<Team, unknown>[]>(
     () => [
-      { id: "name", header: "Team", cell: ({ row }) => <span className="font-medium">{row.original.name}</span> },
-      { id: "domain", header: "Domain", cell: ({ row }) => <span className="rounded-full bg-neutral-soft px-2 py-0.5 text-xs text-neutral-text">{row.original.domain}</span>, size: 120 },
-      { id: "members", header: "Anggota", cell: ({ row }) => <span className="text-xs">{row.original.members.map((m) => m.full_name + (m.is_lead ? " (lead)" : "")).join(", ") || "—"}</span> },
-      { id: "active", header: "Aktif", cell: ({ row }) => <span className={cn("text-xs", row.original.is_active ? "text-success-text" : "text-muted-foreground")}>{row.original.is_active ? "Aktif" : "Nonaktif"}</span>, size: 80 },
+      // Tabel disederhanakan (29 Sep 2026): anggota = satu baris (lead/anggota pertama + jumlah sisanya), daftar lengkap di tooltip & dialog.
+      { id: "name", header: "Team", meta: { mobile: "primary" }, cell: ({ row }) => <CellTitle title={row.original.name} /> },
+      { id: "domain", header: "Domain", meta: { mobile: "secondary" }, cell: ({ row }) => <span className="whitespace-nowrap rounded-full bg-neutral-soft px-2 py-0.5 text-xs text-neutral-text">{row.original.domain}</span>, size: 120 },
+      { id: "members", header: "Anggota", meta: { mobile: "secondary" }, cell: ({ row }) => <CellText max={220} title={row.original.members.map((m) => m.full_name + (m.is_lead ? " (lead)" : "")).join(", ") || undefined}>{membersSummary(row.original.members)}</CellText> },
+      { id: "active", header: "Aktif", meta: { mobile: "status" }, cell: ({ row }) => <span className={cn("whitespace-nowrap text-xs", row.original.is_active ? "text-success-text" : "text-muted-foreground")}>{row.original.is_active ? "Aktif" : "Nonaktif"}</span>, size: 80 },
     ],
     [],
   );
   return (
     <div className="space-y-3">
       <div className="flex justify-end">{can("iam.teams.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Buat Team</Button>}</div>
-      <DataGrid columns={columns} rows={list.data ?? []} rowId={(r) => r.id} onRowClick={(r) => { if (can("iam.teams.update")) setEdit(r); }} loading={list.isLoading} empty={{ message: "Belum ada team." }} />
+      <DataGrid columns={columns} rows={list.data ?? []} rowId={(r) => r.id} onRowClick={(r) => { if (can("iam.teams.update")) setEdit(r); }} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} empty={{ message: "Belum ada team." }} />
       {edit && <TeamDialog item={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
     </div>
   );
@@ -53,7 +63,7 @@ function TeamDialog({ item, onClose }: { item: Team | null; onClose: () => void 
       if (item) await api(`teams/${item.id}`, { method: "PATCH", body });
       else await create.mutateAsync(body);
       invalidate("teams", "users");
-      toast.success("Team disimpan");
+      toast.action("saved", "Team");
       onClose();
     } catch (e) {
       toast.error(e);
@@ -87,7 +97,7 @@ function TeamDialog({ item, onClose }: { item: Team | null; onClose: () => void 
           {item && <label className="flex items-center gap-2 text-sm"><Checkbox checked={form.is_active} onCheckedChange={(v) => setForm({ ...form, is_active: !!v })} /> Aktif</label>}
         </div>
         <DialogFooter>
-          {item && can("iam.teams.delete") && <Button variant="ghost" className="mr-auto" onClick={() => api(`teams/${item.id}`, { method: "DELETE" }).then(() => { invalidate("teams"); toast.success("Team dihapus"); onClose(); }).catch(toast.error)}>Hapus</Button>}
+          {item && can("iam.teams.delete") && <Button variant="ghost" className="mr-auto" onClick={() => api(`teams/${item.id}`, { method: "DELETE" }).then(() => { invalidate("teams"); toast.action("deleted", "Team"); onClose(); }).catch(toast.error)}>Hapus</Button>}
           <Button variant="secondary" onClick={onClose}>{t("action.discard")}</Button>
           <Button loading={saving || create.isPending} onClick={submit}>{t("action.save")}</Button>
         </DialogFooter>

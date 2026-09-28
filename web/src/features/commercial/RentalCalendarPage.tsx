@@ -5,11 +5,13 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Icon } from "@buildingvision/ui";
 import { PageHeader } from "@/components/shell/AppShell";
-import { Alert, Badge, Button } from "@/components/ui/primitives";
+import { Alert, Button } from "@/components/ui/primitives";
 import { AsyncState } from "@/components/bv/common";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { PERIOD_LABEL, RLISTING_STATUS, RRES_STATUS, type RentalListing } from "./commercial-api";
+import { PERIOD_LABEL, type RentalListing } from "./commercial-api";
+import { StatusBadge } from "@/components/bv/badges";
+import { statusLabel } from "@/lib/status";
 
 interface Entry { reservation_id: string; reservation_number: string; prospect_name: string; unit_location_id: string; unit_number: string; rental_period: string; start_date: string; end_date: string; status: string }
 interface Calendar { from: string; to: string; listings: RentalListing[]; entries: Entry[] }
@@ -43,7 +45,7 @@ export default function RentalCalendarPage() {
               <tbody>
                 {c.listings.map((l) => (
                   <tr key={l.id} className="border-t border-border">
-                    <td className="sticky left-0 z-10 bg-surface p-2"><div className="font-semibold">{l.unit_number}</div><div className="truncate text-[10px] text-muted-foreground">{l.title}</div><Badge tone={RLISTING_STATUS[l.status]?.tone ?? "neutral"} className="mt-0.5">{RLISTING_STATUS[l.status]?.label}</Badge></td>
+                    <td className="sticky left-0 z-10 bg-surface p-2"><div className="font-semibold">{l.unit_number}</div><div className="truncate text-[10px] text-muted-foreground">{l.title}</div><StatusBadge objectType="rental_listing" status={l.status} className="mt-0.5" /></td>
                     {dates.map((d) => {
                       const ds = iso(d);
                       const blocking = c.entries.find((x) => x.unit_location_id === l.unit_location_id && x.status !== "new" && x.start_date.slice(0, 10) <= ds && x.end_date.slice(0, 10) > ds);
@@ -52,7 +54,7 @@ export default function RentalCalendarPage() {
                       return (
                         <td key={ds} className="h-10 border-l border-border p-0.5 align-top">
                           {e && (
-                            <button type="button" onClick={() => nav(`/commercial/rental/reservations/${e.reservation_id}`)} title={`${e.reservation_number} · ${e.prospect_name} · ${PERIOD_LABEL[e.rental_period]} · ${RRES_STATUS[e.status]?.label}`}
+                            <button type="button" onClick={() => nav(`/commercial/rental/reservations/${e.reservation_id}`)} title={`${e.reservation_number} · ${e.prospect_name} · ${PERIOD_LABEL[e.rental_period]} · ${statusLabel("rental_reservation", e.status)}`}
                               className={`block h-full w-full truncate rounded px-1 py-1 text-left text-[10px] ${e.status === "active" ? "bg-primary text-on-primary" : e.status === "reserved" ? "bg-primary/70 text-on-primary" : "border border-dashed border-outline text-muted-foreground"}`}>
                               {first ? e.prospect_name : " "}
                             </button>

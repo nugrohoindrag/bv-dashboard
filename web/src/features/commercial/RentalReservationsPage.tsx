@@ -14,8 +14,11 @@ import { useAction, useAll, useList, useOne } from "@/api/hooks";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { fmtDateTime } from "@/lib/format";
-import { PERIOD_LABEL, PERIOD_UNIT, RRES_STATUS, SOURCES, fmtD, rp, type Onboarding, type Quote, type RentalListing, type RentalReservation } from "./commercial-api";
+import { PERIOD_LABEL, PERIOD_UNIT, SOURCES, fmtD, rp, type Onboarding, type Quote, type RentalListing, type RentalReservation } from "./commercial-api";
 import { OnboardingCard } from "./shared";
+import { StatusBadge } from "@/components/bv/badges";
+import { CellText, CellTitle } from "@/components/bv/cells";
+import { statusLabel, statusOptions } from "@/lib/status";
 
 const endIncl = (s: string) => { const d = new Date(s); d.setDate(d.getDate() - 1); return fmtD(d.toISOString()); };
 
@@ -32,12 +35,13 @@ export default function RentalReservationsPage() {
   const list = useList<RentalReservation>("unit-rental/reservations", { property_id: propertyId ?? undefined, status: status || undefined, q: q || undefined, listing_id: listingId }, { enabled: !!propertyId });
   const rows = list.data?.pages.flatMap((p) => p.data) ?? [];
   const columns = useMemo<ColumnDef<RentalReservation, unknown>[]>(() => [
-    { id: "number", header: "Reservasi", cell: ({ row }) => <span className="font-mono text-[13px] font-semibold">{row.original.reservation_number}</span>, size: 150 },
-    { id: "prospect", header: "Penyewa", cell: ({ row }) => <div><div className="font-medium">{row.original.prospect_name}{row.original.company ? <span className="text-xs text-muted-foreground"> · {row.original.company}</span> : null}</div><div className="text-xs text-muted-foreground">{row.original.prospect_phone ?? "—"} · {row.original.occupants} penghuni · {row.original.source}</div></div> },
-    { id: "unit", header: "Unit", cell: ({ row }) => <div className="text-sm">{row.original.unit_number}<div className="text-xs text-muted-foreground">{row.original.listing_title}</div></div>, size: 170 },
-    { id: "period", header: "Periode", cell: ({ row }) => <div className="text-sm">{fmtD(row.original.start_date)} → {endIncl(row.original.end_date)}<div className="text-xs text-muted-foreground">{PERIOD_LABEL[row.original.rental_period]} × {row.original.period_count} · {row.original.days} hari</div></div>, size: 230 },
-    { id: "total", header: "Total", cell: ({ row }) => <div className="tnum text-sm font-semibold">{rp(row.original.total_amount)}<div className="text-xs font-normal text-muted-foreground">{row.original.invoice_number ? `${row.original.invoice_number} · ${row.original.invoice_status}` : "belum ditagih"}</div></div>, size: 170 },
-    { id: "status", header: t("label.status"), cell: ({ row }) => <Badge tone={RRES_STATUS[row.original.status]?.tone ?? "neutral"}>{RRES_STATUS[row.original.status]?.label ?? row.original.status}</Badge>, size: 130 },
+    // Tabel disederhanakan (29 Sep 2026): nomor + penyewa, unit, periode, total, status. Kontak, penghuni, sumber, rincian
+    // periode & invoice ada di drawer detail.
+    { id: "prospect", header: "Reservasi", meta: { mobile: "primary" }, cell: ({ row }) => <CellTitle code={row.original.reservation_number} title={row.original.prospect_name} /> },
+    { id: "unit", header: "Unit", meta: { mobile: "secondary" }, cell: ({ row }) => <CellText max={150} title={row.original.listing_title ? `${row.original.unit_number} · ${row.original.listing_title}` : row.original.unit_number}>{row.original.unit_number}</CellText>, size: 150 },
+    { id: "period", header: "Periode", meta: { mobile: "secondary", nowrap: true }, cell: ({ row }) => <span className="tnum text-sm">{fmtD(row.original.start_date)} → {endIncl(row.original.end_date)}</span>, size: 210 },
+    { id: "total", header: "Total", meta: { mobile: "secondary" }, cell: ({ row }) => <div className="tnum whitespace-nowrap text-right font-semibold">{rp(row.original.total_amount)}</div>, size: 150 },
+    { id: "status", header: t("label.status"), meta: { mobile: "status" }, cell: ({ row }) => <StatusBadge objectType="rental_reservation" status={row.original.status} />, size: 130 },
   ], [t]);
   if (!propertyId) return <Alert variant="info">Pilih property (profile Apartment) di header.</Alert>;
   return (
@@ -45,11 +49,11 @@ export default function RentalReservationsPage() {
       <PageHeader title="Unit Rental · Reservations" subtitle="Inquiry (New) → Reserved → Active (tenant onboarding) → Completed. Konflik periode per unit dicegah oleh server." actions={<>{can("commercial.rental_reservations.view") && <Link to="/commercial/rental/calendar"><Button variant="secondary"><Icon name="calendar_month" size={16} /> Kalender</Button></Link>}{can("commercial.rental_reservations.create") && <Button onClick={() => setCreateOpen(true)}><Icon name="add" size={16} /> Reservasi / Inquiry</Button>}</>}>
         <div className="flex items-center gap-2">
           <Input className="w-64" placeholder="Cari nomor / penyewa / unit…" value={q} onChange={(e) => setQ(e.target.value)} />
-          <NativeSelect className="w-44" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option>{Object.entries(RRES_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</NativeSelect>
+          <NativeSelect className="w-44" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option>{statusOptions("rental_reservation").map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>
           {listingId && <Badge tone="info">Filter listing aktif</Badge>}
         </div>
       </PageHeader>
-      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/commercial/rental/reservations/${r.id}`} loading={list.isLoading} isFiltered={!!q || !!status || !!listingId} empty={{ message: "Belum ada reservasi sewa." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} />
+      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/commercial/rental/reservations/${r.id}`} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} isFiltered={!!q || !!status || !!listingId} empty={{ message: "Belum ada reservasi sewa." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} />
       {createOpen && <CreateRentalReservationDialog propertyId={propertyId} defaultListingId={listingId} onClose={() => setCreateOpen(false)} onCreated={(r) => nav(`/commercial/rental/reservations/${r.id}`)} />}
       {id && <RentalReservationDrawer id={id} onClose={() => nav("/commercial/rental/reservations")} />}
     </div>
@@ -65,7 +69,7 @@ export function RentalReservationDrawer({ id, onClose }: { id: string; onClose: 
   const [ob, setOb] = useState<Onboarding | null>(null);
   const [a, setA] = useState({ tenant_name: "", tenant_phone: "", tenant_email: "", company: "", tenant_type: "individual", create_tenant_account: true, move_in_date: "" });
   const [moveOut, setMoveOut] = useState(new Date().toISOString().slice(0, 10));
-  const run = (action: string, body?: Record<string, unknown>) => act.mutateAsync({ action, body }).then((x) => { if (x.onboarding) setOb(x.onboarding); toast.success(`${x.reservation.reservation_number}: ${RRES_STATUS[x.reservation.status]?.label}`); setDialog(null); }).catch(toast.error);
+  const run = (action: string, body?: Record<string, unknown>) => act.mutateAsync({ action, body }).then((x) => { if (x.onboarding) setOb(x.onboarding); toast.success(`${x.reservation.reservation_number}: ${statusLabel("rental_reservation", x.reservation.status)}`); setDialog(null); }).catch(toast.error);
   return (
     <Drawer open onClose={onClose} title="Rental Reservation" width={700}>
       <AsyncState query={q}>
@@ -73,7 +77,7 @@ export function RentalReservationDrawer({ id, onClose }: { id: string; onClose: 
           <div className="space-y-5">
             <div className="flex items-start justify-between gap-3">
               <div><div className="font-mono text-lg font-semibold">{x.reservation_number}</div><div className="text-sm text-muted-foreground">{x.prospect_name} · Unit {x.unit_number} · {PERIOD_LABEL[x.rental_period]} × {x.period_count}</div></div>
-              <Badge tone={RRES_STATUS[x.status]?.tone ?? "neutral"}>{RRES_STATUS[x.status]?.label}</Badge>
+              <StatusBadge objectType="rental_reservation" status={x.status} />
             </div>
             {ob && <OnboardingCard ob={ob} />}
             <div className="flex flex-wrap gap-2">
@@ -140,7 +144,7 @@ export function CreateRentalReservationDialog({ propertyId, defaultListingId, on
   const quote = useQuery({ queryKey: ["unit-rental-quote", f.listing_id, period, f.period_count, f.start_date], enabled: !!f.listing_id && !!f.start_date && Number(f.period_count) > 0, queryFn: () => api<Quote>("unit-rental/availability", { query: { listing_id: f.listing_id, rental_period: period, period_count: f.period_count, start_date: f.start_date } }) });
   const create = useAction<Record<string, unknown>, RentalReservation>(() => "unit-rental/reservations", { invalidate: ["list", "one", "all", "unit-rental"] });
   const submit = () => create.mutateAsync({ listing_id: f.listing_id, prospect_name: f.prospect_name.trim(), prospect_phone: f.prospect_phone || null, prospect_email: f.prospect_email || null, company: f.company || null, occupants: Number(f.occupants) || 1, rental_period: period, period_count: Number(f.period_count) || 1, start_date: f.start_date, source: f.source, special_requests: f.special_requests || null, notes: f.notes || null, confirm: f.confirm })
-    .then((r) => { toast.success(`${r.reservation_number} dibuat (${RRES_STATUS[r.status]?.label})`); onClose(); onCreated?.(r); }).catch(toast.error);
+    .then((r) => { toast.success(`${r.reservation_number} dibuat (${statusLabel("rental_reservation", r.status)})`); onClose(); onCreated?.(r); }).catch(toast.error);
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent side="right" title="Reservasi / Inquiry Sewa" description="Prospective Tenant → Unit Listing → Rental Period (Daily / Weekly / Monthly) → Availability → Booking.">

@@ -14,8 +14,11 @@ import { AsyncState, KeyValue, RelativeTime, useToast } from "@/components/bv/co
 import { useAction, useList, useOne } from "@/api/hooks";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { FURNISHING, RLISTING_STATUS, fmtD, num, rp, type Doc, type RentalListing, type RentalSummary } from "./commercial-api";
+import { FURNISHING, fmtD, num, rp, type Doc, type RentalListing, type RentalSummary } from "./commercial-api";
 import { DocList, DocumentsEditor, UnitSelect } from "./shared";
+import { StatusBadge } from "@/components/bv/badges";
+import { CellText, CellTitle } from "@/components/bv/cells";
+import { statusLabel, statusOptions } from "@/lib/status";
 
 export function useRentalSummary(propertyId: string | null) {
   return useQuery({ queryKey: ["unit-rental-summary", propertyId], enabled: !!propertyId, queryFn: () => api<RentalSummary>("unit-rental/summary", { query: { property_id: propertyId } }) });
@@ -35,12 +38,12 @@ export default function RentalListingsPage() {
   const sum = useRentalSummary(propertyId);
   const rows = list.data?.pages.flatMap((p) => p.data) ?? [];
   const columns = useMemo<ColumnDef<RentalListing, unknown>[]>(() => [
-    { id: "code", header: "Listing", cell: ({ row }) => <span className="font-mono text-[13px] font-semibold">{row.original.listing_code}</span>, size: 150 },
-    { id: "unit", header: "Unit", cell: ({ row }) => <div><div className="font-medium">{row.original.unit_number} · {row.original.title}</div><div className="text-xs text-muted-foreground">{row.original.floor_name ?? ""}{row.original.bedrooms != null ? ` · ${row.original.bedrooms} KT` : ""}{row.original.furnishing ? ` · ${FURNISHING[row.original.furnishing]}` : ""} · min {row.original.min_stay_days} hari</div></div> },
-    { id: "rates", header: "Tarif", cell: ({ row }) => <span className="tnum text-sm">{rates(row.original)}</span>, size: 300 },
-    { id: "occ", header: "Hunian", cell: ({ row }) => row.original.active_reservation_id ? <Badge tone="primary">Disewa</Badge> : row.original.next_start_date ? <span className="text-xs">Mulai {fmtD(row.original.next_start_date)}</span> : <span className="text-xs text-muted-foreground">{row.original.unit_occupancy_status}</span>, size: 120 },
-    { id: "inq", header: "Inquiry", cell: ({ row }) => <span className="tnum">{row.original.open_inquiries}</span>, size: 80 },
-    { id: "status", header: t("label.status"), cell: ({ row }) => <Badge tone={RLISTING_STATUS[row.original.status]?.tone ?? "neutral"}>{RLISTING_STATUS[row.original.status]?.label ?? row.original.status}</Badge>, size: 110 },
+    // Tabel disederhanakan (29 Sep 2026): kode + unit/judul, tarif, hunian, status. Lantai, kamar, furnishing, minimal sewa
+    // & jumlah inquiry ada di drawer detail.
+    { id: "unit", header: "Listing", meta: { mobile: "primary" }, cell: ({ row }) => <CellTitle code={row.original.listing_code} title={`${row.original.unit_number} · ${row.original.title}`} /> },
+    { id: "rates", header: "Tarif", meta: { mobile: "secondary" }, cell: ({ row }) => <CellText max={260} className="tnum">{rates(row.original) || "—"}</CellText>, size: 260 },
+    { id: "occ", header: "Hunian", meta: { mobile: "secondary", nowrap: true }, cell: ({ row }) => row.original.active_reservation_id ? <Badge tone="primary">Disewa</Badge> : row.original.next_start_date ? <span className="text-sm">Mulai {fmtD(row.original.next_start_date)}</span> : <span className="text-sm text-muted-foreground">{row.original.unit_occupancy_status}</span>, size: 130 },
+    { id: "status", header: t("label.status"), meta: { mobile: "status" }, cell: ({ row }) => <StatusBadge objectType="rental_listing" status={row.original.status} />, size: 110 },
   ], [t]);
   if (!propertyId) return <Alert variant="info">Pilih property (profile Apartment) di header.</Alert>;
   return (
@@ -48,7 +51,7 @@ export default function RentalListingsPage() {
       <PageHeader title="Unit Rental · Listings" subtitle="Inventori sewa unit milik property dengan tarif harian / mingguan / bulanan." actions={<>{can("commercial.rental_reservations.view") && <Link to="/commercial/rental/reservations"><Button variant="secondary"><Icon name="event_available" size={16} /> Reservasi</Button></Link>}{can("commercial.rental_listings.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Listing Sewa Baru</Button>}</>}>
         <div className="flex items-center gap-2">
           <Input className="w-64" placeholder="Cari kode / judul / unit…" value={q} onChange={(e) => setQ(e.target.value)} />
-          <NativeSelect className="w-40" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option>{Object.entries(RLISTING_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</NativeSelect>
+          <NativeSelect className="w-40" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option>{statusOptions("rental_listing").map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>
         </div>
       </PageHeader>
       {sum.data && (
@@ -60,7 +63,7 @@ export default function RentalListingsPage() {
           <MetricCard label="Inquiry terbuka" value={String(sum.data.open_inquiries)} tone={sum.data.open_inquiries > 0 ? "warning" : "neutral"} />
         </div>
       )}
-      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/commercial/rental/listings/${r.id}`} loading={list.isLoading} isFiltered={!!q || !!status} empty={{ message: "Belum ada listing sewa." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} />
+      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/commercial/rental/listings/${r.id}`} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} isFiltered={!!q || !!status} empty={{ message: "Belum ada listing sewa." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} />
       {edit && <RentalListingDialog propertyId={propertyId} listing={edit === "new" ? null : edit} onClose={() => setEdit(null)} onSaved={(l) => nav(`/commercial/rental/listings/${l.id}`)} />}
       {id && <RentalListingDrawer id={id} onClose={() => nav("/commercial/rental/listings")} onEdit={(l) => setEdit(l)} />}
     </div>
@@ -72,7 +75,7 @@ export function RentalListingDrawer({ id, onClose, onEdit }: { id: string; onClo
   const { can } = useAuth();
   const q = useOne<RentalListing>("unit-rental/listings", id);
   const act = useAction<{ action: string }, RentalListing>((i) => `unit-rental/listings/${id}/${i.action}`, { body: () => ({}), invalidate: ["list", "one", "all", "unit-rental"] });
-  const run = (action: string) => act.mutateAsync({ action }).then((l) => toast.success(`${l.listing_code}: ${RLISTING_STATUS[l.status]?.label}`)).catch(toast.error);
+  const run = (action: string) => act.mutateAsync({ action }).then((l) => toast.success(`${l.listing_code}: ${statusLabel("rental_listing", l.status)}`)).catch(toast.error);
   return (
     <Drawer open onClose={onClose} title="Rental Listing" width={640}>
       <AsyncState query={q}>
@@ -80,7 +83,7 @@ export function RentalListingDrawer({ id, onClose, onEdit }: { id: string; onClo
           <div className="space-y-5">
             <div className="flex items-start justify-between gap-3">
               <div><div className="font-mono text-lg font-semibold">{x.listing_code}</div><div className="text-sm text-muted-foreground">Unit {x.unit_number} · {x.title}</div></div>
-              <Badge tone={RLISTING_STATUS[x.status]?.tone ?? "neutral"}>{RLISTING_STATUS[x.status]?.label}</Badge>
+              <StatusBadge objectType="rental_listing" status={x.status} />
             </div>
             <div className="flex flex-wrap gap-2">
               {x.allowed_actions.includes("publish") && can("commercial.rental_listings.publish") && <Button size="sm" onClick={() => run("publish")} loading={act.isPending} icon="publish">Publikasikan</Button>}

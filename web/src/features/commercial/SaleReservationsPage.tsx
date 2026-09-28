@@ -5,14 +5,17 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shell/AppShell";
-import { Alert, Badge, Button, Checkbox, Dialog, DialogContent, DialogFooter, Drawer, Field, Input, NativeSelect } from "@/components/ui/primitives";
+import { Alert, Button, Checkbox, Dialog, DialogContent, DialogFooter, Drawer, Field, Input, NativeSelect } from "@/components/ui/primitives";
 import { DataGrid } from "@/components/bv/datagrid";
 import { AsyncState, KeyValue, ReasonDialog, RelativeTime, useToast } from "@/components/bv/common";
 import { useAction, useList, useOne } from "@/api/hooks";
 import { useAuth } from "@/lib/auth";
 import { fmtDateTime } from "@/lib/format";
-import { SRES_STATUS, fmtD, rp, type Doc, type Onboarding, type SaleReservation } from "./commercial-api";
+import { fmtD, rp, type Doc, type Onboarding, type SaleReservation } from "./commercial-api";
 import { DocList, DocumentsEditor, OnboardingCard } from "./shared";
+import { StatusBadge } from "@/components/bv/badges";
+import { CellText, CellTitle } from "@/components/bv/cells";
+import { statusLabel, statusOptions } from "@/lib/status";
 
 export default function SaleReservationsPage() {
   const { t } = useTranslation();
@@ -24,12 +27,13 @@ export default function SaleReservationsPage() {
   const list = useList<SaleReservation>("unit-sales/reservations", { property_id: propertyId ?? undefined, status: status || undefined, q: q || undefined }, { enabled: !!propertyId });
   const rows = list.data?.pages.flatMap((p) => p.data) ?? [];
   const columns = useMemo<ColumnDef<SaleReservation, unknown>[]>(() => [
-    { id: "number", header: "Reservasi", cell: ({ row }) => <span className="font-mono text-[13px] font-semibold">{row.original.reservation_number}</span>, size: 150 },
-    { id: "unit", header: "Unit", cell: ({ row }) => <div><div className="font-medium">{row.original.unit_number}</div><div className="text-xs text-muted-foreground">{row.original.listing_title}</div></div>, size: 180 },
-    { id: "buyer", header: "Pembeli", cell: ({ row }) => <div><div className="font-medium">{row.original.buyer_name}</div><div className="text-xs text-muted-foreground">{row.original.lead_code} · {row.original.buyer_phone ?? "—"}</div></div> },
-    { id: "price", header: "Harga", cell: ({ row }) => <div className="tnum text-sm font-semibold">{rp(row.original.agreed_price)}<div className="text-xs font-normal text-muted-foreground">booking fee {rp(row.original.booking_fee)}</div></div>, size: 170 },
-    { id: "until", header: "Berlaku s/d", cell: ({ row }) => row.original.reserved_until ? fmtD(row.original.reserved_until) : "—", size: 120 },
-    { id: "status", header: t("label.status"), cell: ({ row }) => <Badge tone={SRES_STATUS[row.original.status]?.tone ?? "neutral"}>{SRES_STATUS[row.original.status]?.label ?? row.original.status}</Badge>, size: 140 },
+    // Tabel disederhanakan (29 Sep 2026): nomor + pembeli, unit, harga, masa berlaku, status. Lead, kontak, judul listing &
+    // booking fee ada di drawer detail.
+    { id: "buyer", header: "Reservasi", meta: { mobile: "primary" }, cell: ({ row }) => <CellTitle code={row.original.reservation_number} title={row.original.buyer_name} /> },
+    { id: "unit", header: "Unit", meta: { mobile: "secondary" }, cell: ({ row }) => <CellText max={150} title={row.original.listing_title ? `${row.original.unit_number} · ${row.original.listing_title}` : row.original.unit_number}>{row.original.unit_number}</CellText>, size: 150 },
+    { id: "price", header: "Harga", meta: { mobile: "secondary" }, cell: ({ row }) => <div className="tnum whitespace-nowrap text-right font-semibold">{rp(row.original.agreed_price)}</div>, size: 160 },
+    { id: "until", header: "Berlaku s/d", meta: { mobile: "secondary", nowrap: true }, cell: ({ row }) => <span className="tnum text-sm">{row.original.reserved_until ? fmtD(row.original.reserved_until) : "—"}</span>, size: 120 },
+    { id: "status", header: t("label.status"), meta: { mobile: "status" }, cell: ({ row }) => <StatusBadge objectType="sale_reservation" status={row.original.status} />, size: 140 },
   ], [t]);
   if (!propertyId) return <Alert variant="info">Pilih property (profile Apartment) di header.</Alert>;
   return (
@@ -37,10 +41,10 @@ export default function SaleReservationsPage() {
       <PageHeader title="Unit Sales · Reservations" subtitle="Reservasi unit → Contract Signed → Sold → Handed Over. Reservasi baru dibuat dari Lead (Reservasi unit…).">
         <div className="flex items-center gap-2">
           <Input className="w-64" placeholder="Cari nomor / pembeli / unit…" value={q} onChange={(e) => setQ(e.target.value)} />
-          <NativeSelect className="w-44" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option>{Object.entries(SRES_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</NativeSelect>
+          <NativeSelect className="w-44" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option>{statusOptions("sale_reservation").map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>
         </div>
       </PageHeader>
-      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/commercial/sales/reservations/${r.id}`} loading={list.isLoading} isFiltered={!!q || !!status} empty={{ message: "Belum ada reservasi penjualan." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} />
+      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/commercial/sales/reservations/${r.id}`} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} isFiltered={!!q || !!status} empty={{ message: "Belum ada reservasi penjualan." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} />
       {id && <SaleReservationDrawer id={id} onClose={() => nav("/commercial/sales/reservations")} />}
     </div>
   );
@@ -57,7 +61,7 @@ export function SaleReservationDrawer({ id, onClose }: { id: string; onClose: ()
   const [contractRef, setContractRef] = useState("");
   const [docs, setDocs] = useState<Doc[]>([]);
   const [h, setH] = useState({ owner_name: "", owner_phone: "", owner_email: "", company: "", tenant_type: "individual", create_tenant_account: true, handover_date: new Date().toISOString().slice(0, 10) });
-  const run = (action: string, body?: Record<string, unknown>) => act.mutateAsync({ action, body }).then((x) => { if (x.onboarding) setOb(x.onboarding); toast.success(`${x.reservation.reservation_number}: ${SRES_STATUS[x.reservation.status]?.label}`); setDialog(null); }).catch(toast.error);
+  const run = (action: string, body?: Record<string, unknown>) => act.mutateAsync({ action, body }).then((x) => { if (x.onboarding) setOb(x.onboarding); toast.success(`${x.reservation.reservation_number}: ${statusLabel("sale_reservation", x.reservation.status)}`); setDialog(null); }).catch(toast.error);
   return (
     <Drawer open onClose={onClose} title="Unit Sale Reservation" width={680}>
       <AsyncState query={q}>
@@ -65,7 +69,7 @@ export function SaleReservationDrawer({ id, onClose }: { id: string; onClose: ()
           <div className="space-y-5">
             <div className="flex items-start justify-between gap-3">
               <div><div className="font-mono text-lg font-semibold">{x.reservation_number}</div><div className="text-sm text-muted-foreground">Unit {x.unit_number} · {x.buyer_name}</div></div>
-              <Badge tone={SRES_STATUS[x.status]?.tone ?? "neutral"}>{SRES_STATUS[x.status]?.label}</Badge>
+              <StatusBadge objectType="sale_reservation" status={x.status} />
             </div>
             {ob && <OnboardingCard ob={ob} />}
             <div className="flex flex-wrap gap-2">
@@ -101,7 +105,7 @@ export function SaleReservationDrawer({ id, onClose }: { id: string; onClose: ()
               <Dialog open onOpenChange={(o) => !o && setDialog(null)}>
                 <DialogContent title="Dokumen / referensi" description="Nomor referensi dokumen transaksi (PPJB, AJB, KTP, bukti bayar). Isi dokumen sensitif tidak disimpan di sini.">
                   <DocumentsEditor value={docs} onChange={setDocs} />
-                  <DialogFooter><Button variant="secondary" onClick={() => setDialog(null)}>Batal</Button><Button loading={update.isPending} onClick={() => update.mutateAsync({ documents: docs }).then(() => { toast.success("Dokumen disimpan"); setDialog(null); }).catch(toast.error)}>Simpan</Button></DialogFooter>
+                  <DialogFooter><Button variant="secondary" onClick={() => setDialog(null)}>Batal</Button><Button loading={update.isPending} onClick={() => update.mutateAsync({ documents: docs }).then(() => { toast.action("saved", "Dokumen"); setDialog(null); }).catch(toast.error)}>Simpan</Button></DialogFooter>
                 </DialogContent>
               </Dialog>
             )}

@@ -1,11 +1,12 @@
 // Security › Visitors (PRD P1 v1.3 §22, WF-P1-005, AT-P1-011): daftar tamu hari ini, verifikasi kode/QR pass, check-in/out,
 // approval (OD-P1-008), registrasi walk-in oleh Security/Reception.
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Icon } from "@buildingvision/ui";
 import { PageHeader } from "@/components/shell/AppShell";
-import { Alert, Badge, Button, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect, Textarea } from "@/components/ui/primitives";
+import { Alert, Button, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect, Textarea } from "@/components/ui/primitives";
 import { DataGrid } from "@/components/bv/datagrid";
 import { KeyValue, useToast } from "@/components/bv/common";
 import { useAction, useAll, useList } from "@/api/hooks";
@@ -14,6 +15,10 @@ import { useAuth } from "@/lib/auth";
 import { fmtDateTime } from "@/lib/format";
 import type { Tenant } from "@/api/types";
 import { TreeView } from "@/features/property/LocationsPage";
+import { StatusBadge } from "@/components/bv/badges";
+import { CellText, CellTitle } from "@/components/bv/cells";
+import { statusLabel, statusOptions } from "@/lib/status";
+import { visitorDate } from "@/lib/drilldown";
 
 export interface Visitor {
   id: string; visitor_number: string; property_id: string; tenant_user_id: string | null; tenant_id: string | null; tenant_name: string | null; host_name: string | null; host_unit_location_id: string | null; host_unit_label: string | null;
@@ -21,18 +26,15 @@ export interface Visitor {
   status: string; channel: string; approved_at: string | null; denied_reason: string | null; verified_by_name: string | null; checked_in_at: string | null; checked_out_at: string | null; checkin_note: string | null;
   pass?: { pass_code: string; qr_payload: string; valid_from: string; valid_until: string; status: string } | null; allowed_actions: string[]; version: number;
 }
-export const VISITOR_STATUS: Record<string, { label: string; tone: "warning" | "success" | "error" | "neutral" | "info" | "primary" }> = {
-  pending_approval: { label: "Menunggu approval", tone: "warning" }, registered: { label: "Terdaftar", tone: "info" }, checked_in: { label: "Di dalam gedung", tone: "primary" }, checked_out: { label: "Sudah keluar", tone: "success" },
-  cancelled: { label: "Dibatalkan", tone: "neutral" }, expired: { label: "Kedaluwarsa", tone: "neutral" }, denied: { label: "Ditolak", tone: "error" },
-};
 const ACTION_LABEL: Record<string, string> = { approve: "Setujui", deny: "Tolak…", check_in: "Check-in", check_out: "Check-out", cancel: "Batalkan" };
 
 export default function VisitorsPage() {
   const { t } = useTranslation();
   const { propertyId, can } = useAuth();
   const toast = useToast();
-  const today = new Date().toISOString().slice(0, 10);
-  const [date, setDate] = useState(today);
+  // drill-down Security Dashboard "Visitor Volume": ?date=today | YYYY-MM-DD (default hari ini, kalender lokal)
+  const [sp] = useSearchParams();
+  const [date, setDate] = useState(() => visitorDate(sp.get("date")));
   const [status, setStatus] = useState("");
   const [q, setQ] = useState("");
   const [code, setCode] = useState("");
@@ -45,17 +47,18 @@ export default function VisitorsPage() {
   const act = useAction<{ id: string; action: string; reason?: string; note?: string }, Visitor>((i) => `visitors/${i.id}/${i.action}`, { body: (i) => ({ reason: i.reason, note: i.note }), invalidate: ["list", "all"] });
   const run = (v: Visitor, action: string) => {
     if (action === "deny") return setDenyFor(v);
-    act.mutateAsync({ id: v.id, action }).then((r) => { toast.success(`${r.visitor_name}: ${VISITOR_STATUS[r.status]?.label}`); setResolved(null); }).catch(toast.error);
+    act.mutateAsync({ id: v.id, action }).then((r) => { toast.success(`${r.visitor_name}: ${statusLabel("visitor", r.status)}`); setResolved(null); }).catch(toast.error);
   };
   const resolve = () => api<Visitor>("visitors/resolve", { query: { code: code.trim() } }).then(setResolved).catch(toast.error);
   const columns = useMemo<ColumnDef<Visitor, unknown>[]>(() => [
-    { id: "number", header: "No.", cell: ({ row }) => <span className="font-mono text-[13px] font-semibold">{row.original.visitor_number}</span>, size: 140 },
-    { id: "visitor", header: "Tamu", cell: ({ row }) => <div><div className="font-medium">{row.original.visitor_name}{row.original.headcount > 1 ? ` (+${row.original.headcount - 1})` : ""}</div><div className="text-xs text-muted-foreground">{[row.original.visitor_company, row.original.visitor_phone, row.original.vehicle_plate].filter(Boolean).join(" · ")}</div></div> },
-    { id: "host", header: "Host", cell: ({ row }) => <div><div className="text-sm">{row.original.host_name ?? "—"}</div><div className="text-xs text-muted-foreground">{row.original.host_unit_label ?? row.original.tenant_name ?? ""}</div></div> },
-    { id: "expected_at", header: "Rencana", cell: ({ row }) => <span className="text-sm">{fmtDateTime(row.original.expected_at)}</span>, size: 160 },
-    { id: "purpose", header: "Tujuan", cell: ({ row }) => <span className="text-sm">{row.original.purpose ?? "—"}</span> },
-    { id: "status", header: t("label.status"), cell: ({ row }) => <Badge tone={VISITOR_STATUS[row.original.status]?.tone ?? "neutral"}>{VISITOR_STATUS[row.original.status]?.label ?? row.original.status}</Badge>, size: 160 },
-    { id: "checked_in_at", header: "Masuk / keluar", cell: ({ row }) => <span className="text-xs text-muted-foreground">{row.original.checked_in_at ? new Date(row.original.checked_in_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : "—"} / {row.original.checked_out_at ? new Date(row.original.checked_out_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : "—"}</span>, size: 130 },
+    // Tabel disederhanakan (29 Sep 2026): no. + nama tamu satu kolom (perusahaan · telepon · plat di tooltip), host · unit satu
+    // baris, tujuan dipotong "…". Identitas, kendaraan & pass tampil saat verifikasi kode pass.
+    { id: "visitor", header: "Tamu", meta: { mobile: "primary" }, cell: ({ row: { original: v } }) => <div title={[v.visitor_company, v.visitor_phone, v.vehicle_plate].filter(Boolean).join(" · ") || undefined}><CellTitle code={v.visitor_number} title={`${v.visitor_name}${v.headcount > 1 ? ` (+${v.headcount - 1})` : ""}`} /></div> },
+    { id: "host", header: "Host", meta: { mobile: "secondary" }, cell: ({ row: { original: v } }) => <CellText max={180}>{[v.host_name, v.host_unit_label ?? v.tenant_name].filter(Boolean).join(" · ") || "—"}</CellText> },
+    { id: "expected_at", header: "Rencana", meta: { mobile: "secondary" }, cell: ({ row }) => <span className="tnum whitespace-nowrap text-sm">{fmtDateTime(row.original.expected_at)}</span>, size: 160 },
+    { id: "purpose", header: "Tujuan", meta: { mobile: "hidden" }, cell: ({ row }) => <CellText max={160}>{row.original.purpose ?? "—"}</CellText> },
+    { id: "status", header: t("label.status"), meta: { mobile: "status" }, cell: ({ row }) => <StatusBadge objectType="visitor" status={row.original.status} />, size: 160 },
+    { id: "checked_in_at", header: "Masuk / keluar", meta: { mobile: "hidden" }, cell: ({ row }) => <span className="tnum whitespace-nowrap text-xs text-muted-foreground">{row.original.checked_in_at ? new Date(row.original.checked_in_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : "—"} / {row.original.checked_out_at ? new Date(row.original.checked_out_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : "—"}</span>, size: 130 },
   ], [t]);
   return (
     <div>
@@ -66,17 +69,17 @@ export default function VisitorsPage() {
             <Button type="submit" variant="secondary" icon="qr_code_scanner">Verifikasi</Button>
           </form>
           <Input type="date" className="w-40" value={date} onChange={(e) => setDate(e.target.value)} />
-          <NativeSelect className="w-48" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option>{Object.entries(VISITOR_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</NativeSelect>
+          <NativeSelect className="w-48" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option>{statusOptions("visitor").map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>
           <Input className="w-56" placeholder="Cari nama / plat / host…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
       </PageHeader>
       {resolved && (
-        <Alert variant={resolved.status === "registered" ? "success" : "warning"} className="mb-4" title={`${resolved.visitor_number} · ${resolved.visitor_name} — ${VISITOR_STATUS[resolved.status]?.label}`}
+        <Alert variant={resolved.status === "registered" ? "success" : "warning"} className="mb-4" title={`${resolved.visitor_number} · ${resolved.visitor_name} — ${statusLabel("visitor", resolved.status)}`}
           action={<div className="flex gap-2">{resolved.allowed_actions.filter((a) => a !== "view").map((a) => <Button key={a} size="sm" variant={a === "deny" || a === "cancel" ? "secondary" : "primary"} onClick={() => run(resolved, a)}>{ACTION_LABEL[a] ?? a}</Button>)}<Button size="sm" variant="ghost" onClick={() => setResolved(null)}>Tutup</Button></div>}>
           <KeyValue items={[{ label: "Host", value: `${resolved.host_name ?? "—"} · ${resolved.host_unit_label ?? resolved.tenant_name ?? ""}` }, { label: "Rencana", value: fmtDateTime(resolved.expected_at) }, { label: "Tujuan", value: resolved.purpose ?? "—" }, { label: "Identitas", value: resolved.id_number_masked ?? "—" }, { label: "Kendaraan", value: resolved.vehicle_plate ?? "—" }, { label: "Pass", value: resolved.pass ? `${resolved.pass.status} · berlaku s/d ${fmtDateTime(resolved.pass.valid_until)}` : "—" }]} />
         </Alert>
       )}
-      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} loading={list.isLoading} isFiltered={!!q || !!status} empty={{ message: "Tidak ada tamu pada tanggal ini." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage}
+      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} isFiltered={!!q || !!status} empty={{ message: "Tidak ada tamu pada tanggal ini." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage}
         rowActions={(r) => r.allowed_actions.filter((a) => a !== "view").map((a) => ({ label: ACTION_LABEL[a] ?? a, destructive: a === "deny" || a === "cancel", onSelect: () => run(r, a) }))} />
       {createOpen && propertyId && <CreateVisitorDialog propertyId={propertyId} onClose={() => setCreateOpen(false)} />}
       {denyFor && (

@@ -1,7 +1,9 @@
 // Query hooks per resource (TanStack Query, TAD §9.1). Semua list cursor-based (TAD §6.3).
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
+import { useAuth } from "@/lib/auth";
 import { api, uuid, type ListResponse } from "@/lib/api";
 import type * as T from "./types";
+import { categoryText, taskCategoryLabel } from "@/components/bv/badges";
 
 export type Query = Record<string, string | number | boolean | undefined | null>;
 
@@ -84,11 +86,14 @@ export function useAnswerItem() {
 }
 
 // ---------- Master data ----------
+// master data picker hanya dimuat bila user berhak melihatnya (hindari 403 bising untuk teknisi/vendor)
 export function useUsers(query: Query = {}) {
-  return useAll<T.User>("users", query);
+  const { can } = useAuth();
+  return useAll<T.User>("users", query, { enabled: can("iam.users.view") });
 }
 export function useTeams(propertyId?: string | null, domain?: string) {
-  return useAll<T.Team>("teams", { property_id: propertyId ?? undefined, domain });
+  const { can } = useAuth();
+  return useAll<T.Team>("teams", { property_id: propertyId ?? undefined, domain }, { enabled: can("iam.teams.view") });
 }
 export function useLocationTree(propertyId?: string | null) {
   return useQuery({ queryKey: ["tree", propertyId], enabled: !!propertyId, queryFn: () => api<T.TreeNode>("locations/tree", { query: { property_id: propertyId } }), staleTime: 60_000 });
@@ -97,7 +102,16 @@ export function useAssets(query: Query = {}) {
   return useAll<T.Asset>("assets", query);
 }
 export function useTemplates(query: Query = {}) {
-  return useAll<T.ChecklistTemplate>("checklist-templates", query);
+  const { can } = useAuth();
+  return useAll<T.ChecklistTemplate>("checklist-templates", query, { enabled: can("operations.checklists.view") });
+}
+
+/** Kategori task (PRD P1 v2 §13.3): saran bawaan + kode yang sudah dipakai di organisasi (GET /task-categories). */
+export function useTaskCategories() {
+  const { can } = useAuth();
+  const q = useQuery({ queryKey: ["task-categories"], enabled: can("operations.tasks.view"), queryFn: () => api<{ data: { code: string; count: number }[] }>("task-categories").then((r) => r.data), staleTime: 5 * 60_000 });
+  const codes = [...new Set([...Object.keys(taskCategoryLabel), ...(q.data ?? []).map((c) => c.code)])];
+  return codes.map((code) => ({ value: code, label: categoryText(code) }));
 }
 
 // ---------- Notifications ----------
@@ -116,8 +130,9 @@ export function useSearch(q: string, propertyId?: string | null) {
 }
 
 // ---------- Attachments (presign → PUT → confirm; kompresi ≤1600px di client, TAD §5.13) ----------
-export async function uploadAttachment(file: File, objectType: string, objectId: string, attachmentType: string, onProgress?: (p: number) => void): Promise<T.Attachment> {
-  const blob = file.type.startsWith("image/") ? await compressImage(file) : file;
+export async function uploadAttachment(file: File, objectType: string, objectId: string, attachmentType: string, onProgress?: (p: number) => void, opts: { compress?: boolean } = {}): Promise<T.Attachment> {
+  // tanda tangan (PNG kecil) tidak dikompres ke JPEG agar garis tetap tajam
+  const blob = file.type.startsWith("image/") && opts.compress !== false ? await compressImage(file) : file;
   if (blob.type.startsWith("image/") && blob.size > MAX_IMAGE_BYTES) throw new Error(`Foto masih ${Math.round(blob.size / 1024)} KB setelah kompresi — batas ${MAX_IMAGE_BYTES / 1024} KB`);
   const presign = await api<{ attachment_id: string; upload_url: string }>("attachments/presign", {
     body: { object_type: objectType, object_id: objectId, attachment_type: attachmentType, content_type: blob.type || file.type, size_bytes: blob.size, original_filename: file.name, client_attachment_id: uuid() },

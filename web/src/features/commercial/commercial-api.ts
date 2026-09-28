@@ -34,24 +34,9 @@ export interface Onboarding { tenant_id: string; tenant_code: string; occupant_i
 export interface SalesSummary { listings: Record<string, number>; leads: Record<string, number>; reservations: Record<string, number>; sold_value: number; follow_ups_due: number }
 export interface RentalSummary { listings: Record<string, number>; reservations: Record<string, number>; active_rentals: number; ending_soon: number; upcoming_start: number; open_inquiries: number; occupancy_pct: number }
 
-export const LISTING_STATUS: Record<string, { label: string; tone: Tone }> = {
-  draft: { label: "Draft", tone: "neutral" }, published: { label: "Available", tone: "success" }, reserved: { label: "Reserved", tone: "warning" }, sold: { label: "Sold", tone: "primary" }, archived: { label: "Archived", tone: "neutral" },
-};
-export const RLISTING_STATUS: Record<string, { label: string; tone: Tone }> = {
-  draft: { label: "Draft", tone: "neutral" }, published: { label: "Published", tone: "success" }, archived: { label: "Archived", tone: "neutral" },
-};
 // Pipeline Unit Sale (Onboarding Brief §16): New → Contacted → Qualified → Reserved → Sold; Lost/Cancelled
-export const LEAD_STATUS: Record<string, { label: string; tone: Tone }> = {
-  new: { label: "New", tone: "neutral" }, contacted: { label: "Contacted", tone: "info" }, qualified: { label: "Qualified", tone: "primary" }, reserved: { label: "Reserved", tone: "warning" }, sold: { label: "Sold", tone: "success" }, lost: { label: "Lost", tone: "error" }, cancelled: { label: "Cancelled", tone: "neutral" },
-};
 export const LEAD_ACTION_LABEL: Record<string, string> = { contact: "Tandai dihubungi", qualify: "Qualified", reserve: "Reservasi unit…", lose: "Lost…", cancel: "Batalkan…", reopen: "Buka kembali" };
-export const SRES_STATUS: Record<string, { label: string; tone: Tone }> = {
-  reserved: { label: "Reserved", tone: "warning" }, contract_signed: { label: "Contract Signed", tone: "info" }, sold: { label: "Sold", tone: "primary" }, handed_over: { label: "Handed Over", tone: "success" }, cancelled: { label: "Cancelled", tone: "neutral" },
-};
 // Unit Rental (Onboarding Brief §16): New → Reserved → Active → Completed | Cancelled
-export const RRES_STATUS: Record<string, { label: string; tone: Tone }> = {
-  new: { label: "New (inquiry)", tone: "neutral" }, reserved: { label: "Reserved", tone: "warning" }, active: { label: "Active", tone: "primary" }, completed: { label: "Completed", tone: "success" }, cancelled: { label: "Cancelled", tone: "neutral" },
-};
 export const PERIOD_LABEL: Record<string, string> = { daily: "Harian", weekly: "Mingguan", monthly: "Bulanan" };
 export const PERIOD_UNIT: Record<string, string> = { daily: "hari", weekly: "minggu", monthly: "bulan" };
 export const FURNISHING: Record<string, string> = { unfurnished: "Unfurnished", semi_furnished: "Semi furnished", furnished: "Furnished" };

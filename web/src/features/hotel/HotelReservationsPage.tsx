@@ -14,7 +14,10 @@ import { useAction, useAll, useList, useOne } from "@/api/hooks";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { fmtDateTime } from "@/lib/format";
-import { RES_STATUS, ROOM_STATUS, STAY_LABEL, rp, type Availability, type Reservation, type Room, type RoomType } from "./hotel-api";
+import { STAY_LABEL, rp, type Availability, type Reservation, type Room, type RoomType } from "./hotel-api";
+import { StatusBadge } from "@/components/bv/badges";
+import { CellText, CellTitle } from "@/components/bv/cells";
+import { statusLabel, statusOptions } from "@/lib/status";
 
 const fmtD = (s: string) => new Date(s).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" });
 
@@ -29,12 +32,13 @@ export default function HotelReservationsPage() {
   const list = useList<Reservation>("hotel/reservations", { property_id: propertyId ?? undefined, status: status || undefined, q: q || undefined }, { enabled: !!propertyId });
   const rows = list.data?.pages.flatMap((p) => p.data) ?? [];
   const columns = useMemo<ColumnDef<Reservation, unknown>[]>(() => [
-    { id: "number", header: "Reservasi", cell: ({ row }) => <span className="font-mono text-[13px] font-semibold">{row.original.reservation_number}</span>, size: 150 },
-    { id: "guest", header: "Tamu", cell: ({ row }) => <div><div className="font-medium">{row.original.guest_name}</div><div className="text-xs text-muted-foreground">{row.original.adults} dewasa{row.original.children ? `, ${row.original.children} anak` : ""} · {row.original.source}</div></div> },
-    { id: "room", header: "Tipe / Kamar", cell: ({ row }) => <div><div className="text-sm">{row.original.room_type_name}</div><div className="text-xs text-muted-foreground">{row.original.room_number ? `Kamar ${row.original.room_number}` : "belum ditetapkan"}{row.original.room_status ? ` · ${ROOM_STATUS[row.original.room_status]?.label}` : ""}</div></div>, size: 190 },
-    { id: "stay", header: "Menginap", cell: ({ row }) => <div className="text-sm">{fmtD(row.original.check_in_date)} → {fmtD(row.original.check_out_date)}<div className="text-xs text-muted-foreground">{row.original.nights} malam · {STAY_LABEL[row.original.stay_status] ?? row.original.stay_status}</div></div>, size: 220 },
-    { id: "total", header: "Total", cell: ({ row }) => <span className="tnum font-semibold">{rp(row.original.total_amount)}</span>, size: 140 },
-    { id: "status", header: t("label.status"), cell: ({ row }) => <Badge tone={RES_STATUS[row.original.status]?.tone ?? "neutral"}>{RES_STATUS[row.original.status]?.label ?? row.original.status}</Badge>, size: 130 },
+    // Tabel disederhanakan (29 Sep 2026): nomor + tamu, tipe/kamar, tanggal menginap, total, status. Jumlah tamu, sumber,
+    // status kamar, jumlah malam & status menginap ada di drawer detail.
+    { id: "guest", header: "Reservasi", meta: { mobile: "primary" }, cell: ({ row }) => <CellTitle code={row.original.reservation_number} title={row.original.guest_name} /> },
+    { id: "room", header: "Tipe / Kamar", meta: { mobile: "secondary" }, cell: ({ row }) => <CellText max={180}>{row.original.room_number ? `${row.original.room_type_name} · ${row.original.room_number}` : row.original.room_type_name}</CellText>, size: 180 },
+    { id: "stay", header: "Menginap", meta: { mobile: "secondary", nowrap: true }, cell: ({ row }) => <span className="tnum text-sm">{fmtD(row.original.check_in_date)} → {fmtD(row.original.check_out_date)}</span>, size: 220 },
+    { id: "total", header: "Total", meta: { mobile: "secondary" }, cell: ({ row }) => <div className="tnum whitespace-nowrap text-right font-semibold">{rp(row.original.total_amount)}</div>, size: 140 },
+    { id: "status", header: t("label.status"), meta: { mobile: "status" }, cell: ({ row }) => <StatusBadge objectType="hotel_reservation" status={row.original.status} />, size: 130 },
   ], [t]);
   if (!propertyId) return <Alert variant="info">Pilih property (profile Hotel) di header.</Alert>;
   return (
@@ -42,10 +46,10 @@ export default function HotelReservationsPage() {
       <PageHeader title="Hotel Reservations" subtitle="Reservasi kamar milik property (tanpa OTA/channel manager). Konflik kamar dicegah oleh server." actions={<>{can("hotel.reservations.view") && <Link to="/commercial/hotel/calendar"><Button variant="secondary"><Icon name="calendar_month" size={16} /> Kalender</Button></Link>}{can("hotel.reservations.create") && <Button onClick={() => setCreateOpen(true)}><Icon name="add" size={16} /> Reservasi Baru</Button>}</>}>
         <div className="flex items-center gap-2">
           <Input className="w-64" placeholder="Cari nomor / tamu / kamar…" value={q} onChange={(e) => setQ(e.target.value)} />
-          <NativeSelect className="w-44" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option>{Object.entries(RES_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</NativeSelect>
+          <NativeSelect className="w-44" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option>{statusOptions("hotel_reservation").map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>
         </div>
       </PageHeader>
-      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/commercial/hotel/reservations/${r.id}`} loading={list.isLoading} isFiltered={!!q || !!status} empty={{ message: "Belum ada reservasi." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} />
+      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/commercial/hotel/reservations/${r.id}`} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} isFiltered={!!q || !!status} empty={{ message: "Belum ada reservasi." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} />
       {createOpen && <CreateReservationDialog propertyId={propertyId} onClose={() => setCreateOpen(false)} onCreated={(r) => nav(`/commercial/hotel/reservations/${r.id}`)} />}
       {id && <ReservationDrawer id={id} onClose={() => nav("/commercial/hotel/reservations")} />}
     </div>
@@ -68,7 +72,7 @@ export function ReservationDrawer({ id, onClose }: { id: string; onClose: () => 
   const freeRooms = (rooms.data ?? []).filter((x) => (avail.data?.free_room_ids ?? []).includes(x.location_id) || x.location_id === r?.room_location_id);
   const run = (action: string, body?: Record<string, unknown>) => act.mutateAsync({ id, action, body }).then((x) => {
     if (x.temporary_password) setCred({ email: x.guest_account_email ?? "", password: x.temporary_password });
-    toast.success(`${x.reservation.reservation_number}: ${RES_STATUS[x.reservation.status]?.label}`);
+    toast.success(`${x.reservation.reservation_number}: ${statusLabel("hotel_reservation", x.reservation.status)}`);
     setDialog(null);
     setReason("");
   }).catch(toast.error);
@@ -79,7 +83,7 @@ export function ReservationDrawer({ id, onClose }: { id: string; onClose: () => 
           <div className="space-y-5">
             <div className="flex items-start justify-between gap-3">
               <div><div className="font-mono text-lg font-semibold">{x.reservation_number}</div><div className="text-sm text-muted-foreground">{x.guest_name} · {x.room_type_name}{x.room_number ? ` · Kamar ${x.room_number}` : ""}</div></div>
-              <div className="flex items-center gap-2"><Badge tone={RES_STATUS[x.status]?.tone ?? "neutral"}>{RES_STATUS[x.status]?.label}</Badge><Badge tone="neutral">{STAY_LABEL[x.stay_status] ?? x.stay_status}</Badge></div>
+              <div className="flex items-center gap-2"><StatusBadge objectType="hotel_reservation" status={x.status} /><Badge tone="neutral">{STAY_LABEL[x.stay_status] ?? x.stay_status}</Badge></div>
             </div>
             {cred && <Alert variant="success" title="Akun Guest App dibuat (tampil sekali)">Email <code>{cred.email}</code> · Password sementara <code className="font-mono text-base">{cred.password}</code> — sampaikan ke tamu; akses berakhir saat check-out.</Alert>}
             <div className="flex flex-wrap gap-2">
@@ -106,7 +110,7 @@ export function ReservationDrawer({ id, onClose }: { id: string; onClose: () => 
               <Dialog open onOpenChange={(o) => !o && setDialog(null)}>
                 <DialogContent title={dialog === "assign" ? "Tetapkan kamar" : "Check-in tamu"} description={dialog === "check_in" ? "Kamar harus tersedia (bukan Occupied/OOO). Opsional: buat akun Guest App agar tamu dapat mengirim guest request dari Tenant App." : "Hanya kamar tipe yang sama dan bebas sepanjang menginap."}>
                   <div className="space-y-3">
-                    <Field label="Kamar" required={dialog === "check_in"}><NativeSelect value={roomId} onChange={(e) => setRoomId(e.target.value)}><option value="">— pilih kamar —</option>{freeRooms.map((rm) => <option key={rm.location_id} value={rm.location_id}>{rm.room_number} · {ROOM_STATUS[rm.room_status]?.label}{rm.floor_name ? ` · ${rm.floor_name}` : ""}</option>)}</NativeSelect></Field>
+                    <Field label="Kamar" required={dialog === "check_in"}><NativeSelect value={roomId} onChange={(e) => setRoomId(e.target.value)}><option value="">— pilih kamar —</option>{freeRooms.map((rm) => <option key={rm.location_id} value={rm.location_id}>{rm.room_number} · {statusLabel("hotel_room", rm.room_status)}{rm.floor_name ? ` · ${rm.floor_name}` : ""}</option>)}</NativeSelect></Field>
                     {avail.data && <p className="text-xs text-muted-foreground">{avail.data.available_rooms} dari {avail.data.total_rooms} kamar {avail.data.room_type_name} tersedia untuk tanggal ini.</p>}
                     {dialog === "check_in" && <>
                       <Checkbox label="Buat akun Guest App (Tenant App profile Hotel)" checked={guestAccount} onCheckedChange={setGuestAccount} />
@@ -166,7 +170,7 @@ export function CreateReservationDialog({ propertyId, onClose, onCreated, defaul
               })}
             </div>
           </Field>
-          {f.room_type_id && <Field label="Kamar (opsional; bisa ditetapkan saat check-in)"><NativeSelect value={f.room_location_id} onChange={(e) => setF({ ...f, room_location_id: e.target.value })}><option value="">— belum ditetapkan —</option>{(rooms.data ?? []).filter((rm) => (sel?.free_room_ids ?? []).includes(rm.location_id)).map((rm) => <option key={rm.location_id} value={rm.location_id}>{rm.room_number} · {ROOM_STATUS[rm.room_status]?.label}</option>)}</NativeSelect></Field>}
+          {f.room_type_id && <Field label="Kamar (opsional; bisa ditetapkan saat check-in)"><NativeSelect value={f.room_location_id} onChange={(e) => setF({ ...f, room_location_id: e.target.value })}><option value="">— belum ditetapkan —</option>{(rooms.data ?? []).filter((rm) => (sel?.free_room_ids ?? []).includes(rm.location_id)).map((rm) => <option key={rm.location_id} value={rm.location_id}>{rm.room_number} · {statusLabel("hotel_room", rm.room_status)}</option>)}</NativeSelect></Field>}
           <div className="grid grid-cols-2 gap-3">
             <Field label="Nama tamu" required className="col-span-2"><Input value={f.guest_name} onChange={(e) => setF({ ...f, guest_name: e.target.value })} /></Field>
             <Field label="Telepon"><Input value={f.guest_phone} onChange={(e) => setF({ ...f, guest_phone: e.target.value })} /></Field>

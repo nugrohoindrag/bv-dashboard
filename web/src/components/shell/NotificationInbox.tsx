@@ -10,22 +10,27 @@ import { useNotifications, useAction } from "@/api/hooks";
 import { cn } from "@/lib/utils";
 import type { Notification } from "@/api/types";
 
-function Item({ n, onRead, onNavigate }: { n: Notification; onRead: (id: string) => void; onNavigate?: () => void }) {
+export function NotificationItem({ n, onRead, onNavigate }: { n: Notification; onRead: (id: string) => void; onNavigate?: () => void }) {
   const dot = { critical: "bg-error", warning: "bg-warning", success: "bg-success", info: "bg-info" }[n.severity];
   const body = (
     <div className={cn("flex items-start gap-3 rounded-[var(--radius-md)] px-3 py-2 hover:bg-surface-container", !n.read_at && "bg-primary-soft")}>
       <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", dot)} aria-hidden />
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <span className={cn("text-body", !n.read_at && "font-bold")}>{n.title}</span>
+          <span className={cn("inline-flex items-center gap-1.5 text-body", !n.read_at && "font-bold")}>
+            {/* PRD P0 v2 §14.2: broadcast sistem tidak punya halaman detail kecuali deep_link */}
+            {n.object_type === "system" && <Icon name="campaign" size={16} className="shrink-0 text-primary" aria-label="Sistem" />}
+            {n.title}
+          </span>
           <RelativeTime value={n.created_at} className="shrink-0 text-xs text-on-surface-variant" />
         </div>
         <div className="whitespace-pre-line text-sm text-on-surface-variant">{n.body}</div>
       </div>
     </div>
   );
-  return n.deep_link ? (
-    <Link to={n.deep_link} onClick={() => { if (!n.read_at) onRead(n.id); onNavigate?.(); }} className="block">
+  const internal = !!n.deep_link && n.deep_link.startsWith("/");
+  return internal ? (
+    <Link to={n.deep_link!} onClick={() => { if (!n.read_at) onRead(n.id); onNavigate?.(); }} className="block">
       {body}
     </Link>
   ) : (
@@ -54,7 +59,7 @@ export function NotificationInbox({ full, onNavigate }: { full?: boolean; onNavi
       <div className={cn("mt-2 space-y-0.5 overflow-y-auto px-1", !full && "max-h-[380px]")}>
         {list.length === 0 && <p className="py-8 text-center text-sm text-on-surface-variant">{t("empty.notifications")}</p>}
         {list.map((n) => (
-          <Item key={n.id} n={n} onRead={(id) => markRead.mutate({ id })} onNavigate={onNavigate} />
+          <NotificationItem key={n.id} n={n} onRead={(id) => markRead.mutate({ id })} onNavigate={onNavigate} />
         ))}
       </div>
       {!full && (

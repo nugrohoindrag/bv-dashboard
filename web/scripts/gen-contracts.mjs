@@ -7,17 +7,26 @@ import YAML from "yaml";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../..");
-const tokens = JSON.parse(fs.readFileSync(path.join(root, "design-tokens/tokens.json"), "utf8")).bv;
+const tokenFile = JSON.parse(fs.readFileSync(path.join(root, "design-tokens/tokens.json"), "utf8"));
+const tokens = tokenFile.bv;
+const aliases = tokenFile.$aliases ?? {}; // { error: "critical" } — PRD P0 §20.2: Error == critical
+const COLOR_SCALES = ["brand", "secondary", "success", "warning", "critical", "info", "neutral"];
+const COLOR_ROLES = ["surface", "text", "border"];
 const statusMap = YAML.parse(fs.readFileSync(path.join(root, "contracts/status-map.yaml"), "utf8"));
 
 const header = "/* GENERATED — jangan edit manual. Sumber: design-tokens/tokens.json. Jalankan `npm run gen`. */\n";
 
 // ---------- tokens.css ----------
 let css = header + ":root {\n";
-for (const group of ["brand", "success", "warning", "critical", "info", "neutral"]) {
-  for (const [k, v] of Object.entries(tokens[group])) css += `  --bv-${group}-${k}: ${v.$value};\n`;
+for (const group of COLOR_SCALES) {
+  for (const [k, v] of Object.entries(tokens[group] ?? {})) css += `  --bv-${group}-${k}: ${v.$value};\n`;
 }
-for (const [k, v] of Object.entries(tokens.surface)) css += `  --bv-surface-${k}: ${v.$value};\n`;
+for (const [alias, target] of Object.entries(aliases)) {
+  for (const k of Object.keys(tokens[target] ?? {})) css += `  --bv-${alias}-${k}: var(--bv-${target}-${k});\n`;
+}
+for (const group of COLOR_ROLES) {
+  for (const [k, v] of Object.entries(tokens[group] ?? {})) css += `  --bv-${group}-${k}: ${v.$value};\n`;
+}
 for (const [k, v] of Object.entries(tokens.space)) css += `  --bv-space-${k}: ${v};\n`;
 for (const [k, v] of Object.entries(tokens.radius)) css += `  --bv-radius-${k}: ${v};\n`;
 for (const [k, v] of Object.entries(tokens.shadow)) css += `  --bv-shadow-${k}: ${v};\n`;
@@ -43,12 +52,23 @@ const buildDir = path.join(root, "contracts/build");
 fs.mkdirSync(buildDir, { recursive: true });
 let dart = "// GENERATED — jangan edit manual. Sumber: design-tokens/tokens.json.\nimport 'package:flutter/material.dart';\n\nclass BvTokens {\n";
 const hex = (h) => "Color(0xFF" + h.replace("#", "").toUpperCase() + ")";
-for (const group of ["brand", "success", "warning", "critical", "info", "neutral"]) {
-  for (const [k, v] of Object.entries(tokens[group])) dart += `  static const Color ${group}${k} = ${hex(v.$value)};\n`;
+const pascal = (k) => k.replace(/-([a-z])/g, (_, c) => c.toUpperCase()).replace(/^./, (c) => c.toUpperCase());
+for (const group of COLOR_SCALES) {
+  for (const [k, v] of Object.entries(tokens[group] ?? {})) dart += `  static const Color ${group}${k} = ${hex(v.$value)};\n`;
 }
-for (const [k, v] of Object.entries(tokens.surface)) dart += `  static const Color surface${k.replace(/-([a-z])/g, (_, c) => c.toUpperCase()).replace(/^./, (c) => c.toUpperCase())} = ${hex(v.$value)};\n`;
+for (const [alias, target] of Object.entries(aliases)) {
+  for (const k of Object.keys(tokens[target] ?? {})) dart += `  static const Color ${alias}${k} = ${target}${k};\n`;
+}
+for (const group of COLOR_ROLES) {
+  for (const [k, v] of Object.entries(tokens[group] ?? {})) dart += `  static const Color ${group}${pascal(k)} = ${hex(v.$value)};\n`;
+}
 for (const [k, v] of Object.entries(tokens.radius)) dart += `  static const double radius${k[0].toUpperCase() + k.slice(1)} = ${parseFloat(v)};\n`;
 for (const [k, v] of Object.entries(tokens.space)) dart += `  static const double space${k} = ${parseFloat(v)};\n`;
+// Tipografi PRD P0 §20.2 (Display · Heading · Body · Label · Caption): ukuran, line-height, weight
+for (const [k, v] of Object.entries(tokens.type)) {
+  const n = pascal(k);
+  dart += `  static const double type${n}Size = ${parseFloat(v.size)};\n  static const double type${n}Line = ${parseFloat(v.line)};\n  static const FontWeight type${n}Weight = FontWeight.w${v.weight};\n`;
+}
 dart += "}\n";
 fs.writeFileSync(path.join(buildDir, "tokens.dart"), dart);
 let sm = "// GENERATED — jangan edit manual. Sumber: contracts/status-map.yaml.\n\nclass StatusDef {\n  final String labelId; final String labelEn; final String semantic; final String variant; final String? icon;\n  const StatusDef(this.labelId, this.labelEn, this.semantic, this.variant, [this.icon]);\n}\n\nconst Map<String, Map<String, StatusDef>> statusMap = {\n";

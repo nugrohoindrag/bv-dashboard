@@ -3,9 +3,10 @@ import { useMemo, useState } from "react";
 import { Icon } from "@buildingvision/ui";
 import { Button, Popover } from "@/components/ui/primitives";
 import { AssetStatusBadge } from "./badges";
-import { useAssets, useLocationTree, useTeams, useUsers } from "@/api/hooks";
+import { useAll, useAssets, useLocationTree, useTeams, useUsers } from "@/api/hooks";
 import { cn } from "@/lib/utils";
-import type { TreeNode } from "@/api/types";
+import type { Equipment, Portfolio, TreeNode } from "@/api/types";
+import { WEEKDAY_ORDER, WEEKDAY_SHORT, toggleWeekday } from "@/lib/weekdays";
 
 const typeIcon: Record<string, string> = { property: "domain", building: "location_city", tower: "corporate_fare", floor: "layers", area: "grid_view", space: "meeting_room", unit: "door_front" };
 
@@ -84,7 +85,8 @@ export function LocationPicker({ propertyId, value, onChange, placeholder = "Pil
   );
 }
 
-function ComboBox<T extends { id: string }>({ items, value, onChange, render, label, placeholder, filter, className, disabled, loading }: { items: T[]; value?: string | null; onChange: (id: string | null, item?: T) => void; render: (t: T) => React.ReactNode; label: (t: T) => string; placeholder: string; filter: (t: T, q: string) => boolean; className?: string; disabled?: boolean; loading?: boolean }) {
+/** Combobox generik (cari + daftar) — dipakai picker produk (Asset, Team, User, Staf, …). */
+export function ComboBox<T extends { id: string }>({ items, value, onChange, render, label, placeholder, filter, className, disabled, loading }: { items: T[]; value?: string | null; onChange: (id: string | null, item?: T) => void; render: (t: T) => React.ReactNode; label: (t: T) => string; placeholder: string; filter: (t: T, q: string) => boolean; className?: string; disabled?: boolean; loading?: boolean }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const sel = items.find((i) => i.id === value);
@@ -175,4 +177,42 @@ export function TeamPicker({ propertyId, domain, value, onChange, className, dis
 export function UserPicker({ propertyId, teamId, role, value, onChange, className, disabled, placeholder = "Pilih user…" }: { propertyId?: string | null; teamId?: string | null; role?: string; value?: string | null; onChange: (id: string | null) => void; className?: string; disabled?: boolean; placeholder?: string }) {
   const users = useUsers({ property_id: propertyId ?? undefined, team_id: teamId ?? undefined, role, is_active: true });
   return <ComboBox items={users.data ?? []} loading={users.isLoading} value={value} onChange={(id) => onChange(id)} placeholder={placeholder} className={className} disabled={disabled} label={(u) => u.full_name} filter={(u, q) => u.full_name.toLowerCase().includes(q) || (u.email ?? "").toLowerCase().includes(q)} render={(u) => <div className="flex justify-between"><span>{u.full_name}</span><span className="text-xs text-on-surface-variant">{u.roles.map((r) => r.role_name).filter(Boolean).join(", ")}</span></div>} />;
+}
+
+// ---------- Vendor · Portfolio · Equipment (PRD P0 v2 §4.1, §8.1) ----------
+interface VendorLite { id: string; vendor_code: string; name: string; status: string }
+export function VendorPicker({ value, onChange, className, disabled, placeholder = "Pilih vendor…" }: { value?: string | null; onChange: (id: string | null) => void; className?: string; disabled?: boolean; placeholder?: string }) {
+  const vendors = useAll<VendorLite>("vendors", { status: "active" });
+  return <ComboBox items={vendors.data ?? []} loading={vendors.isLoading} value={value} onChange={(id) => onChange(id)} placeholder={placeholder} className={className} disabled={disabled} label={(v) => v.name} filter={(v, q) => v.name.toLowerCase().includes(q) || v.vendor_code.toLowerCase().includes(q)} render={(v) => <div className="flex justify-between gap-2"><span>{v.name}</span><span className="font-mono text-xs text-on-surface-variant">{v.vendor_code}</span></div>} />;
+}
+export function PortfolioPicker({ value, onChange, className, disabled, placeholder = "Tanpa portfolio" }: { value?: string | null; onChange: (id: string | null) => void; className?: string; disabled?: boolean; placeholder?: string }) {
+  const list = useAll<Portfolio>("portfolios");
+  return <ComboBox items={list.data ?? []} loading={list.isLoading} value={value} onChange={(id) => onChange(id)} placeholder={placeholder} className={className} disabled={disabled} label={(p) => p.name} filter={(p, q) => p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q)} render={(p) => <div className="flex justify-between gap-2"><span>{p.name}</span><span className="text-xs text-on-surface-variant">{p.property_count} property</span></div>} />;
+}
+export function EquipmentPicker({ value, onChange, className, disabled, placeholder = "Equipment…" }: { value?: string | null; onChange: (id: string | null) => void; className?: string; disabled?: boolean; placeholder?: string }) {
+  const list = useAll<Equipment>("equipment");
+  return <ComboBox items={list.data ?? []} loading={list.isLoading} value={value} onChange={(id) => onChange(id)} placeholder={placeholder} className={className} disabled={disabled} label={(e) => e.type_name ?? e.category_name} filter={(e, q) => `${e.type_name ?? ""} ${e.category_name}`.toLowerCase().includes(q)} render={(e) => <div className="flex justify-between gap-2"><span>{e.type_name ?? e.category_name}</span><span className="text-xs text-on-surface-variant">{e.category_name}</span></div>} />;
+}
+
+// ---------- WeekdayPicker (jadwal berulang: 0 = Minggu … 6 = Sabtu, tampil Senin lebih dulu) ----------
+export function WeekdayPicker({ value, onChange, disabled }: { value: number[]; onChange: (v: number[]) => void; disabled?: boolean }) {
+  return (
+    <div className="flex flex-wrap gap-1" role="group" aria-label="Hari">
+      {WEEKDAY_ORDER.map((d) => {
+        const on = value.includes(d) || (d === 0 && value.includes(7));
+        return (
+          <button
+            key={d}
+            type="button"
+            disabled={disabled}
+            aria-pressed={on}
+            onClick={() => onChange(toggleWeekday(value, d))}
+            className={cn("h-9 min-w-10 rounded-[var(--radius-md)] border px-2 text-xs font-semibold transition-colors disabled:opacity-50", on ? "border-primary bg-primary text-on-primary" : "border-border bg-surface text-on-surface-variant hover:bg-surface-container")}
+          >
+            {WEEKDAY_SHORT[d]}
+          </button>
+        );
+      })}
+    </div>
+  );
 }

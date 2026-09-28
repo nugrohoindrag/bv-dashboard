@@ -4,10 +4,12 @@ import { useTranslation } from "react-i18next";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Button, Dialog, DialogContent, DialogFooter, Input, NativeSelect } from "@/components/ui/primitives";
 import { DataGrid } from "@/components/bv/datagrid";
+import { CellText, CellTitle } from "@/components/bv/cells";
 import { UserPicker } from "@/components/bv/pickers";
 import { useList } from "@/api/hooks";
 import { useAuth } from "@/lib/auth";
 import { fmtDateTime } from "@/lib/format";
+import { ExportButton } from "@/components/bv/export";
 
 interface AuditLog { id: string; actor_user_id: string | null; actor_name: string; action: string; entity_type: string; entity_id: string | null; entity_label: string | null; before: unknown; after: unknown; ip: string | null; request_id: string | null; occurred_at: string; message: string }
 
@@ -23,11 +25,12 @@ export default function AuditLogsSection() {
   const [sel, setSel] = useState<AuditLog | null>(null);
   const columns = useMemo<ColumnDef<AuditLog, unknown>[]>(
     () => [
-      { id: "at", header: "Waktu", cell: ({ row }) => <span className="tnum text-xs">{fmtDateTime(row.original.occurred_at)}</span>, size: 150 },
-      { id: "msg", header: "Peristiwa", cell: ({ row }) => <span className="text-sm">{row.original.message}</span> },
-      { id: "entity", header: "Entitas", cell: ({ row }) => <span className="text-xs text-muted-foreground">{row.original.entity_type}{row.original.entity_label ? ` · ${row.original.entity_label}` : ""}</span>, size: 200 },
-      { id: "action", header: "Aksi", cell: ({ row }) => <span className="font-mono text-xs">{row.original.action}</span>, size: 140 },
-      { id: "ip", header: "IP", cell: ({ row }) => <span className="font-mono text-xs text-muted-foreground">{row.original.ip ?? "—"}</span>, size: 120 },
+      // Tabel disederhanakan (29 Sep 2026): kode aksi (mono) di atas peristiwa; before/after & request ID di dialog detail.
+      { id: "msg", header: "Peristiwa", meta: { mobile: "primary" }, cell: ({ row }) => <CellTitle code={row.original.action} title={row.original.message} /> },
+      { id: "at", header: "Waktu", meta: { mobile: "secondary" }, cell: ({ row }) => <span className="tnum whitespace-nowrap text-sm">{fmtDateTime(row.original.occurred_at)}</span>, size: 150 },
+      { id: "actor", header: "Aktor", meta: { mobile: "secondary" }, cell: ({ row }) => <CellText max={160}>{row.original.actor_name || "—"}</CellText>, size: 160 },
+      { id: "entity", header: "Entitas", meta: { mobile: "hidden" }, cell: ({ row }) => <CellText max={200} muted>{`${row.original.entity_type}${row.original.entity_label ? ` · ${row.original.entity_label}` : ""}`}</CellText>, size: 200 },
+      { id: "ip", header: "IP", meta: { mobile: "hidden" }, cell: ({ row }) => <CellText max={130} muted className="font-mono text-xs">{row.original.ip ?? "—"}</CellText>, size: 130 },
     ],
     [],
   );
@@ -41,8 +44,9 @@ export default function AuditLogsSection() {
         <span className="text-muted-foreground">–</span>
         <Input type="date" className="w-36" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} aria-label="Sampai" />
         {(f.entity_type || f.action || f.actor_id || f.from || f.to) && <Button variant="ghost" size="sm" onClick={() => setF({ entity_type: "", action: "", actor_id: null, from: "", to: "" })}>{t("action.reset_filter")}</Button>}
+        <span className="ml-auto"><ExportButton resource="audit_logs" filters={query} /></span>
       </div>
-      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => { setSel(r); }} loading={list.isLoading} isFiltered={!!(f.entity_type || f.action || f.actor_id || f.from || f.to)} empty={{ message: "Belum ada catatan audit." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} />
+      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => { setSel(r); }} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} isFiltered={!!(f.entity_type || f.action || f.actor_id || f.from || f.to)} empty={{ message: "Belum ada catatan audit." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} />
       {sel && (
         <Dialog open onOpenChange={(o) => !o && setSel(null)}>
           <DialogContent title={sel.message} description={`${fmtDateTime(sel.occurred_at)} · ${sel.actor_name}${sel.request_id ? ` · req ${sel.request_id}` : ""}`}>

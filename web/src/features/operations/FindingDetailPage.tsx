@@ -42,12 +42,12 @@ export default function FindingDetailPage() {
               <>
                 {can("operations.work_orders.create") && !["closed", "cancelled"].includes(fd.status) && <Button size="sm" onClick={() => setWoOpen(true)}>{t("action.create_from_finding")}</Button>}
                 {can("operations.incidents.create") && !["closed", "cancelled"].includes(fd.status) && <Button size="sm" variant="secondary" onClick={() => setIncOpen(true)}>{t("action.create_incident")}</Button>}
-                <TransitionActions objectType="finding" item={fd} />
+                <span className="hidden md:contents"><TransitionActions objectType="finding" item={fd} entityLabel={fd.finding_number} /></span>
               </>
             }
           />
-          <div className="grid grid-cols-12 gap-5">
-            <div className="col-span-8">
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
+            <div className="min-w-0 lg:col-span-8">
               <Tabs defaultValue="detail">
                 <TabsList>
                   <TabsTrigger value="detail">{t("label.detail")}</TabsTrigger>
@@ -70,17 +70,20 @@ export default function FindingDetailPage() {
                 <TabsContent value="related" className="pt-4"><RelatedList links={fd.links} /></TabsContent>
               </Tabs>
             </div>
-            <div className="col-span-4 space-y-4">
+            <div className="min-w-0 space-y-4 lg:col-span-4">
               <Card><CardHeader><CardTitle>Informasi</CardTitle></CardHeader><CardContent>
                 <KeyValue items={[
                   { label: t("label.location"), value: <LocationPath pathText={fd.location.path_text} locationId={fd.location.id} linkTo={(lid) => `/property/locations/${lid}`} /> },
                   { label: t("label.asset"), value: fd.asset.id ? <Link to={`/assets/${fd.asset.id}`} className="text-brand-600 hover:underline"><span className="font-mono text-xs">{fd.asset.asset_code}</span> {fd.asset.name}</Link> : "—" },
+                  // PRD P2 v2.1 P2-PAT-08: checkpoint asal temuan patroli → daftar temuan per checkpoint
+                  ...(fd.checkpoint_id ? [{ label: "Checkpoint", value: <Link to={`/findings?checkpoint_id=${fd.checkpoint_id}`} className="text-brand-600 hover:underline">{fd.checkpoint_name ?? "Checkpoint"}</Link> }] : []),
                   { label: "Dilaporkan", value: fmtDateTime(fd.reported_at) },
                   { label: "Resolved", value: fmtDateTime(fd.resolved_at) },
                 ]} />
               </CardContent></Card>
             </div>
           </div>
+          <div className="md:hidden"><TransitionActions objectType="finding" item={fd} entityLabel={fd.finding_number} mobileBar /></div>
           <CreateWorkItemDialog objectType="work_order" open={woOpen} onOpenChange={setWoOpen} defaults={{ title: fd.title, location_id: fd.location.id, asset_id: fd.asset.id, priority: fd.severity, type: "corrective", source_type: "finding", source_id: fd.id, link_to: { object_type: "finding", object_id: fd.id, link_type: "generated_from" } }} onCreated={(x) => nav(`/operations/work-orders/${x.id}`)} />
           <CreateIncidentDialog open={incOpen} onOpenChange={setIncOpen} defaults={{ title: fd.title, location_id: fd.location.id, source_type: "finding", source_id: fd.id, incident_type: fd.finding_type === "patrol" ? "security" : "general" }} onCreated={(x) => nav(`/operations/incidents/${x.id}`)} />
         </div>

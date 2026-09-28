@@ -1,35 +1,46 @@
-// Organization: nama, timezone (tampil), pengaturan umum, public intake per property (link form publik + key).
+// Organization (PRD P0 v2 §6.2): profil lengkap organisasi (PATCH /organizations/me + If-Match version), kode/slug/status
+// hanya-baca; public intake per property (link form publik + key).
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Button, Card, CardContent, CardHeader, CardTitle, Field, Input } from "@/components/ui/primitives";
+import { Alert, Button, Card, CardContent, CardHeader, CardTitle } from "@/components/ui/primitives";
 import { AsyncState, KeyValue, useToast } from "@/components/bv/common";
+import { FormSkeleton } from "@/components/bv/states";
+import { StatusBadge } from "@/components/bv/badges";
 import { useAction, useInvalidate } from "@/api/hooks";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-
-interface Org { id: string; code: string; slug: string; name: string; timezone: string; is_active: boolean; settings: Record<string, unknown>; version: number }
+import type { Organization } from "@/api/types";
+import { emptyOrgForm, orgFormFrom, orgFormToBody, validateOrgForm, type OrgForm } from "./organization-form";
+import { OrganizationProfileForm } from "./OrganizationProfileForm";
 
 export default function OrganizationSection() {
   const { t } = useTranslation();
   const { properties, can, refreshPrincipal } = useAuth();
   const toast = useToast();
   const invalidate = useInvalidate();
-  const org = useQuery({ queryKey: ["org"], queryFn: () => api<Org>("organizations/me") });
-  const [name, setName] = useState("");
-  useEffect(() => { if (org.data) setName(org.data.name); }, [org.data]);
+  const canEdit = can("platform.organizations.update");
+  const org = useQuery({ queryKey: ["org"], queryFn: () => api<Organization>("organizations/me") });
+  const [form, setForm] = useState<OrgForm>(emptyOrgForm());
+  const [touched, setTouched] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { if (org.data) setForm(orgFormFrom(org.data)); }, [org.data]);
   const [saving, setSaving] = useState(false);
   const intake = useAction<{ property_id: string; enabled: boolean }, { intake_key: string | null; enabled: boolean }>(() => "service-requests/public-intake");
   const [keys, setKeys] = useState<Record<string, string | null>>({});
   const save = async () => {
+    setTouched(true);
+    setErr(null);
+    if (Object.keys(validateOrgForm(form)).length) return;
     setSaving(true);
     try {
-      await api("organizations/me", { method: "PATCH", body: { name } });
+      await api("organizations/me", { method: "PATCH", body: orgFormToBody(form), ifMatch: org.data?.version });
       invalidate("org");
+      await org.refetch();
       await refreshPrincipal();
-      toast.success("Organisasi disimpan");
+      toast.action("saved", t("nav.organization"));
     } catch (e) {
-      toast.error(e);
+      setErr((e as Error).message);
     } finally {
       setSaving(false);
     }
@@ -37,16 +48,25 @@ export default function OrganizationSection() {
   return (
     <div className="space-y-5">
       <Card>
-        <CardHeader><CardTitle>Organisasi</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t("org.profile")}</CardTitle></CardHeader>
         <CardContent>
-          <AsyncState query={org}>
+          <AsyncState query={org} skeleton={<FormSkeleton fields={6} />}>
             {(o) => (
-              <div className="grid grid-cols-2 gap-5">
-                <div className="space-y-3">
-                  <Field label="Nama organisasi"><Input value={name} onChange={(e) => setName(e.target.value)} disabled={!can("platform.organizations.update")} /></Field>
-                  {can("platform.organizations.update") && <Button loading={saving} onClick={save}>{t("action.save")}</Button>}
+              <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
+                <div className="min-w-0 space-y-4 lg:col-span-8">
+                  {err && <Alert variant="critical">{err}</Alert>}
+                  <OrganizationProfileForm value={form} onChange={setForm} disabled={!canEdit} showErrors={touched} />
+                  {canEdit && <Button loading={saving} onClick={save}>{t("action.save")}</Button>}
                 </div>
-                <KeyValue items={[{ label: "Kode", value: o.code }, { label: "Slug", value: o.slug }, { label: "Timezone", value: o.timezone }, { label: "Status", value: o.is_active ? "Aktif" : "Nonaktif" }]} />
+                <div className="min-w-0 lg:col-span-4">
+                  <KeyValue items={[
+                    { label: t("org.code"), value: <span className="font-mono">{o.code}</span> },
+                    { label: "Slug", value: <span className="font-mono">{o.slug}</span> },
+                    { label: t("label.status"), value: <StatusBadge objectType="organization" status={o.status} /> },
+                    { label: "Plan", value: o.plan_code ?? "—" },
+                    { label: t("org.version"), value: o.version },
+                  ]} />
+                </div>
               </div>
             )}
           </AsyncState>
@@ -60,14 +80,14 @@ export default function OrganizationSection() {
             {properties.map((p) => {
               const key = keys[p.id] ?? (p.details?.public_intake_enabled ? "(aktif)" : null);
               return (
-                <li key={p.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                <li key={p.id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 text-sm">
                   <span><span className="font-medium">{p.name}</span> <span className="font-mono text-xs text-muted-foreground">{p.code}</span></span>
-                  <span className="flex items-center gap-2">
-                    {key && <code className="max-w-[360px] truncate rounded bg-muted px-1.5 py-0.5 text-xs">{key.startsWith("(") ? key : `${window.location.origin}/public/intake?key=${key}`}</code>}
+                  <span className="flex flex-wrap items-center gap-2">
+                    {key && <code className="max-w-full truncate sm:max-w-[360px] rounded bg-muted px-1.5 py-0.5 text-xs">{key.startsWith("(") ? key : `${window.location.origin}/public/intake?key=${key}`}</code>}
                     {can("platform.organizations.update") && (
                       <>
-                        <Button size="sm" variant="secondary" loading={intake.isPending} onClick={() => intake.mutateAsync({ property_id: p.id, enabled: true }).then((r) => { setKeys((k) => ({ ...k, [p.id]: r.intake_key })); toast.success("Public intake aktif"); }).catch(toast.error)}>Aktifkan / rotate key</Button>
-                        <Button size="sm" variant="ghost" onClick={() => intake.mutateAsync({ property_id: p.id, enabled: false }).then(() => { setKeys((k) => ({ ...k, [p.id]: null })); toast.success("Public intake dinonaktifkan"); }).catch(toast.error)}>Nonaktifkan</Button>
+                        <Button size="sm" variant="secondary" loading={intake.isPending} onClick={() => intake.mutateAsync({ property_id: p.id, enabled: true }).then((r) => { setKeys((k) => ({ ...k, [p.id]: r.intake_key })); toast.action("published", "Public intake"); }).catch(toast.error)}>Aktifkan / rotate key</Button>
+                        <Button size="sm" variant="ghost" onClick={() => intake.mutateAsync({ property_id: p.id, enabled: false }).then(() => { setKeys((k) => ({ ...k, [p.id]: null })); toast.action("archived", "Public intake"); }).catch(toast.error)}>Nonaktifkan</Button>
                       </>
                     )}
                   </span>

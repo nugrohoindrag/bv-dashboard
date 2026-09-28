@@ -1,9 +1,10 @@
 // Auth context: login/logout, principal (permission per property), property switcher (DS §3.1), can() helper (TAD §9.2).
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, tokenStore } from "./api";
+import { api, refreshToken, tokenStore } from "./api";
 
 export interface PropertyScope {
   property_id: string | null;
+  scope_location_id?: string | null; // scope Building/Tower (PRD P0 v2 §8.4)
   permissions: string[];
 }
 export interface Principal {
@@ -16,6 +17,8 @@ export interface Principal {
   permissions: string[];
   properties: PropertyScope[];
   is_internal_admin?: boolean; // role admin_internal pada organization internal (Website PRD §18)
+  is_platform_admin?: boolean; // Platform Admin (PRD P0 v2 §6): registry seluruh organization
+  vendor_id?: string | null; // user vendor (PRD P0 v2 §8.1)
 }
 export interface PropertyLite {
   id: string;
@@ -32,6 +35,8 @@ interface AuthState {
   setPropertyId: (id: string | null) => void;
   login: (identifier: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Hapus sesi lokal tanpa memanggil server (mis. setelah POST /auth/logout-all). */
+  clearSession: () => void;
   can: (perm: string, propertyId?: string | null) => boolean;
   refreshPrincipal: () => Promise<void>;
 }
@@ -66,10 +71,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setPrincipal(p);
       // admin_internal (organization internal) tidak punya property/permission property.view → 403 bukan berarti sesi gagal
       let props: { data: PropertyLite[] } = { data: [] };
-      try {
-        props = await api<{ data: PropertyLite[] }>("properties");
-      } catch {
-        props = { data: [] };
+      // tanpa property.locations.view (mis. Platform Admin / admin_internal) tidak perlu memanggil /properties (403)
+      const canViewProps = p.permissions?.some((x) => x === "*" || x === "property.locations.view" || x === "property.*" || x === "property.locations.*");
+      if (canViewProps) {
+        try {
+          props = await api<{ data: PropertyLite[] }>("properties");
+        } catch {
+          props = { data: [] };
+        }
       }
       setProperties(props.data);
       setPropertyIdState((cur) => {
@@ -95,10 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // coba refresh dari cookie saat mount
     (async () => {
       try {
-        const res = await fetch("/api/v1/auth/refresh", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client: "web" }) });
-        if (res.ok) {
-          const b = await res.json();
-          tokenStore.set(b.access_token);
+        if (await refreshToken()) {
           await loadSession();
           return;
         }
@@ -129,6 +135,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setPrincipal(null);
   }, []);
 
+  const clearSession = useCallback(() => {
+    tokenStore.set(null);
+    setPrincipal(null);
+  }, []);
+
   const setPropertyId = useCallback((id: string | null) => {
     setPropertyIdState(id);
     try {
@@ -153,8 +164,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo<AuthState>(
-    () => ({ principal, loading, properties, propertyId, setPropertyId, login, logout, can, refreshPrincipal: loadSession }),
-    [principal, loading, properties, propertyId, setPropertyId, login, logout, can, loadSession],
+    () => ({ principal, loading, properties, propertyId, setPropertyId, login, logout, clearSession, can, refreshPrincipal: loadSession }),
+    [principal, loading, properties, propertyId, setPropertyId, login, logout, clearSession, can, loadSession],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -17,7 +17,7 @@ import {
   type ButtonProps as DsButtonProps,
   type TabItem,
 } from "@buildingvision/ui";
-import { Dialog as BvConfirm, SurfaceCard, toneContainer, toneOnContainer, type Tone } from "@buildingvision/ui/bv";
+import { DateField, Dialog as BvConfirm, SurfaceCard, toneContainer, toneOnContainer, type Tone } from "@buildingvision/ui/bv";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
 
@@ -57,7 +57,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function 
   }
   const s = size === "lg" ? "lg" : size === "sm" ? "sm" : "md";
   return (
-    <DsButton ref={ref as React.Ref<HTMLButtonElement>} variant={dsVariant[v]} size={s} icon={iconNode} disabled={disabled || loading} className={cn("whitespace-nowrap", className)} style={{ borderRadius: "var(--radius-md)", ...(s === "sm" ? { padding: "0 12px", fontSize: 12.5, height: 30 } : {}), ...toneStyle, ...style }} {...props}>
+    <DsButton ref={ref as React.Ref<HTMLButtonElement>} variant={dsVariant[v]} size={s} icon={iconNode} disabled={disabled || loading} className={cn("whitespace-nowrap", className)} style={{ borderRadius: "var(--radius-button)", ...(s === "sm" ? { padding: "0 12px", fontSize: 12.5, height: 30 } : {}), ...toneStyle, ...style }} {...props}>
       {/* DS membungkus children dalam <span> inline; jadikan flex agar ikon/teks/chevron sejajar dan justify-* pemanggil berlaku */}
       <span className="flex w-full items-center gap-2" style={{ justifyContent: "inherit" }}>{children}</span>
     </DsButton>
@@ -78,7 +78,7 @@ export function Badge({ className, dot, tone, children, ...props }: React.HTMLAt
   );
 }
 
-// ---------- Card = SurfaceCard (rumah kartu DS: surface + hairline border + radius-xl + elevation-1) ----------
+// ---------- Card = SurfaceCard (rumah kartu DS Soft Frame: surface putih tanpa border + radius-xl + elevation-1) ----------
 export function Card({ className, children, railTone, interactive, style, ...props }: React.HTMLAttributes<HTMLDivElement> & { railTone?: Tone; interactive?: boolean }) {
   // padding: "" menghapus padding inline SurfaceCard sehingga kelas Tailwind p-* dari pemanggil (atau CardHeader/CardContent) yang menentukan.
   return (
@@ -88,10 +88,10 @@ export function Card({ className, children, railTone, interactive, style, ...pro
   );
 }
 export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("flex items-start justify-between gap-3 px-5 pb-2 pt-4", className)} {...props} />;
+  return <div className={cn("flex flex-wrap items-start justify-between gap-3 px-5 pb-2 pt-4", className)} {...props} />;
 }
 export function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
-  return <h2 className={cn("text-h3 font-bold text-on-surface", className)} {...props} />;
+  return <h2 className={cn("text-h3 font-semibold tracking-[-0.01em] text-on-surface", className)} {...props} />;
 }
 export function CardSubtitle({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
   return <p className={cn("text-sm text-on-surface-variant", className)} {...props} />;
@@ -103,24 +103,42 @@ export function CardFooter({ className, ...props }: React.HTMLAttributes<HTMLDiv
   return <div className={cn("flex items-center justify-between border-t border-border px-5 py-3 text-sm text-on-surface-variant", className)} {...props} />;
 }
 
-// ---------- Form controls (geometri outlined text field DS: 40px, radius-input, outline → primary saat fokus) ----------
+// ---------- Form controls (Soft Frame: input satu baris = pill 40px + hairline, fokus → primary; textarea radius-lg) ----------
 export const inputClass =
-  "flex h-10 w-full rounded-[var(--radius-input)] border border-outline-variant bg-surface px-3 py-1 text-body text-on-surface transition-colors placeholder:text-outline focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 disabled:cursor-not-allowed disabled:opacity-50 aria-[invalid=true]:border-error";
+  "flex h-10 w-full rounded-full border border-border bg-surface px-4 py-1 text-body text-on-surface transition-colors placeholder:text-outline focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 disabled:cursor-not-allowed disabled:opacity-50 aria-[invalid=true]:border-error";
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(({ className, ...props }, ref) => <input ref={ref} className={cn(inputClass, className)} {...props} />);
 Input.displayName = "Input";
 export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, ...props }, ref) => (
-  <textarea ref={ref} className={cn(inputClass, "h-auto min-h-[88px] py-2", className)} {...props} />
+  <textarea ref={ref} className={cn(inputClass, "h-auto min-h-[88px] rounded-[var(--radius-lg)] py-2", className)} {...props} />
 ));
 Textarea.displayName = "Textarea";
 export const NativeSelect = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<HTMLSelectElement>>(({ className, children, ...props }, ref) => (
   <span className={cn("relative inline-flex w-full", className)}>
-    <select ref={ref} className={cn(inputClass, "appearance-none pr-9")} {...props}>
+    <select ref={ref} className={cn(inputClass, "appearance-none pr-10")} {...props}>
       {children}
     </select>
-    <Icon name="expand_more" size={18} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant" />
+    <Icon name="expand_more" size={18} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-on-surface-variant" />
   </span>
 ));
 NativeSelect.displayName = "NativeSelect";
+/** Search (PRD P0 §20.3): input dengan ikon cari; lebar diatur pemanggil lewat pembungkus/`className`. */
+export const SearchInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(({ className, ...props }, ref) => (
+  <span className={cn("relative block w-full", className)}>
+    <Icon name="search" size={18} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-on-surface-variant" />
+    <input ref={ref} type="search" className={cn(inputClass, "pl-10")} {...props} />
+  </span>
+));
+SearchInput.displayName = "SearchInput";
+
+/**
+ * Date picker (PRD P0 §20.3). Dengan `label` → `DateField` bv (label selalu mengambang, 56px; untuk form).
+ * Tanpa label → input tanggal 40px selaras kontrol lain di baris filter. `onChange` menerima string ISO (yyyy-mm-dd / datetime-local).
+ */
+export function DatePicker({ value, onChange, label, type = "date", error, help, className, ...props }: Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "type"> & { value?: string | null; onChange: (value: string) => void; label?: string; type?: "date" | "datetime-local" | "month" | "time"; error?: string; help?: string }) {
+  if (label) return <DateField label={label} type={type} value={value ?? ""} onChange={(e) => onChange(e.target.value)} error={error} supportingText={help} className={className} {...props} />;
+  return <input type={type} value={value ?? ""} onChange={(e) => onChange(e.target.value)} className={cn(inputClass, className)} aria-invalid={error ? true : undefined} {...props} />;
+}
+
 export function Label({ className, required, children, ...props }: React.LabelHTMLAttributes<HTMLLabelElement> & { required?: boolean }) {
   return (
     <label className={cn("mb-1 block text-xs font-semibold uppercase tracking-wide text-on-surface-variant", className)} {...props}>
@@ -422,7 +440,7 @@ export function TabsContent({ value, className, children }: { value: string; cla
   return <div className={cn("pt-4 focus:outline-none", className)}>{children}</div>;
 }
 
-// ---------- Table (kelas .bv-table dari bv/table-header.css: header solid primary, hairline baris) ----------
+// ---------- Table (kelas .bv-table dari bv/table-header.css: header teks kapital abu tanpa latar, hairline baris) ----------
 export function Table({ className, ...props }: React.TableHTMLAttributes<HTMLTableElement>) {
   return (
     <div className="bv-table-scroll w-full">

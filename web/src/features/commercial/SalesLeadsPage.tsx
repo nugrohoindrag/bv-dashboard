@@ -14,8 +14,11 @@ import { useAction, useAll, useList, useOne } from "@/api/hooks";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { fmtDateTime } from "@/lib/format";
-import { ACTIVITY_TYPES, LEAD_ACTION_LABEL, LEAD_STATUS, LISTING_STATUS, SOURCES, num, rp, type Activity, type Lead, type Listing, type SaleReservation } from "./commercial-api";
+import { ACTIVITY_TYPES, LEAD_ACTION_LABEL, SOURCES, num, rp, type Activity, type Lead, type Listing, type SaleReservation } from "./commercial-api";
 import { useSalesSummary } from "./UnitListingsPage";
+import { StatusBadge } from "@/components/bv/badges";
+import { CellText, CellTitle } from "@/components/bv/cells";
+import { statusLabel, statusOptions } from "@/lib/status";
 
 const PIPELINE = ["new", "contacted", "qualified", "reserved", "sold"];
 
@@ -33,12 +36,13 @@ export default function SalesLeadsPage() {
   const sum = useSalesSummary(propertyId);
   const rows = list.data?.pages.flatMap((p) => p.data) ?? [];
   const columns = useMemo<ColumnDef<Lead, unknown>[]>(() => [
-    { id: "code", header: "Lead", cell: ({ row }) => <span className="font-mono text-[13px] font-semibold">{row.original.lead_code}</span>, size: 150 },
-    { id: "name", header: "Prospek", cell: ({ row }) => <div><div className="font-medium">{row.original.full_name}{row.original.company ? <span className="text-xs text-muted-foreground"> · {row.original.company}</span> : null}</div><div className="text-xs text-muted-foreground">{row.original.phone ?? "—"} · {row.original.email ?? "—"} · {row.original.source}</div></div> },
-    { id: "unit", header: "Unit diminati", cell: ({ row }) => row.original.unit_number ? <div className="text-sm">{row.original.unit_number}<div className="text-xs text-muted-foreground">{row.original.listing_title}</div></div> : <span className="text-muted-foreground">—</span>, size: 180 },
-    { id: "budget", header: "Budget", cell: ({ row }) => <span className="tnum text-sm">{row.original.budget_max ? rp(row.original.budget_max) : "—"}</span>, size: 150 },
-    { id: "follow", header: "Follow-up", cell: ({ row }) => row.original.next_follow_up_at ? <span className={`text-sm ${new Date(row.original.next_follow_up_at) < new Date() && ["new", "contacted", "qualified"].includes(row.original.status) ? "text-error" : ""}`}>{fmtDateTime(row.original.next_follow_up_at)}</span> : <span className="text-muted-foreground">—</span>, size: 160 },
-    { id: "status", header: t("label.status"), cell: ({ row }) => <Badge tone={LEAD_STATUS[row.original.status]?.tone ?? "neutral"}>{LEAD_STATUS[row.original.status]?.label ?? row.original.status}</Badge>, size: 120 },
+    // Tabel disederhanakan (29 Sep 2026): kode + prospek, unit diminati, budget, follow-up, status. Perusahaan, kontak,
+    // sumber & judul listing ada di drawer detail.
+    { id: "name", header: "Lead", meta: { mobile: "primary" }, cell: ({ row }) => <CellTitle code={row.original.lead_code} title={row.original.full_name} /> },
+    { id: "unit", header: "Unit diminati", meta: { mobile: "secondary" }, cell: ({ row }) => row.original.unit_number ? <CellText max={150} title={row.original.listing_title ? `${row.original.unit_number} · ${row.original.listing_title}` : row.original.unit_number}>{row.original.unit_number}</CellText> : <span className="text-muted-foreground">—</span>, size: 150 },
+    { id: "budget", header: "Budget", meta: { mobile: "secondary" }, cell: ({ row }) => <div className="tnum whitespace-nowrap text-right text-sm">{row.original.budget_max ? rp(row.original.budget_max) : "—"}</div>, size: 150 },
+    { id: "follow", header: "Follow-up", meta: { mobile: "secondary", nowrap: true }, cell: ({ row }) => row.original.next_follow_up_at ? <span className={`tnum text-sm ${new Date(row.original.next_follow_up_at) < new Date() && ["new", "contacted", "qualified"].includes(row.original.status) ? "text-error" : ""}`}>{fmtDateTime(row.original.next_follow_up_at)}</span> : <span className="text-muted-foreground">—</span>, size: 160 },
+    { id: "status", header: t("label.status"), meta: { mobile: "status" }, cell: ({ row }) => <StatusBadge objectType="sales_lead" status={row.original.status} />, size: 120 },
   ], [t]);
   if (!propertyId) return <Alert variant="info">Pilih property (profile Apartment) di header.</Alert>;
   return (
@@ -46,7 +50,7 @@ export default function SalesLeadsPage() {
       <PageHeader title="Unit Sales · Leads" subtitle="Prospective buyer, inquiry, dan pipeline penjualan: New → Contacted → Qualified → Reserved → Sold." actions={<>{can("commercial.sale_reservations.view") && <Link to="/commercial/sales/reservations"><Button variant="secondary"><Icon name="verified" size={16} /> Reservasi</Button></Link>}{can("commercial.sales_leads.create") && <Button onClick={() => setCreateOpen(true)}><Icon name="person_add" size={16} /> Lead Baru</Button>}</>}>
         <div className="flex items-center gap-2">
           <Input className="w-64" placeholder="Cari kode / nama / telepon…" value={q} onChange={(e) => setQ(e.target.value)} />
-          <NativeSelect className="w-44" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option>{Object.entries(LEAD_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</NativeSelect>
+          <NativeSelect className="w-44" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option>{statusOptions("sales_lead").map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>
           {listingId && <Badge tone="info">Filter listing aktif</Badge>}
         </div>
       </PageHeader>
@@ -54,13 +58,13 @@ export default function SalesLeadsPage() {
         <div className="mb-5 flex flex-wrap gap-2">
           {PIPELINE.map((s, i) => (
             <button key={s} type="button" onClick={() => setStatus(status === s ? "" : s)} className={`flex items-center gap-2 rounded-full border px-3 py-1 text-sm ${status === s ? "border-primary bg-primary-soft" : "border-border hover:bg-surface-container"}`}>
-              <span className="text-xs text-muted-foreground">{i + 1}</span><span>{LEAD_STATUS[s].label}</span><span className="tnum font-semibold">{sum.data.leads[s] ?? 0}</span>
+              <span className="text-xs text-muted-foreground">{i + 1}</span><span>{statusLabel("sales_lead", s)}</span><span className="tnum font-semibold">{sum.data.leads[s] ?? 0}</span>
             </button>
           ))}
           <span className="ml-auto text-sm text-muted-foreground">Lost {sum.data.leads.lost ?? 0} · Cancelled {sum.data.leads.cancelled ?? 0}</span>
         </div>
       )}
-      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/commercial/sales/leads/${r.id}`} loading={list.isLoading} isFiltered={!!q || !!status || !!listingId} empty={{ message: "Belum ada lead / inquiry." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} />
+      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/commercial/sales/leads/${r.id}`} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} isFiltered={!!q || !!status || !!listingId} empty={{ message: "Belum ada lead / inquiry." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} />
       {createOpen && <LeadDialog propertyId={propertyId} lead={null} defaultListingId={listingId} onClose={() => setCreateOpen(false)} onSaved={(l) => nav(`/commercial/sales/leads/${l.id}`)} />}
       {id && <LeadDrawer id={id} propertyId={propertyId} onClose={() => nav("/commercial/sales/leads")} />}
     </div>
@@ -76,7 +80,7 @@ export function LeadDrawer({ id, propertyId, onClose }: { id: string; propertyId
   const addAct = useAction<Record<string, unknown>, Lead>(() => `unit-sales/leads/${id}/activities`, { invalidate: ["one", "list", "lead-activities", "unit-sales"] });
   const [dialog, setDialog] = useState<"lose" | "cancel" | "reserve" | "edit" | null>(null);
   const [a, setA] = useState({ activity_type: "call", summary: "", next_follow_up_at: "" });
-  const run = (action: string, body?: Record<string, unknown>) => act.mutateAsync({ action, body }).then((l) => { toast.success(`${l.lead_code}: ${LEAD_STATUS[l.status]?.label}`); setDialog(null); }).catch(toast.error);
+  const run = (action: string, body?: Record<string, unknown>) => act.mutateAsync({ action, body }).then((l) => { toast.success(`${l.lead_code}: ${statusLabel("sales_lead", l.status)}`); setDialog(null); }).catch(toast.error);
   const canUpdate = can("commercial.sales_leads.update");
   return (
     <Drawer open onClose={onClose} title="Sales Lead" width={720}>
@@ -85,7 +89,7 @@ export function LeadDrawer({ id, propertyId, onClose }: { id: string; propertyId
           <div className="space-y-5">
             <div className="flex items-start justify-between gap-3">
               <div><div className="font-mono text-lg font-semibold">{x.lead_code}</div><div className="text-sm text-muted-foreground">{x.full_name}{x.company ? ` · ${x.company}` : ""}{x.unit_number ? ` · Unit ${x.unit_number}` : ""}</div></div>
-              <Badge tone={LEAD_STATUS[x.status]?.tone ?? "neutral"}>{LEAD_STATUS[x.status]?.label}</Badge>
+              <StatusBadge objectType="sales_lead" status={x.status} />
             </div>
             <div className="flex flex-wrap gap-2">
               {canUpdate && x.allowed_actions.map((ac) => {
@@ -159,7 +163,7 @@ export function LeadDialog({ propertyId, lead, defaultListingId, onClose, onSave
             <Field label="Budget min (IDR)"><Input inputMode="numeric" value={f.budget_min} onChange={(e) => setF({ ...f, budget_min: e.target.value.replace(/[^\d]/g, "") })} /></Field>
             <Field label="Budget max (IDR)"><Input inputMode="numeric" value={f.budget_max} onChange={(e) => setF({ ...f, budget_max: e.target.value.replace(/[^\d]/g, "") })} /></Field>
           </div>
-          <Field label="Listing yang diminati"><NativeSelect value={f.listing_id} onChange={(e) => setF({ ...f, listing_id: e.target.value })}><option value="">— belum ada —</option>{(listings.data ?? []).map((l) => <option key={l.id} value={l.id}>{l.unit_number} · {l.title} · {rp(l.asking_price)} ({LISTING_STATUS[l.status]?.label})</option>)}</NativeSelect></Field>
+          <Field label="Listing yang diminati"><NativeSelect value={f.listing_id} onChange={(e) => setF({ ...f, listing_id: e.target.value })}><option value="">— belum ada —</option>{(listings.data ?? []).map((l) => <option key={l.id} value={l.id}>{l.unit_number} · {l.title} · {rp(l.asking_price)} ({statusLabel("unit_listing", l.status)})</option>)}</NativeSelect></Field>
           <Field label="Inquiry"><Textarea rows={2} value={f.inquiry} onChange={(e) => setF({ ...f, inquiry: e.target.value })} placeholder="Pertanyaan / kebutuhan prospek" /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Follow-up berikutnya"><Input type="datetime-local" value={f.next_follow_up_at} onChange={(e) => setF({ ...f, next_follow_up_at: e.target.value })} /></Field>

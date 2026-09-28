@@ -1,59 +1,113 @@
-// Billing › Payments (PRD P1 v1.3 §23; NC §36): daftar pembayaran, verifikasi pembayaran manual, status callback gateway.
+// Billing › Payments (PRD P4 v2.1 §6; NC §36): daftar pembayaran dengan filter (status, metode, provider, tenant, grup
+// penerimaan, rentang tanggal bayar, pencarian) dari URL; detail = drawer /billing/payments/:id (B-13: deep link membuka
+// pembayaran ini). Terima Pembayaran = satu penerimaan dialokasikan ke banyak invoice (P4-PAY-05).
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/shell/AppShell";
-import { Badge, Button, Dialog, DialogContent, DialogFooter, Field, NativeSelect, Textarea } from "@/components/ui/primitives";
-import { DataGrid } from "@/components/bv/datagrid";
-import { RelativeTime, useToast } from "@/components/bv/common";
-import { useAction, useList } from "@/api/hooks";
+import { Button } from "@/components/ui/primitives";
+import { DataGrid, FilterBar, FilterSelect, useUrlFilters } from "@/components/bv/datagrid";
+import { StatusBadge } from "@/components/bv/badges";
+import { CellText, CellTitle } from "@/components/bv/cells";
+import { useList } from "@/api/hooks";
 import { useAuth } from "@/lib/auth";
 import { fmtDateTime } from "@/lib/format";
-import { PAYMENT_STATUS, rp, type Payment } from "./InvoicesPage";
+import { statusOptions } from "@/lib/status";
+import { PaymentDrawer, VerifyPaymentDialog } from "./PaymentDetail";
+import { PaymentReceiveDialog } from "./PaymentReceiveDialog";
+import { DateRangeFilter, TenantFilter } from "./shared";
+import { PAYMENT_METHODS, PROVIDERS, labelOf, methodLabel, money, rangeParam, type Payment } from "./types";
 
 export default function PaymentsPage() {
   const { t } = useTranslation();
-  const { propertyId } = useAuth();
-  const toast = useToast();
-  const [status, setStatus] = useState("");
-  const [provider, setProvider] = useState("");
-  const [failFor, setFailFor] = useState<Payment | null>(null);
-  const [reason, setReason] = useState("");
-  const list = useList<Payment>("payments", { property_id: propertyId ?? undefined, status: status || undefined, provider: provider || undefined });
+  const { id } = useParams();
+  const nav = useNavigate();
+  const location = useLocation();
+  const { propertyId, can } = useAuth();
+  const f = useUrlFilters();
+  const [receiveOpen, setReceiveOpen] = useState(false);
+  const [verifyFor, setVerifyFor] = useState<Payment | null>(null);
+  const pid = f.get("property_id") || propertyId;
+  const list = useList<Payment>("payments", {
+    property_id: pid ?? undefined,
+    status: f.get("status") || undefined,
+    method: f.get("method") || undefined,
+    provider: f.get("provider") || undefined,
+    tenant_id: f.get("tenant_id") || undefined,
+    invoice_id: f.get("invoice_id") || undefined,
+    receipt_group: f.get("receipt_group") || undefined,
+    paid_from: rangeParam(f.get("paid_from"), "from"),
+    paid_to: rangeParam(f.get("paid_to"), "to"),
+    q: f.get("q") || undefined,
+  });
   const rows = list.data?.pages.flatMap((p) => p.data) ?? [];
-  const act = useAction<{ id: string; action: string; reason?: string }, Payment>((i) => `payments/${i.id}/${i.action}`, { body: (i) => (i.action === "fail" ? { reason: i.reason } : {}), invalidate: ["list", "one", "all"] });
+  const canReceive = can("billing.payments.allocate") && can("billing.payments.verify");
+
   const columns = useMemo<ColumnDef<Payment, unknown>[]>(() => [
-    { id: "number", header: "Payment", cell: ({ row }) => <span className="font-mono text-[13px] font-semibold">{row.original.payment_number}</span>, size: 150 },
-    { id: "invoice", header: "Invoice", cell: ({ row }) => <Link to={`/billing/invoices/${row.original.invoice_id}`} className="font-mono text-[13px] text-primary hover:underline">{row.original.invoice_number}</Link>, size: 150 },
-    { id: "tenant", header: t("label.tenant"), cell: ({ row }) => <span className="text-sm">{row.original.tenant_name ?? "—"}</span> },
-    { id: "amount", header: "Nominal", cell: ({ row }) => <span className="tnum font-semibold">{rp(row.original.amount)}</span>, size: 140 },
-    { id: "provider", header: "Provider", cell: ({ row }) => <span className="text-xs">{row.original.provider_code} · {row.original.method}{row.original.provider_ref ? ` · ${row.original.provider_ref}` : ""}</span>, size: 220 },
-    { id: "status", header: t("label.status"), cell: ({ row }) => <div><Badge tone={PAYMENT_STATUS[row.original.status]?.tone ?? "neutral"}>{PAYMENT_STATUS[row.original.status]?.label ?? row.original.status}</Badge>{row.original.verification && <div className="mt-0.5 text-[11px] text-muted-foreground">{row.original.verification === "gateway_callback" ? "callback gateway" : `manual · ${row.original.verified_by_name ?? ""}`}</div>}</div>, size: 170 },
-    { id: "paid_at", header: "Dibayar", cell: ({ row }) => <span className="text-xs text-muted-foreground">{row.original.paid_at ? fmtDateTime(row.original.paid_at) : row.original.expires_at ? `berlaku s/d ${fmtDateTime(row.original.expires_at)}` : "—"}</span>, size: 170 },
-    { id: "created_at", header: "Dibuat", cell: ({ row }) => <span className="text-xs text-muted-foreground"><RelativeTime value={row.original.created_at} /></span>, size: 110 },
+    // Tabel disederhanakan (29 Sep 2026, pola Tasks): nomor pembayaran + invoice satu kolom, metode singkat, satu badge status,
+    // satu tanggal. Grup penerimaan, referensi, provider, verifikator, bukti & tanggal dibuat ada di drawer detail.
+    { id: "number", header: "Pembayaran", meta: { mobile: "primary" }, cell: ({ row: { original: p } }) => <CellTitle code={p.payment_number} title={p.invoice_number} /> },
+    { id: "tenant", header: t("label.tenant"), meta: { mobile: "secondary" }, cell: ({ row: { original: p } }) => <CellText max={180}>{p.tenant_name ?? "—"}</CellText> },
+    { id: "amount", header: "Nominal", size: 130, meta: { mobile: "secondary" }, cell: ({ row: { original: p } }) => <div className="tnum whitespace-nowrap text-right font-semibold">{money(p.amount, p.currency_code)}</div> },
+    { id: "method", header: "Metode", size: 140, meta: { mobile: "hidden" }, cell: ({ row: { original: p } }) => <CellText max={140} title={`${methodLabel(p.method)} · ${labelOf(PROVIDERS, p.provider_code)}${p.reference ? ` · ${p.reference}` : ""}`}>{methodLabel(p.method)}</CellText> },
+    { id: "status", header: t("label.status"), size: 130, meta: { mobile: "status" }, cell: ({ row: { original: p } }) => <StatusBadge objectType="payment" status={p.status} /> },
+    {
+      id: "paid_at", header: "Tanggal", size: 150, meta: { mobile: "secondary" },
+      cell: ({ row: { original: p } }) => (p.paid_at
+        ? <span className="tnum whitespace-nowrap text-sm">{fmtDateTime(p.paid_at)}</span>
+        : <span className="tnum whitespace-nowrap text-sm text-on-surface-variant" title="Belum dibayar — tanggal dibuat">{fmtDateTime(p.created_at)}</span>),
+    },
   ], [t]);
+
   return (
     <div>
-      <PageHeader title="Payments" subtitle="Pembayaran gateway ditetapkan hanya oleh callback terverifikasi; pembayaran manual diverifikasi Finance.">
-        <div className="flex items-center gap-2">
-          <NativeSelect className="w-44" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option>{Object.entries(PAYMENT_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</NativeSelect>
-          <NativeSelect className="w-44" value={provider} onChange={(e) => setProvider(e.target.value)}><option value="">Provider: {t("label.all")}</option><option value="manual">manual</option><option value="mock_gateway">mock_gateway</option><option value="midtrans">midtrans</option><option value="xendit">xendit</option></NativeSelect>
-        </div>
+      <PageHeader
+        title={t("nav.payments")}
+        subtitle="Pembayaran manual diverifikasi Finance (bukti transfer, jumlah diterima dapat disesuaikan); pembayaran online (gateway) sedang ditunda."
+        actions={canReceive && <Button icon="payments" onClick={() => setReceiveOpen(true)}>Terima Pembayaran</Button>}
+      >
+        <FilterBar
+          spec={{
+            status: statusOptions("payment"),
+            presets: [
+              { key: "all", label: "Semua", params: {} },
+              { key: "verify", label: "Perlu verifikasi", params: { status: "initiated,pending", provider: "manual" } },
+              { key: "expired", label: "Kedaluwarsa", params: { status: "expired" } },
+              { key: "paid", label: "Berhasil", params: { status: "paid" } },
+              { key: "refunded", label: "Refund", params: { status: "refunded" } },
+            ],
+            extra: (
+              <>
+                <FilterSelect param="method" label="Metode" options={PAYMENT_METHODS} />
+                <FilterSelect param="provider" label="Provider" options={PROVIDERS} />
+                <TenantFilter propertyId={pid} value={f.get("tenant_id")} onChange={(v) => f.set({ tenant_id: v })} />
+                <DateRangeFilter label="Dibayar" from={f.get("paid_from")} to={f.get("paid_to")} onChange={(a, b) => f.set({ paid_from: a, paid_to: b })} />
+              </>
+            ),
+          }}
+        />
       </PageHeader>
-      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} loading={list.isLoading} isFiltered={!!status || !!provider} empty={{ message: "Belum ada pembayaran." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage}
+      <DataGrid
+        columns={columns}
+        rows={rows}
+        rowId={(r) => r.id}
+        onRowClick={(r) => `/billing/payments/${r.id}${location.search}`}
+        loading={list.isLoading}
+        error={list.error}
+        onRetry={() => list.refetch()}
+        isFiltered={f.isFiltered}
+        empty={{ icon: "payments", title: "Belum ada pembayaran", description: "Pembayaran tercatat dari Tenant App (menunggu verifikasi), dicatat Finance per invoice, atau lewat Terima Pembayaran.", action: canReceive ? <Button icon="payments" onClick={() => setReceiveOpen(true)}>Terima Pembayaran</Button> : undefined }}
+        hasMore={list.hasNextPage}
+        onLoadMore={() => list.fetchNextPage()}
+        loadingMore={list.isFetchingNextPage}
         rowActions={(r) => [
-          ...(r.allowed_actions.includes("verify") ? [{ label: "Verifikasi (bukti diterima)", icon: "task_alt", onSelect: () => act.mutateAsync({ id: r.id, action: "verify" }).then(() => toast.success("Pembayaran diverifikasi")).catch(toast.error) }] : []),
-          ...(r.allowed_actions.includes("fail") ? [{ label: "Tandai gagal…", icon: "block", destructive: true, onSelect: () => setFailFor(r) }] : []),
-        ]} />
-      {failFor && (
-        <Dialog open onOpenChange={(o) => !o && setFailFor(null)}>
-          <DialogContent title={`Tandai gagal ${failFor.payment_number}`}>
-            <Field label="Alasan"><Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
-            <DialogFooter><Button variant="secondary" onClick={() => setFailFor(null)}>Batal</Button><Button variant="destructive" loading={act.isPending} onClick={() => act.mutateAsync({ id: failFor.id, action: "fail", reason }).then(() => { setFailFor(null); setReason(""); }).catch(toast.error)}>Konfirmasi</Button></DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
+          ...(r.allowed_actions.includes("verify") ? [{ label: "Verifikasi…", icon: "task_alt", onSelect: () => setVerifyFor(r) }] : []),
+        ]}
+      />
+      {receiveOpen && <PaymentReceiveDialog onClose={() => setReceiveOpen(false)} initial={{ tenantId: f.get("tenant_id") || undefined }} />}
+      {verifyFor && <VerifyPaymentDialog payment={verifyFor} onClose={() => setVerifyFor(null)} />}
+      {id && <PaymentDrawer id={id} onClose={() => nav({ pathname: "/billing/payments", search: location.search })} />}
     </div>
   );
 }

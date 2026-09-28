@@ -6,6 +6,7 @@ import { Icon } from "@buildingvision/ui";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Alert, Badge, Button, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect, Textarea } from "@/components/ui/primitives";
 import { DataGrid } from "@/components/bv/datagrid";
+import { CellText, CellTitle } from "@/components/bv/cells";
 import { RelativeTime, useToast } from "@/components/bv/common";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -56,11 +57,13 @@ export default function AppDownloadsSection() {
 
   const columns = useMemo<ColumnDef<AppDownload, unknown>[]>(
     () => [
-      { id: "name", header: "App Name", cell: ({ row }) => <div><div className="font-medium">{row.original.name}</div><div className="text-xs text-on-surface-variant">{APP_TYPE_LABEL[row.original.app_type]}</div></div> },
-      { id: "platform", header: "Platform", cell: ({ row }) => PLATFORM_LABEL[row.original.platform], size: 100 },
-      { id: "url", header: "Download URL", cell: ({ row }) => <a href={row.original.download_url} target="_blank" rel="noreferrer" className="block max-w-[360px] truncate text-primary underline" onClick={(e) => e.stopPropagation()}>{row.original.download_url}</a> },
-      { id: "status", header: "Status", cell: ({ row }) => <Badge tone={row.original.status === "active" ? "success" : "neutral"}>{row.original.status === "active" ? "Active" : "Inactive"}</Badge>, size: 100 },
-      { id: "updated", header: "Updated", cell: ({ row }) => <div className="text-xs"><RelativeTime value={row.original.updated_at} /><div className="text-on-surface-variant">{row.original.updated_by_name || "-"}</div></div>, size: 150 },
+      // Tabel disederhanakan (29 Sep 2026): satu baris per kolom; pengubah terakhir di tooltip, catatan di dialog edit.
+      { id: "name", header: "App Name", meta: { mobile: "primary" }, cell: ({ row }) => <CellTitle title={row.original.name} /> },
+      { id: "type", header: "App Type", meta: { mobile: "secondary" }, cell: ({ row }) => <CellText max={180}>{APP_TYPE_LABEL[row.original.app_type]}</CellText>, size: 160 },
+      { id: "platform", header: "Platform", cell: ({ row }) => <span className="whitespace-nowrap text-sm">{PLATFORM_LABEL[row.original.platform]}</span>, size: 100 },
+      { id: "url", header: "Download URL", meta: { mobile: "hidden" }, cell: ({ row }) => <a href={row.original.download_url} target="_blank" rel="noreferrer" className="block max-w-[260px] truncate text-sm text-primary underline" title={row.original.download_url} onClick={(e) => e.stopPropagation()}>{row.original.download_url}</a> },
+      { id: "status", header: "Status", meta: { mobile: "status" }, cell: ({ row }) => <Badge tone={row.original.status === "active" ? "success" : "neutral"}>{row.original.status === "active" ? "Active" : "Inactive"}</Badge>, size: 100 },
+      { id: "updated", header: "Updated", meta: { mobile: "secondary" }, cell: ({ row }) => <span className="whitespace-nowrap text-sm" title={row.original.updated_by_name || undefined}><RelativeTime value={row.original.updated_at} /></span>, size: 130 },
     ],
     [],
   );
@@ -76,7 +79,7 @@ export default function AppDownloadsSection() {
         columns={columns}
         rows={list.data ?? []}
         rowId={(r) => r.id}
-        loading={list.isLoading}
+        loading={list.isLoading} error={list.error} onRetry={() => list.refetch()}
         onRowClick={(r) => setEdit(r)}
         empty={{ message: "No apps have been configured yet.", cta: <Button size="sm" onClick={() => setEdit("new")}>Add App</Button> }}
         rowActions={(r) => [

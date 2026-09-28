@@ -21,7 +21,7 @@ export default function AssetHistoryPage() {
   const history = useQuery({ queryKey: ["asset-history", assetId], enabled: !!assetId, queryFn: () => api<{ data: HistoryItem[] }>(`assets/${assetId}/history`, { query: { limit: 300 } }).then((r) => r.data) });
   return (
     <div>
-      <PageHeader title={`${t("nav.assets")} · ${t("nav.history")}`} subtitle="Riwayat Work Order, Task, jadwal PM, dan perubahan aset.">
+      <PageHeader title={t("nav.asset_history")} subtitle="Riwayat Work Order, Task, jadwal Preventive Maintenance, dan perubahan aset.">
         <div className="flex items-center gap-2">
           <AssetPicker propertyId={propertyId} value={assetId} onChange={setAssetId} className="w-96" />
           {assetId && <Link to={`/assets/${assetId}`} className="text-sm text-brand-600 hover:underline">Buka detail aset →</Link>}

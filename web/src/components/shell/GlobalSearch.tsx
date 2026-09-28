@@ -6,8 +6,17 @@ import { Modal } from "@buildingvision/ui";
 import { StatusBadge, objectTypeLabel } from "@/components/bv/badges";
 import { useSearch } from "@/api/hooks";
 import { useAuth } from "@/lib/auth";
-import type { ObjectType } from "@/lib/status-map";
+import { statusMap, type ObjectType } from "@/lib/status-map";
 import { cn } from "@/lib/utils";
+
+// PRD P0 v2 §17.1: object type hasil pencarian → ikon; status hanya dirender bila ada grup status-map-nya.
+const SEARCH_ICON: Record<string, string> = { task: "task_alt", work_order: "construction", service_request: "support_agent", incident: "emergency_home", finding: "report_problem", asset: "precision_manufacturing", tenant: "badge", user: "person", vendor: "handshake", property: "domain", building: "location_city", tower: "corporate_fare", floor: "layers", area: "grid_view", space: "meeting_room", unit: "door_front", location: "location_on" };
+const LOCATION_TYPES = new Set(["location", "property", "building", "tower", "floor", "area", "space", "unit"]);
+function statusKind(ot: string): ObjectType | null {
+  if (LOCATION_TYPES.has(ot)) return "location_status";
+  if (ot === "user" || ot === "vendor" || ot === "tenant") return null;
+  return ot in statusMap ? (ot as ObjectType) : null;
+}
 
 export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const [q, setQ] = useState("");
@@ -45,7 +54,7 @@ export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChan
       <div role="combobox" aria-expanded={open} aria-haspopup="listbox" aria-label="Pencarian global" onKeyDown={onKey}>
         <div className="flex items-center gap-2 border-b border-border pb-3">
           <Icon name="search" size={20} className="text-on-surface-variant" />
-          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari Work Order, Task, Service Request, Asset, Tenant, Unit… (mis. WO-2026-000123)" className="w-full bg-transparent text-body text-on-surface outline-none placeholder:text-outline" aria-autocomplete="list" />
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari Work Order, Task, Finding, Asset, Tenant, User, Vendor, lokasi… (mis. WO-2026-000123)" className="w-full bg-transparent text-body text-on-surface outline-none placeholder:text-outline" aria-autocomplete="list" />
           <kbd className="rounded-[var(--radius-xs)] border border-border px-1.5 text-[10px] text-on-surface-variant">Esc</kbd>
         </div>
         <div ref={listRef} role="listbox" className="-mx-2 mt-2 max-h-[420px] overflow-y-auto">
@@ -62,6 +71,7 @@ export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChan
               onClick={() => go(i)}
               className={cn("flex w-full cursor-pointer items-center gap-3 rounded-[var(--radius-md)] px-3 py-2 text-left", i === cursor && "bg-surface-container")}
             >
+              <Icon name={SEARCH_ICON[r.object_type] ?? "search"} size={20} className="shrink-0 text-on-surface-variant" aria-hidden />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   {r.business_id && <span className="font-mono text-[13px] font-bold">{r.business_id}</span>}
@@ -73,7 +83,7 @@ export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChan
                   {r.location_path ? ` · ${r.location_path}` : ""}
                 </div>
               </div>
-              {r.status && <StatusBadge objectType={(r.object_type === "location" || r.object_type === "tenant" || r.object_type === "property" || r.object_type === "building" || r.object_type === "unit" ? "asset" : r.object_type) as ObjectType} status={r.status} />}
+              {r.status && statusKind(r.object_type) && <StatusBadge objectType={statusKind(r.object_type)!} status={r.status} />}
             </button>
           ))}
         </div>

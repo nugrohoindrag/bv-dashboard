@@ -6,14 +6,15 @@ import { useQuery } from "@tanstack/react-query";
 import { MetricCard } from "@buildingvision/ui/bv";
 import { Icon } from "@buildingvision/ui";
 import { PageHeader } from "@/components/shell/AppShell";
-import { Alert, Badge, Button, Card, CardContent, CardHeader, CardTitle } from "@/components/ui/primitives";
+import { Alert, Button, Card, CardContent, CardHeader, CardTitle } from "@/components/ui/primitives";
 import { AsyncState, useToast } from "@/components/bv/common";
 import { useAction, useAll } from "@/api/hooks";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { CreateServiceRequestDialog } from "@/features/operations/FindingDialogs";
 import { CreateReservationDialog, ReservationDrawer } from "./HotelReservationsPage";
-import { RES_STATUS, ROOM_STATUS, STAY_LABEL, type Occupancy, type Reservation, type Room } from "./hotel-api";
+import { STAY_LABEL, type Occupancy, type Reservation, type Room } from "./hotel-api";
+import { StatusBadge } from "@/components/bv/badges";
 
 export default function ReceptionPage() {
   const { propertyId, can } = useAuth();
@@ -53,7 +54,7 @@ export default function ReceptionPage() {
               {(arrivals.data ?? []).map((r) => (
                 <li key={r.id} className="flex items-center justify-between gap-2 py-2">
                   <button type="button" className="text-left" onClick={() => setOpenRes(r.id)}><div className="font-medium">{r.guest_name}</div><div className="text-xs text-muted-foreground">{r.reservation_number} · {r.room_type_name} · {r.room_number ? `Kamar ${r.room_number}` : "belum ada kamar"} · {r.nights} malam</div></button>
-                  <span className="flex items-center gap-2"><Badge tone={RES_STATUS[r.status]?.tone ?? "neutral"}>{RES_STATUS[r.status]?.label}</Badge>{r.allowed_actions.includes("check_in") && <Button size="sm" onClick={() => setOpenRes(r.id)}>Check-in</Button>}</span>
+                  <span className="flex items-center gap-2"><StatusBadge objectType="hotel_reservation" status={r.status} />{r.allowed_actions.includes("check_in") && <Button size="sm" onClick={() => setOpenRes(r.id)}>Check-in</Button>}</span>
                 </li>
               ))}
               {(arrivals.data ?? []).length === 0 && <li className="py-2 text-muted-foreground">Tidak ada kedatangan terjadwal hari ini.</li>}
@@ -81,7 +82,7 @@ export default function ReceptionPage() {
           <CardHeader><CardTitle>Status kamar (Housekeeping)</CardTitle></CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-2">
-              {(rooms.data ?? []).map((rm) => <Link key={rm.location_id} to="/commercial/hotel/rooms" className="rounded-[var(--radius-md)] border border-border px-3 py-2 text-sm hover:bg-surface-container"><span className="font-semibold">{rm.room_number}</span> <Badge tone={ROOM_STATUS[rm.room_status]?.tone ?? "neutral"} className="ml-1">{ROOM_STATUS[rm.room_status]?.label}</Badge>{rm.current_guest && <span className="ml-1 text-xs text-muted-foreground">{rm.current_guest}</span>}</Link>)}
+              {(rooms.data ?? []).map((rm) => <Link key={rm.location_id} to="/commercial/hotel/rooms" className="rounded-[var(--radius-md)] border border-border px-3 py-2 text-sm hover:bg-surface-container"><span className="font-semibold">{rm.room_number}</span> <StatusBadge objectType="hotel_room" status={rm.room_status} className="ml-1" />{rm.current_guest && <span className="ml-1 text-xs text-muted-foreground">{rm.current_guest}</span>}</Link>)}
               {(rooms.data ?? []).length === 0 && <span className="text-sm text-muted-foreground">Belum ada kamar.</span>}
             </div>
           </CardContent>

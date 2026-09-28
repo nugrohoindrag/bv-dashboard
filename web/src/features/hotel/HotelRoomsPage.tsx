@@ -8,8 +8,11 @@ import { Alert, Badge, Button, Checkbox, Dialog, DialogContent, DialogFooter, Fi
 import { useToast } from "@/components/bv/common";
 import { useAction, useAll, useLocationTree, useUpdate } from "@/api/hooks";
 import { useAuth } from "@/lib/auth";
-import { ROOM_STATUS, rp, type Rate, type Room, type RoomType } from "./hotel-api";
+import { rp, type Rate, type Room, type RoomType } from "./hotel-api";
 import type { TreeNode } from "@/api/types";
+import { StatusBadge } from "@/components/bv/badges";
+import { statusLabel } from "@/lib/status";
+import { statusMap } from "@/lib/status-map";
 
 const DAYS = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
 
@@ -39,17 +42,17 @@ function RoomsBoard({ propertyId }: { propertyId: string }) {
   const [note, setNote] = useState("");
   const setStatus = useAction<{ id: string; room_status: string; note: string }, Room>((i) => `hotel/rooms/${i.id}/status`, { body: (i) => ({ room_status: i.room_status, note: i.note }), invalidate: ["all", "hotel"] });
   const list = rooms.data ?? [];
-  const groups = Object.keys(ROOM_STATUS).map((k) => ({ key: k, items: list.filter((r) => r.room_status === k) }));
+  const groups = Object.keys(statusMap.hotel_room).map((k) => ({ key: k, items: list.filter((r) => r.room_status === k) }));
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div className="flex flex-wrap gap-2">{groups.map((g) => <Badge key={g.key} tone={ROOM_STATUS[g.key].tone}>{ROOM_STATUS[g.key].label}: {g.items.length}</Badge>)}</div>
+        <div className="flex flex-wrap gap-2">{groups.map((g) => <span key={g.key} className="inline-flex items-center gap-1"><StatusBadge objectType="hotel_room" status={g.key} /><span className="tnum text-sm font-semibold">{g.items.length}</span></span>)}</div>
         {can("hotel.rooms.create") && <Button onClick={() => setCreateOpen(true)}><Icon name="add" size={16} /> Tambah Kamar</Button>}
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
         {list.map((r) => (
           <button key={r.location_id} type="button" onClick={() => { setStatusFor(r); setNewStatus(""); setNote(""); }} className="rounded-[var(--radius-md)] border border-border bg-surface p-3 text-left hover:bg-surface-container">
-            <div className="flex items-center justify-between"><span className="text-lg font-semibold">{r.room_number}</span><Badge tone={ROOM_STATUS[r.room_status]?.tone ?? "neutral"}>{ROOM_STATUS[r.room_status]?.label}</Badge></div>
+            <div className="flex items-center justify-between"><span className="text-lg font-semibold">{r.room_number}</span><StatusBadge objectType="hotel_room" status={r.room_status} /></div>
             <div className="text-xs text-muted-foreground">{r.room_type_name}{r.floor_name ? ` · ${r.floor_name}` : ""}</div>
             {r.current_guest && <div className="mt-1 truncate text-xs"><Icon name="person" size={12} className="mr-1 align-middle" />{r.current_guest}</div>}
             {r.open_cleaning_tasks > 0 && <div className="mt-1 text-xs text-warning"><Icon name="cleaning_services" size={12} className="mr-1 align-middle" />{r.open_cleaning_tasks} cleaning task</div>}
@@ -61,15 +64,15 @@ function RoomsBoard({ propertyId }: { propertyId: string }) {
       {createOpen && <CreateRoomDialog propertyId={propertyId} onClose={() => setCreateOpen(false)} />}
       {statusFor && (
         <Dialog open onOpenChange={(o) => !o && setStatusFor(null)}>
-          <DialogContent title={`Kamar ${statusFor.room_number} · ${ROOM_STATUS[statusFor.room_status]?.label}`} description="Occupied hanya melalui check-in; Dirty otomatis saat check-out; Clean/Inspected otomatis dari Housekeeping. Perubahan manual untuk OOO/OOS dan koreksi.">
+          <DialogContent title={`Kamar ${statusFor.room_number} · ${statusLabel("hotel_room", statusFor.room_status)}`} description="Occupied hanya melalui check-in; Dirty otomatis saat check-out; Clean/Inspected otomatis dari Housekeeping. Perubahan manual untuk OOO/OOS dan koreksi.">
             <div className="space-y-3 text-sm">
               <div>{statusFor.room_type_name} · {statusFor.room_code}{statusFor.current_guest ? ` · tamu: ${statusFor.current_guest}` : ""}{statusFor.next_arrival ? ` · kedatangan berikutnya ${new Date(statusFor.next_arrival).toLocaleDateString("id-ID")}` : ""}</div>
               {can("hotel.rooms.set_status") && statusFor.allowed_statuses.length > 0 && <>
-                <Field label="Ubah status ke"><NativeSelect value={newStatus} onChange={(e) => setNewStatus(e.target.value)}><option value="">—</option>{statusFor.allowed_statuses.map((s) => <option key={s} value={s}>{ROOM_STATUS[s]?.label ?? s}</option>)}</NativeSelect></Field>
+                <Field label="Ubah status ke"><NativeSelect value={newStatus} onChange={(e) => setNewStatus(e.target.value)}><option value="">—</option>{statusFor.allowed_statuses.map((s) => <option key={s} value={s}>{statusLabel("hotel_room", s)}</option>)}</NativeSelect></Field>
                 <Field label="Catatan"><Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="mis. AC rusak, renovasi" /></Field>
               </>}
             </div>
-            <DialogFooter><Button variant="secondary" onClick={() => setStatusFor(null)}>Tutup</Button>{newStatus && <Button loading={setStatus.isPending} onClick={() => setStatus.mutateAsync({ id: statusFor.location_id, room_status: newStatus, note }).then(() => { toast.success("Status kamar diperbarui"); setStatusFor(null); }).catch(toast.error)}>Simpan</Button>}</DialogFooter>
+            <DialogFooter><Button variant="secondary" onClick={() => setStatusFor(null)}>Tutup</Button>{newStatus && <Button loading={setStatus.isPending} onClick={() => setStatus.mutateAsync({ id: statusFor.location_id, room_status: newStatus, note }).then(() => { toast.action("updated", "Status kamar"); setStatusFor(null); }).catch(toast.error)}>Simpan</Button>}</DialogFooter>
           </DialogContent>
         </Dialog>
       )}
@@ -127,7 +130,7 @@ function RoomTypesTab({ propertyId }: { propertyId: string }) {
     try {
       if (edit && edit !== "new") await update.mutateAsync({ id: edit.id, version: edit.version, ...body, status: f.status });
       else await create.mutateAsync({ ...body, property_id: propertyId });
-      toast.success("Tipe kamar disimpan");
+      toast.action("saved", "Tipe kamar");
       setEdit(null);
     } catch (e) { toast.error(e); }
   };
@@ -173,7 +176,7 @@ function RatesTab({ propertyId }: { propertyId: string }) {
     <div className="space-y-3">
       {can("hotel.rates.create") && <Button onClick={() => setOpen(true)}><Icon name="add" size={16} /> Tambah Rate</Button>}
       <ul className="divide-y divide-border rounded-[var(--radius-md)] border border-border text-sm">
-        {(rates.data ?? []).map((r) => <li key={r.id} className="flex items-center justify-between px-3 py-2"><span><span className="font-semibold">{r.name}</span> · {r.room_type_name} <span className="font-mono text-xs text-muted-foreground">{r.rate_code}</span> · {r.weekdays.length === 7 ? "setiap hari" : r.weekdays.map((d) => DAYS[d]).join(" ")}{r.valid_from ? ` · ${r.valid_from.slice(0, 10)} – ${r.valid_until?.slice(0, 10) ?? "…"}` : ""} · min {r.min_nights} malam · prioritas {r.priority}</span><span className="flex items-center gap-3"><span className="tnum font-semibold">{rp(r.rate_per_night)}</span><Badge tone={r.status === "active" ? "success" : "neutral"}>{r.status}</Badge>{can("hotel.rates.update") && r.status === "active" && <Button size="sm" variant="ghost" onClick={() => archive.mutateAsync({ id: r.id, version: r.version, status: "archived" }).then(() => toast.success("Rate diarsipkan")).catch(toast.error)}>Arsipkan</Button>}</span></li>)}
+        {(rates.data ?? []).map((r) => <li key={r.id} className="flex items-center justify-between px-3 py-2"><span><span className="font-semibold">{r.name}</span> · {r.room_type_name} <span className="font-mono text-xs text-muted-foreground">{r.rate_code}</span> · {r.weekdays.length === 7 ? "setiap hari" : r.weekdays.map((d) => DAYS[d]).join(" ")}{r.valid_from ? ` · ${r.valid_from.slice(0, 10)} – ${r.valid_until?.slice(0, 10) ?? "…"}` : ""} · min {r.min_nights} malam · prioritas {r.priority}</span><span className="flex items-center gap-3"><span className="tnum font-semibold">{rp(r.rate_per_night)}</span><Badge tone={r.status === "active" ? "success" : "neutral"}>{r.status}</Badge>{can("hotel.rates.update") && r.status === "active" && <Button size="sm" variant="ghost" onClick={() => archive.mutateAsync({ id: r.id, version: r.version, status: "archived" }).then(() => toast.action("archived", "Rate")).catch(toast.error)}>Arsipkan</Button>}</span></li>)}
         {(rates.data ?? []).length === 0 && <li className="px-3 py-2 text-muted-foreground">Belum ada rate khusus — tarif dasar tipe kamar dipakai.</li>}
       </ul>
       {open && (
@@ -189,7 +192,7 @@ function RatesTab({ propertyId }: { propertyId: string }) {
               <Field label="Prioritas"><Input type="number" value={f.priority} onChange={(e) => setF({ ...f, priority: e.target.value })} /></Field>
               <Field label="Hari" className="col-span-2"><div className="flex flex-wrap gap-2">{DAYS.map((d, i) => <Checkbox key={d} label={d} checked={f.weekdays.includes(i)} onCheckedChange={(v) => setF({ ...f, weekdays: v ? [...f.weekdays, i].sort() : f.weekdays.filter((x) => x !== i) })} />)}</div></Field>
             </div>
-            <DialogFooter><Button variant="secondary" onClick={() => setOpen(false)}>Batal</Button><Button loading={create.isPending} disabled={!f.room_type_id || !f.name.trim() || !f.rate_per_night} onClick={() => create.mutateAsync({ room_type_id: f.room_type_id, name: f.name.trim(), rate_per_night: Number(f.rate_per_night), valid_from: f.valid_from || null, valid_until: f.valid_until || null, weekdays: f.weekdays, min_nights: Number(f.min_nights) || 1, priority: Number(f.priority) || 0 }).then(() => { toast.success("Rate ditambahkan"); setOpen(false); }).catch(toast.error)}>Simpan</Button></DialogFooter>
+            <DialogFooter><Button variant="secondary" onClick={() => setOpen(false)}>Batal</Button><Button loading={create.isPending} disabled={!f.room_type_id || !f.name.trim() || !f.rate_per_night} onClick={() => create.mutateAsync({ room_type_id: f.room_type_id, name: f.name.trim(), rate_per_night: Number(f.rate_per_night), valid_from: f.valid_from || null, valid_until: f.valid_until || null, weekdays: f.weekdays, min_nights: Number(f.min_nights) || 1, priority: Number(f.priority) || 0 }).then(() => { toast.action("created", "Rate"); setOpen(false); }).catch(toast.error)}>Simpan</Button></DialogFooter>
           </DialogContent>
         </Dialog>
       )}

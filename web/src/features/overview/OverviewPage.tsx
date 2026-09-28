@@ -1,264 +1,235 @@
-// Overview (PRD §19, DS §5.4): Row1 TodayCounter×6 · Row2 AttentionRequired (8) + Tenant Requests (4) ·
-// Row3 Today's Operations tabs · Row4 PM Due 7 hari + Team Workload + Building State. Setiap panel dimuat independen.
-import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { useTranslation } from "react-i18next";
-import { Card, CardContent, CardHeader, CardTitle, NativeSelect, Skeleton, THead, TBody, TD, TH, TR, Table, Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/primitives";
-import { AttentionRequiredList, TodayCounter, WorkItemCard } from "@/components/bv/cards";
-import { PriorityBadge, StatusBadge } from "@/components/bv/badges";
-import { AsyncState, RelativeTime } from "@/components/bv/common";
+// Building Management Overview (29 Sep 2026; Roadmap v2.1 §20, §25.1–§25.3, Principle 8–11). Layout mengikuti referensi
+// dashboard "Moneed" yang dipilih user (m2.css). Bukan sekadar tiket/work order: keuangan (tagihan, IPL/service charge,
+// biaya vs budget, Sinking Fund), okupansi & sensus penghuni, hotel, kinerja layanan per domain, operasional, Berita & Memo,
+// dan Perlu perhatian. Setiap kartu tampil sesuai permission + profile property (Apartment/Office/Hotel) dan menautkan ke
+// sumbernya. Tanpa akses keuangan, baris pertama memakai kartu operasional. Pill di header = tab di halaman ini (?tab=):
+// Overview (ringkasan) · Keuangan · Okupansi · Penghuni · Operasional · Laporan — masing-masing ringkasan areanya (tabs.tsx).
+import { Link, useSearchParams } from "react-router-dom";
+import { useQueries, useQuery } from "@tanstack/react-query";
+import { Icon } from "@buildingvision/ui";
 import { useOverview } from "@/api/hooks";
 import { useAuth } from "@/lib/auth";
-import { fmtDateTime, fmtNumber } from "@/lib/format";
-import { cn } from "@/lib/utils";
-import type { AttentionItem, BuildingState, MaintenanceSchedule, OverviewToday, TenantRequestsPanel, TodaysOperations, WorkloadRow } from "@/api/types";
-import { AssignDialog } from "@/features/operations/dialogs";
-import { BuildingHero } from "@buildingvision/ui/bv";
+import { api } from "@/lib/api";
+import { fmtNumber } from "@/lib/format";
+import { fetchPropertyContext, useProfile, type ProfileCode } from "@/lib/profile";
+import type { BuildingState, DomainDashboard, OccupancySummary, OverviewToday, TenantRequestsPanel } from "@/api/types";
+import type { Occupancy as HotelOccupancy } from "@/features/hotel/hotel-api";
+import type { Announcement, TRMetrics } from "@/features/tenant-relation/types";
+import { ACCESS, checkAccess, type Access } from "@/app/navigation";
+import { useAccessContext } from "@/app/access";
 import { useOnboarding } from "@/lib/growth";
 import { ChecklistView } from "@/features/growth/OnboardingPage";
+import { kpi } from "./helpers";
+import { AttentionTable, BuildingBars, CardHead, DoneToday, GoalList, Load, OpsHero, Overdue, PmPromo, ServiceGauge, SolidHead } from "./widgets";
+import { CostCard, FinanceHero, HotelCard, NewsCard, OccupancyCard, OpsCard, RevenueCard, SinkingFundCard, type Residents } from "./bms";
+import { FinanceTab, OccupancyTab, OperationsTab, ReportsTab, ResidentsTab } from "./tabs";
+import "./m2.css";
+
+const dateShort = new Intl.DateTimeFormat("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+type DomainKey = "engineering" | "security" | "housekeeping" | "finance";
+type TabKey = "ringkasan" | "keuangan" | "okupansi" | "penghuni" | "operasional" | "laporan";
 
 export default function OverviewPage() {
-  const { t } = useTranslation();
   const { propertyId, properties, can } = useAuth();
-  const q = { property_id: propertyId ?? undefined };
-  const today = useOverview<OverviewToday>("today", q);
-  const [domain, setDomain] = useState("");
-  const attention = useOverview<{ data: AttentionItem[]; total: number }>("attention-required", { ...q, domain: domain || undefined, limit: 10 });
-  const tenant = useOverview<TenantRequestsPanel>("tenant-requests", q);
-  const ops = useOverview<{ data: TodaysOperations[] }>("todays-operations", q);
-  const pm = useOverview<{ data: MaintenanceSchedule[] }>("pm-due", { ...q, days: 7 });
-  const workload = useOverview<{ data: WorkloadRow[] }>("team-workload", q);
-  const building = useOverview<{ data: BuildingState[] }>("building-state", q);
-  const nav = useNavigate();
-  const [assign, setAssign] = useState<AttentionItem | null>(null);
-  const propName = properties.find((p) => p.id === propertyId)?.name ?? t("label.all_properties");
-  const d = today.data;
-  const L = today.isLoading;
-
-  const onAction = (it: AttentionItem, action: string) => {
-    if (action === "assign") setAssign(it);
-    else nav(it.deep_link);
-  };
+  const prof = useProfile();
+  const ctx = useAccessContext();
+  const allowed = (a: Access) => checkAccess(a, ctx) === "allowed";
+  const pid = propertyId ?? undefined;
+  const q = { property_id: pid };
+  // tab disimpan di URL (?tab=) agar bisa dibagikan & tombol kembali browser berfungsi
+  const [sp, setSp] = useSearchParams();
 
   // Onboarding checklist (Website PRD §28): tampil untuk organization trial sampai selesai/disembunyikan
   const onboarding = useOnboarding(can("platform.organizations.view"));
   const ob = onboarding.data;
   const showChecklist = !!ob && ob.trial?.is_trial_org && !ob.dismissed && ob.completed < ob.total;
 
-  const canCreateWO = can("operations.work_orders.create");
-  const canCreateTask = can("operations.tasks.create");
-  const canReportIncident = can("operations.incidents.create");
-  const overdueTotal = d?.overdue.value ?? 0;
-  const slaRiskTotal = d?.sla_risk.value ?? 0;
+  // profile tiap property dalam scope (cache sama dengan useProfile) → kartu Apartment/Hotel
+  const scopeIds = propertyId ? [propertyId] : properties.map((p) => p.id);
+  const ctxs = useQueries({ queries: scopeIds.map((id) => ({ queryKey: ["property-context", id], staleTime: 5 * 60_000, queryFn: ({ signal }: { signal: AbortSignal }) => fetchPropertyContext(id, signal) })) });
+  const profileOf = new Map<string, ProfileCode>();
+  ctxs.forEach((c) => c.data && profileOf.set(c.data.property_id, c.data.profile));
+  const profiles = new Set(profileOf.values());
+  const hotelIds = scopeIds.filter((id) => profileOf.get(id) === "hotel");
+  const apartment = prof.profile ? prof.profile === "apartment" : profiles.has("apartment");
+
+  // --- data ---
+  const today = useOverview<OverviewToday>("today", q);
+  const tenant = useOverview<TenantRequestsPanel>("tenant-requests", q);
+  const building = useOverview<{ data: BuildingState[] }>("building-state", q);
+  const dash = (domain: DomainKey, enabled: boolean) => ({
+    queryKey: ["dashboard", domain, { property_id: pid, location_id: undefined, from: undefined, to: undefined }],
+    queryFn: ({ signal }: { signal: AbortSignal }) => api<DomainDashboard>(`dashboards/${domain}`, { query: { property_id: pid }, signal }),
+    enabled,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+  const finAllowed = allowed(ACCESS.financeDashboard);
+  const eng = useQuery(dash("engineering", allowed(ACCESS.engineeringDashboard)));
+  const sec = useQuery(dash("security", allowed(ACCESS.securityDashboard)));
+  const hk = useQuery(dash("housekeeping", allowed(ACCESS.housekeepingDashboard)));
+  const fin = useQuery(dash("finance", finAllowed));
+  const trAllowed = allowed(ACCESS.tenantRelation);
+  const tr = useQuery({ queryKey: ["tr-metrics", propertyId], enabled: trAllowed, queryFn: ({ signal }) => api<TRMetrics>("tenant-relation/metrics", { query: q, signal }), refetchInterval: 60_000 });
+  const occAllowed = allowed(ACCESS.occupancy);
+  const occ = useQuery({ queryKey: ["occupancy-summary", q], enabled: occAllowed, queryFn: ({ signal }) => api<OccupancySummary>("occupancy/summary", { query: q, signal }), staleTime: 30_000 });
+  const censusAllowed = can("property.occupants.view");
+  const residents = useQuery({ queryKey: ["overview", "residents", pid ?? null], enabled: censusAllowed, retry: false, queryFn: ({ signal }) => api<Residents>("overview/residents", { query: q, signal }), staleTime: 30_000 });
+  const hotelAllowed = can("hotel.rooms.view");
+  const hotels = useQueries({ queries: (hotelAllowed ? hotelIds : []).map((id) => ({ queryKey: ["hotel-occupancy", id], queryFn: () => api<HotelOccupancy>("hotel/occupancy", { query: { property_id: id } }), refetchInterval: 60_000 })) });
+  const newsAllowed = allowed(ACCESS.announcements);
+  const catalog = useQuery({ queryKey: ["reports", "catalog"], enabled: sp.get("tab") === "laporan" && allowed(ACCESS.reports), queryFn: ({ signal }) => api<{ data: { name: string; title: string; description: string }[] }>("reports", { signal }), staleTime: 5 * 60_000 });
+  const news = useQuery({ queryKey: ["overview", "announcements", pid ?? null], enabled: newsAllowed, queryFn: ({ signal }) => api<{ data: Announcement[] }>("announcements", { query: { property_id: pid, status: "published", limit: 5 }, signal }), staleTime: 60_000 });
+
+  const propName = properties.find((p) => p.id === propertyId)?.name ?? "Semua properti";
+  const d = today.data;
+  const L = today.isLoading;
+  const finData = fin.data;
+  const sinking = kpi(finData, "sinking_fund");
+  const hotelPairs = (hotelAllowed ? hotelIds : []).map((id, i) => ({ id, data: hotels[i]?.data })).filter((x): x is { id: string; data: HotelOccupancy } => !!x.data);
+  const hotelRows = hotelPairs.map((h) => h.data);
+  const hotelNames = hotelPairs.map((h) => properties.find((p) => p.id === h.id)?.name ?? "Hotel");
+
+  const occupantTerm = prof.term("occupant");
+  const customerTerm = prof.term("customer");
+  const occTitle = prof.profile === "hotel" ? "Okupansi kamar" : prof.profile === "office" ? `Okupansi & ${customerTerm}` : apartment ? "Okupansi & Sensus Penghuni" : "Okupansi & Penghuni";
+
+  const tabs: { key: TabKey; label: string; icon: string; show: boolean }[] = [
+    { key: "ringkasan", label: "Overview", icon: "space_dashboard", show: true },
+    { key: "keuangan", label: "Keuangan", icon: "account_balance_wallet", show: finAllowed },
+    { key: "okupansi", label: "Okupansi", icon: "apartment", show: occAllowed },
+    { key: "penghuni", label: occupantTerm, icon: "groups", show: censusAllowed || trAllowed },
+    { key: "operasional", label: "Operasional", icon: "engineering", show: true },
+    { key: "laporan", label: "Laporan", icon: "summarize", show: allowed(ACCESS.reports) },
+  ];
+  const visibleTabs = tabs.filter((t) => t.show);
+  const tab: TabKey = visibleTabs.find((t) => t.key === sp.get("tab"))?.key ?? "ringkasan";
+  const selectTab = (k: TabKey) => {
+    const n = new URLSearchParams(sp);
+    if (k === "ringkasan") n.delete("tab");
+    else n.set("tab", k);
+    setSp(n);
+  };
+  const propertyNameOf = propertyId ? undefined : (id?: string) => properties.find((p) => p.id === id)?.name;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 pt-2">
       {showChecklist && ob && <ChecklistView data={ob} compact onChanged={() => onboarding.refetch()} />}
-      {/* Hero: banner solid primary (DS Guideline §2.3), identitas property + kondisi operasional hari ini */}
-      <BuildingHero
-        propertyName={propName}
-        context={fmtDateTime(new Date())}
-        liveLabel="Live"
-        headline={L ? "…" : `${fmtNumber(d?.open_work_orders.value ?? 0)} Work Order terbuka`}
-        headlineSuffix={L ? undefined : `${fmtNumber(d?.tenant_requests.value ?? 0)} Service Request · ${fmtNumber(d?.incidents.value ?? 0)} Incident`}
-        badge={{ icon: overdueTotal > 0 ? "warning" : "verified", label: overdueTotal > 0 ? `${fmtNumber(overdueTotal)} Overdue` : "Tanpa overdue" }}
-        stats={[
-          { label: "Overdue", value: L ? "–" : fmtNumber(overdueTotal), tone: overdueTotal > 0 ? "error" : "default" },
-          { label: "SLA Risk", value: L ? "–" : fmtNumber(slaRiskTotal), tone: slaRiskTotal > 0 ? "warning" : "default" },
-          { label: "PM Due 7 hari", value: L ? "–" : fmtNumber(d?.pm_due.value ?? 0) },
-        ]}
-        actions={[
-          ...(canCreateWO ? [{ label: "Buat Work Order", icon: "add_task", onClick: () => nav("/operations/work-orders?new=1") }] : []),
-          ...(canCreateTask ? [{ label: "Buat Task", icon: "playlist_add", onClick: () => nav("/operations/tasks?new=1") }] : []),
-          ...(canReportIncident ? [{ label: "Lapor Incident", icon: "emergency_home", onClick: () => nav("/operations/incidents?new=1") }] : []),
-        ]}
-      />
+      <div className="m2">
+        {/* ---------- Header ---------- */}
+        <header className="mb-4 flex flex-wrap items-center justify-between gap-3 px-1">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="m2-icon-solid m2-bg-blue"><Icon name="apartment" size={20} aria-hidden /></span>
+            <div className="min-w-0">
+              <h1 className="m2-h1 truncate">Building Management Overview</h1>
+              <div className="m2-caption truncate">{propName} · {dateShort.format(new Date())}</div>
+            </div>
+          </div>
+          <div className="m2-nav" role="tablist" aria-label="Building Management Overview">
+            {visibleTabs.map((t) => (
+              <button key={t.key} type="button" role="tab" id={`bmo-tab-${t.key}`} aria-selected={tab === t.key} aria-controls="bmo-panel" onClick={() => selectTab(t.key)}>
+                <Icon name={t.icon} size={16} aria-hidden />{t.label}
+              </button>
+            ))}
+          </div>
+        </header>
 
-      {/* Row 1: TodayCounter × 6 */}
-      <div className="grid grid-cols-3 gap-4 2xl:grid-cols-6">
-        <TodayCounter label={t("overview.open_work_orders")} loading={L} value={d?.open_work_orders.value} link="/operations/work-orders?open=true" breakdown={[{ label: "overdue", value: d?.open_work_orders.breakdown?.overdue ?? 0, tone: "critical", link: "/operations/work-orders?overdue=true" }, { label: "SLA risk", value: d?.open_work_orders.breakdown?.sla_risk ?? 0, tone: "warning", link: "/operations/work-orders?sla_risk=true" }]} />
-        <TodayCounter label={t("overview.overdue")} loading={L} value={d?.overdue.value} link="/operations/work-orders?overdue=true" breakdown={[{ label: "Work Order", value: d?.overdue.breakdown?.work_orders ?? 0, tone: "critical", link: "/operations/work-orders?overdue=true" }, { label: "Task", value: d?.overdue.breakdown?.tasks ?? 0, tone: "critical", link: "/operations/tasks?overdue=true" }]} />
-        <TodayCounter label={t("overview.sla_risk")} loading={L} value={d?.sla_risk.value} link="/operations/work-orders?sla_risk=true" breakdown={[{ label: "WO", value: d?.sla_risk.breakdown?.work_orders ?? 0, tone: "warning", link: "/operations/work-orders?sla_risk=true" }, { label: "Task", value: d?.sla_risk.breakdown?.tasks ?? 0, tone: "warning", link: "/operations/tasks?sla_risk=true" }, { label: "SR", value: d?.sla_risk.breakdown?.service_requests ?? 0, tone: "warning", link: "/operations/service-requests?sla_risk=true" }]} />
-        <TodayCounter label={t("overview.pm_due")} loading={L} value={d?.pm_due.value} link="/engineering/preventive-maintenance" breakdown={[{ label: "overdue", value: d?.pm_due.breakdown?.overdue ?? 0, tone: "critical" }, { label: "hari ini", value: d?.pm_due.breakdown?.today ?? 0, tone: "info" }]} />
-        <TodayCounter label={t("overview.incidents")} loading={L} value={d?.incidents.value} link="/operations/incidents?open=true" breakdown={[{ label: "kritis", value: d?.incidents.breakdown?.critical ?? 0, tone: "critical", link: "/operations/incidents?severity=critical" }, { label: "baru", value: d?.incidents.breakdown?.new ?? 0, tone: "info", link: "/operations/incidents?status=new" }]} />
-        <TodayCounter label={t("overview.tenant_requests")} loading={L} value={d?.tenant_requests.value} link="/operations/service-requests?open=true" breakdown={[{ label: "baru hari ini", value: d?.tenant_requests.breakdown?.new_today ?? 0, tone: "info" }, { label: "SLA risk", value: d?.tenant_requests.breakdown?.sla_risk ?? 0, tone: "warning", link: "/operations/service-requests?sla_risk=true" }]} />
-      </div>
+        <div id="bmo-panel" role="tabpanel" aria-labelledby={`bmo-tab-${tab}`}>
+        {tab === "keuangan" && <FinanceTab fin={fin} apartment={apartment} flags={{ createInvoice: can("billing.invoices.create"), payments: allowed(ACCESS.payments), receivables: allowed(ACCESS.receivables), sinkingFund: allowed(ACCESS.sinkingFund) }} />}
+        {tab === "okupansi" && <OccupancyTab occ={occ} residents={residents.data} hotels={hotelRows} hotelNames={hotelNames} title={occTitle} occupantTerm={occupantTerm} customerTerm={customerTerm} showCensus={censusAllowed && prof.profile !== "hotel"} />}
+        {tab === "penghuni" && <ResidentsTab residents={censusAllowed ? residents : undefined} tr={trAllowed ? tr : undefined} news={newsAllowed ? news : undefined} occupantTerm={occupantTerm} customerTerm={customerTerm} flags={{ tenantUsers: allowed(ACCESS.tenantUsers), tenants: allowed(ACCESS.tenants), createAnnouncement: can("tenant_relation.announcements.create") }} />}
+        {tab === "operasional" && <OperationsTab d={d} loading={L} building={building} propertyId={propertyId} propName={propName} propertyName={propertyNameOf} can={can} svc={{ tr: trAllowed ? tr : undefined, eng: eng.data, sec: sec.data, hk: hk.data, fin: finData, loading: eng.isLoading && sec.isLoading && hk.isLoading }} />}
+        {tab === "laporan" && <ReportsTab catalog={catalog} />}
+        {tab === "ringkasan" && (
+        <div className="m2-grid">
+          {/* ---------- Baris 1: keuangan (atau operasional bila tanpa akses keuangan) ---------- */}
+          {finAllowed ? (
+            finData ? (
+              <>
+                <FinanceHero fin={finData} canCreateInvoice={can("billing.invoices.create")} canPayments={allowed(ACCESS.payments)} canReceivables={allowed(ACCESS.receivables)} />
+                <RevenueCard fin={finData} apartment={apartment} />
+                <CostCard fin={finData} />
+              </>
+            ) : (
+              <>
+                <div className="m2-card m2-a-fin"><div className="m2-skel h-56" /></div>
+                <div className="m2-card m2-a-cash"><div className="m2-skel h-56" /></div>
+                <div className="m2-card m2-a-cost"><div className="m2-skel h-56" /></div>
+              </>
+            )
+          ) : (
+            <>
+              <OpsHero d={d} loading={L} buildings={building.data?.data ?? []} propName={propName} can={can} />
+              <section className="m2-card m2-a-cash flex flex-col"><SolidHead icon="arrow_downward" tone="green" title="Selesai hari ini" /><DoneToday d={d} loading={L} /></section>
+              <section className="m2-card m2-a-cost flex flex-col"><Overdue d={d} loading={L} /></section>
+            </>
+          )}
 
-      {/* Row 2 */}
-      <div className="grid grid-cols-12 gap-4">
-        <Card className="col-span-8">
-          <CardHeader>
-            <CardTitle>{t("overview.attention_required")}</CardTitle>
-            <NativeSelect className="w-40" value={domain} onChange={(e) => setDomain(e.target.value)} aria-label="Domain">
-              <option value="">{t("label.all")}</option>
-              <option value="engineering">Engineering</option>
-              <option value="security">Security</option>
-              <option value="housekeeping">Housekeeping</option>
-            </NativeSelect>
-          </CardHeader>
-          <CardContent>
-            <AsyncState query={attention} empty={{ message: t("empty.attention") }} skeleton={<PanelSkeleton rows={5} />}>
-              {(res) => (res.data.length ? <AttentionRequiredList items={res.data} total={res.total} onAction={onAction} seeAllTo="/operations/work-orders?overdue=true" /> : <p className="py-8 text-center text-sm text-muted-foreground">{t("empty.attention")}</p>)}
-            </AsyncState>
-          </CardContent>
-        </Card>
-        <Card className="col-span-4">
-          <CardHeader>
-            <CardTitle>{t("overview.tenant_requests")}</CardTitle>
-            <Link to="/operations/service-requests" className="text-sm font-semibold text-primary hover:underline">{t("action.view")}</Link>
-          </CardHeader>
-          <CardContent>
-            <AsyncState query={tenant} skeleton={<PanelSkeleton rows={4} />}>
-              {(p) => (
-                <>
-                  <div className="mb-3 grid grid-cols-3 gap-2 text-center">
-                    <Stat label={t("overview.new_today")} value={p.new_today} tone="info" />
-                    <Stat label={t("overview.open")} value={p.open} />
-                    <Stat label={t("label.sla_risk")} value={p.sla_risk} tone="warning" />
-                  </div>
-                  <ul className="divide-y divide-border">
-                    {p.recent.map((r) => (
-                      <li key={r.id} className="py-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <Link to={`/operations/service-requests/${r.id}`} className="font-mono text-[13px] font-semibold hover:underline">{r.request_number}</Link>
-                          <StatusBadge objectType="service_request" status={r.status} />
-                        </div>
-                        <div className="truncate text-sm">{r.title}</div>
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">{r.tenant_name ?? "—"} · <RelativeTime value={r.created_at} /> <PriorityBadge priority={r.priority} /></div>
-                      </li>
-                    ))}
-                    {p.recent.length === 0 && <li className="py-6 text-center text-sm text-muted-foreground">{t("empty.service_requests")}</li>}
-                  </ul>
-                </>
-              )}
-            </AsyncState>
-          </CardContent>
-        </Card>
-      </div>
+          {/* ---------- Kinerja layanan ---------- */}
+          <section className="m2-card m2-a-svc flex flex-col">
+            <CardHead icon="speed" title="Kinerja layanan" right={allowed(ACCESS.reports) ? <Link to="/reports" className="m2-round" aria-label="Buka laporan"><Icon name="tune" size={16} aria-hidden /></Link> : undefined} />
+            <div className="m2-sub mt-4 flex flex-1 flex-col gap-2 p-2">
+              <ServiceGauge tr={trAllowed ? tr : undefined} eng={eng.data} />
+              <GoalList eng={eng.data} sec={sec.data} hk={hk.data} fin={finData} loading={eng.isLoading && sec.isLoading && hk.isLoading} />
+            </div>
+          </section>
 
-      {/* Row 3: Today's Operations */}
-      <Card>
-        <CardHeader><CardTitle>{t("overview.todays_operations")}</CardTitle></CardHeader>
-        <CardContent>
-          <AsyncState query={ops} skeleton={<PanelSkeleton rows={3} />}>
-            {(res) => (
-              <Tabs defaultValue="engineering">
-                <TabsList>
-                  {res.data.map((p) => (
-                    <TabsTrigger key={p.domain} value={p.domain}>
-                      {t(`domain.${p.domain}`)} <span className="ml-1 rounded-full bg-muted px-1.5 text-xs tnum">{p.summary.total ?? 0}</span>
-                      {(p.summary.overdue ?? 0) > 0 && <span className="ml-1 rounded-full bg-critical-soft px-1.5 text-xs text-critical-text tnum">{p.summary.overdue} overdue</span>}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-                {res.data.map((p) => (
-                  <TabsContent key={p.domain} value={p.domain}>
-                    {p.items.length === 0 ? <p className="py-6 text-center text-sm text-muted-foreground">Tidak ada task/work order terjadwal hari ini.</p> : (
-                      <div className="grid grid-cols-2 gap-3 2xl:grid-cols-3">
-                        {p.items.slice(0, 12).map((it) => <WorkItemCard key={it.id} item={it} compact />)}
-                      </div>
-                    )}
-                  </TabsContent>
-                ))}
-              </Tabs>
+          {/* ---------- Okupansi & sensus penghuni (atau beban per gedung) ---------- */}
+          {occAllowed ? (
+            <OccupancyCard summary={occ.data} residents={residents.data} title={occTitle} occupantTerm={occupantTerm} customerTerm={customerTerm} showCensus={censusAllowed && prof.profile !== "hotel"} />
+          ) : (
+            <section className="m2-card m2-a-occ flex flex-col">
+              <CardHead icon="bar_chart" title="Beban per gedung" right={<span className="m2-pill">Hari ini</span>} />
+              <Load query={building} className="mt-4 flex-1">{(res) => <BuildingBars rows={res.data} propertyName={propertyNameOf} />}</Load>
+            </section>
+          )}
+
+          {/* ---------- Operasional hari ini ---------- */}
+          <OpsCard d={d} loading={L} />
+
+          {/* ---------- Kolom kartu profile: Sinking Fund (Apartment) · Hotel · permintaan tenant · laporan ---------- */}
+          <div className="m2-a-side m2-side grid min-w-0 grid-cols-1 sm:grid-cols-2">
+            {apartment && allowed(ACCESS.sinkingFund) && sinking ? <SinkingFundCard value={sinking.value} to={sinking.drill_down || "/billing/sinking-fund"} /> : <PmPromo d={d} />}
+            {hotelRows.length > 0 ? <HotelCard rows={hotelRows} /> : (
+              <Link to="/operations/service-requests?open=true" className="m2-card m2-focus flex flex-col justify-between gap-3">
+                <div className="flex items-center justify-between">
+                  <span className="m2-pill m2-pill-soft">Permintaan {customerTerm.toLowerCase()}</span>
+                  <span className="m2-round m2-round-sm" aria-hidden><Icon name="open_in_new" size={14} /></span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="m2-num-sm">{tenant.data ? fmtNumber(tenant.data.open) : "–"}</span>
+                  {(tenant.data?.sla_risk ?? 0) > 0 && <span className="m2-chip m2-chip-red"><span className="m2-chip-dot m2-bg-red"><Icon name="timer" size={11} aria-hidden /></span>{fmtNumber(tenant.data!.sla_risk)} SLA</span>}
+                </div>
+                <div className="m2-caption">{tenant.data ? `${fmtNumber(tenant.data.new_today)} baru hari ini` : " "}</div>
+              </Link>
             )}
-          </AsyncState>
-        </CardContent>
-      </Card>
+            <Link to={allowed(ACCESS.reports) ? "/reports" : "/overview"} className="m2-card m2-focus flex flex-col justify-between gap-4">
+              <div className="flex items-center justify-between">
+                <span className="m2-round m2-round-sm" aria-hidden><Icon name="description" size={14} /></span>
+                <span className="m2-round m2-round-sm" aria-hidden><Icon name="open_in_new" size={14} /></span>
+              </div>
+              <div>
+                <span className="m2-pill m2-pill-soft">Lihat &amp; cetak laporan</span>
+                <div className="m2-title mt-2">Laporan Manajemen</div>
+              </div>
+            </Link>
+          </div>
 
-      {/* Row 4 */}
-      <div className="grid grid-cols-12 gap-4">
-        <Card className="col-span-5">
-          <CardHeader><CardTitle>{t("overview.pm_due_7")}</CardTitle><Link to="/engineering/preventive-maintenance" className="text-sm text-brand-600 hover:underline">{t("action.view")}</Link></CardHeader>
-          <CardContent className="px-0">
-            <AsyncState query={pm} skeleton={<PanelSkeleton rows={4} />}>
-              {(res) => res.data.length === 0 ? <p className="py-6 text-center text-sm text-muted-foreground">Tidak ada PM due 7 hari ke depan.</p> : (
-                <Table>
-                  <THead><tr><TH>Asset</TH><TH>Plan</TH><TH>Due</TH><TH>Status</TH></tr></THead>
-                  <TBody>
-                    {res.data.slice(0, 8).map((s) => (
-                      <TR key={s.id} className="cursor-pointer" onClick={() => nav(s.work_order_id ? `/operations/work-orders/${s.work_order_id}` : `/engineering/preventive-maintenance`)}>
-                        <TD><span className="font-mono text-xs">{s.asset_code}</span> {s.asset_name}</TD>
-                        <TD className="text-muted-foreground">{s.plan_name}</TD>
-                        <TD className="tnum">{fmtDateTime(s.due_at)}</TD>
-                        <TD><StatusBadge objectType="maintenance_schedule" status={s.status} /></TD>
-                      </TR>
-                    ))}
-                  </TBody>
-                </Table>
-              )}
-            </AsyncState>
-          </CardContent>
-        </Card>
-        <Card className="col-span-4">
-          <CardHeader><CardTitle>{t("overview.team_workload")}</CardTitle></CardHeader>
-          <CardContent className="px-0">
-            <AsyncState query={workload} skeleton={<PanelSkeleton rows={4} />}>
-              {(res) => res.data.length === 0 ? <p className="py-6 text-center text-sm text-muted-foreground">Belum ada penugasan.</p> : (
-                <Table>
-                  <THead><tr><TH>Team / Assignee</TH><TH className="text-right">Task</TH><TH className="text-right">WO</TH><TH className="text-right">Overdue</TH></tr></THead>
-                  <TBody>
-                    {res.data.slice(0, 10).map((r, i) => (
-                      <TR key={i}>
-                        <TD><div className="text-body">{r.assignee_name}</div><div className="text-xs text-muted-foreground">{r.team_name}</div></TD>
-                        <TD className="text-right tnum">{r.open_tasks}</TD>
-                        <TD className="text-right tnum">{r.open_work_orders}</TD>
-                        <TD className={cn("text-right tnum", r.overdue > 0 && "font-semibold text-critical-text")}>{r.overdue}</TD>
-                      </TR>
-                    ))}
-                  </TBody>
-                </Table>
-              )}
-            </AsyncState>
-          </CardContent>
-        </Card>
-        <Card className="col-span-3">
-          <CardHeader><CardTitle>{t("overview.building_state")}</CardTitle></CardHeader>
-          <CardContent>
-            <AsyncState query={building} skeleton={<PanelSkeleton rows={3} />}>
-              {(res) => (
-                <ul className="space-y-3">
-                  {res.data.map((b) => (
-                    <li key={b.location_id}>
-                      <div className="flex items-center justify-between text-body"><span className={cn(b.location_type === "tower" && "pl-3")}>{b.name}</span><span className="text-xs text-muted-foreground">{b.location_type}</span></div>
-                      <div className="mt-1 flex gap-2 text-xs">
-                        <Pill label="Open" value={b.open} tone="info" />
-                        <Pill label="Overdue" value={b.overdue} tone="critical" />
-                        <Pill label="SLA Risk" value={b.sla_risk} tone="warning" />
-                        {b.incidents > 0 && <Pill label="Incident" value={b.incidents} tone="critical" />}
-                      </div>
-                    </li>
-                  ))}
-                  {res.data.length === 0 && <li className="text-sm text-muted-foreground">Belum ada building/tower.</li>}
-                </ul>
-              )}
-            </AsyncState>
-          </CardContent>
-        </Card>
+          {/* ---------- Berita & Memo ---------- */}
+          {newsAllowed ? (
+            <NewsCard items={news.data?.data ?? []} loading={news.isLoading} canCreate={can("tenant_relation.announcements.create")} />
+          ) : (
+            <div className="m2-a-news grid"><PmPromo d={d} /></div>
+          )}
+
+          {/* ---------- Perlu perhatian ---------- */}
+          <section className="m2-card m2-a-tx">
+            <AttentionTable propertyId={propertyId} />
+          </section>
+        </div>
+        )}
+        </div>
       </div>
-      {assign && <AssignDialog objectType={assign.object_type as "task" | "work_order" | "service_request" | "incident"} id={assign.object_id} open onOpenChange={(o) => !o && setAssign(null)} />}
-    </div>
-  );
-}
-
-function Stat({ label, value, tone }: { label: string; value: number; tone?: "info" | "warning" | "critical" }) {
-  return (
-    <div className="rounded-md bg-muted px-2 py-2">
-      <div className={cn("text-h2 font-bold tnum", tone === "warning" && value > 0 && "text-warning-text", tone === "critical" && value > 0 && "text-critical-text")}>{fmtNumber(value)}</div>
-      <div className="text-xs text-muted-foreground">{label}</div>
-    </div>
-  );
-}
-function Pill({ label, value, tone }: { label: string; value: number; tone: "info" | "warning" | "critical" }) {
-  const cls = value === 0 ? "bg-neutral-soft text-neutral-text" : tone === "info" ? "bg-info-soft text-info-text" : tone === "warning" ? "bg-warning-soft text-warning-text" : "bg-critical-soft text-critical-text";
-  return <span className={cn("rounded-full px-2 py-0.5 tnum", cls)}>{value} {label}</span>;
-}
-function PanelSkeleton({ rows }: { rows: number }) {
-  return (
-    <div className="space-y-2" aria-busy>
-      {Array.from({ length: rows }).map((_, i) => (
-        <Skeleton key={i} className="h-10 w-full" />
-      ))}
     </div>
   );
 }

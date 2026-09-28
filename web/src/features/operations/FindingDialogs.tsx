@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Button, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect, Textarea } from "@/components/ui/primitives";
 import { AssetPicker, LocationPicker, TeamPicker, UserPicker } from "@/components/bv/pickers";
 import { useToast } from "@/components/bv/common";
+import { requestTypeLabel } from "@/components/bv/badges";
 import { useAll, useCreate } from "@/api/hooks";
 import { useAuth } from "@/lib/auth";
 import type { Finding, Incident, ServiceRequest, Tenant } from "@/api/types";
@@ -134,7 +135,7 @@ export function CreateIncidentDialog({ open, onOpenChange, defaults, onCreated }
   );
 }
 
-export interface SRCategory { id: string; code: string; name: string; default_domain: string | null; default_priority: string; is_active: boolean }
+export interface SRCategory { id: string; code: string; name: string; default_domain: string | null; default_priority: string; is_active: boolean; /** default tipe request (PRD P1 v2 §27.2). */ request_type?: string | null }
 export function useSRCategories() {
   return useAll<SRCategory>("service-request-categories");
 }
@@ -145,7 +146,7 @@ export function CreateServiceRequestDialog({ open, onOpenChange, defaults, onCre
   const { pid, setPid, properties } = usePropertySelect();
   const cats = useSRCategories();
   const tenants = useAll<Tenant>("tenants", { property_id: pid || undefined, status: "active" }, { enabled: !!pid });
-  const [form, setForm] = useState({ category_code: "", title: defaults?.title ?? "", description: "", priority: "", channel: defaults?.channel ?? "phone", tenant_id: defaults?.tenant_id ?? "", requester_name: defaults?.requester_name ?? "", requester_phone: defaults?.requester_phone ?? "" });
+  const [form, setForm] = useState({ category_code: "", request_type: "", title: defaults?.title ?? "", description: "", priority: "", channel: defaults?.channel ?? "phone", tenant_id: defaults?.tenant_id ?? "", requester_name: defaults?.requester_name ?? "", requester_phone: defaults?.requester_phone ?? "" });
   const [locationId, setLocationId] = useState<string | null>(defaults?.location_id ?? null);
   const [error, setError] = useState<string | null>(null);
   const create = useCreate<Record<string, unknown>, ServiceRequest>("service-requests");
@@ -162,7 +163,7 @@ export function CreateServiceRequestDialog({ open, onOpenChange, defaults, onCre
     const code = form.category_code || cats.data?.[0]?.code;
     if (!form.title.trim() || !code) return setError("Judul dan kategori wajib diisi.");
     try {
-      const s = await create.mutateAsync({ property_id: pid, category_code: code, title: form.title.trim(), description: form.description || null, tenant_id: form.tenant_id || null, requester_name: form.requester_name || null, requester_phone: form.requester_phone || null, location_id: locationId, priority: form.priority || undefined, channel: form.channel });
+      const s = await create.mutateAsync({ property_id: pid, category_code: code, request_type: form.request_type || undefined, title: form.title.trim(), description: form.description || null, tenant_id: form.tenant_id || null, requester_name: form.requester_name || null, requester_phone: form.requester_phone || null, location_id: locationId, priority: form.priority || undefined, channel: form.channel });
       toast.success(`${s.request_number} dibuat`);
       onOpenChange(false);
       onCreated?.(s);
@@ -188,6 +189,12 @@ export function CreateServiceRequestDialog({ open, onOpenChange, defaults, onCre
             <Field label={t("label.category")} required><NativeSelect value={form.category_code} onChange={(e) => setForm({ ...form, category_code: e.target.value })}>{(cats.data ?? []).map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}</NativeSelect></Field>
             <Field label={t("label.priority")}><NativeSelect value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}><option value="">Default kategori</option>{LEVELS.map((p) => <option key={p} value={p}>{t(`priority.${p}`)}</option>)}</NativeSelect></Field>
           </div>
+          <Field label={t("label.request_type")}>
+            <NativeSelect value={form.request_type} onChange={(e) => setForm({ ...form, request_type: e.target.value })}>
+              <option value="">Default kategori{(() => { const c = cats.data?.find((x) => x.code === (form.category_code || cats.data?.[0]?.code)); return c?.request_type ? ` (${requestTypeLabel[c.request_type] ?? c.request_type})` : ""; })()}</option>
+              {Object.entries(requestTypeLabel).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </NativeSelect>
+          </Field>
           <Field label={t("label.title")} required><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
           <Field label={t("label.description")}><Textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></Field>
           <Field label={t("label.location")}><LocationPicker propertyId={pid} value={locationId} onChange={(id) => setLocationId(id)} /></Field>

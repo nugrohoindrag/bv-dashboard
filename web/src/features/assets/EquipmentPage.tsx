@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/shell/AppShell";
 import { Button, Checkbox, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect } from "@/components/ui/primitives";
 import { DataGrid } from "@/components/bv/datagrid";
 import { PriorityBadge } from "@/components/bv/badges";
+import { CellText, CellTitle } from "@/components/bv/cells";
 import { useToast } from "@/components/bv/common";
 import { useAll, useCreate, useUpdate } from "@/api/hooks";
 import { useAuth } from "@/lib/auth";
@@ -23,12 +24,12 @@ export default function EquipmentPage() {
   const [edit, setEdit] = useState<Eq | null | "new">(null);
   const columns = useMemo<ColumnDef<Eq, unknown>[]>(
     () => [
-      { id: "code", header: "Kode kategori", cell: ({ row }) => <span className="font-mono text-[13px] font-semibold">{row.original.category_code}</span>, size: 150 },
-      { id: "cat", header: "Kategori", cell: ({ row }) => row.original.category_name },
-      { id: "type", header: "Tipe", cell: ({ row }) => row.original.type_name ?? <span className="text-muted-foreground">—</span> },
-      { id: "crit", header: "Kritikalitas default", cell: ({ row }) => row.original.default_criticality ? <PriorityBadge priority={row.original.default_criticality} /> : "—", size: 140 },
-      { id: "count", header: "Aset", cell: ({ row }) => <span className="tnum">{row.original.asset_count}</span>, size: 70 },
-      { id: "active", header: "Aktif", cell: ({ row }) => <span className={cn("text-xs", row.original.is_active ? "text-success-text" : "text-muted-foreground")}>{row.original.is_active ? "Aktif" : "Nonaktif"}</span>, size: 80 },
+      // Kode kategori + nama kategori digabung (pola tabel Tasks, 29 Sep 2026)
+      { id: "category", header: "Kategori", meta: { mobile: "primary" }, cell: ({ row }) => <CellTitle code={row.original.category_code} title={row.original.category_name} /> },
+      { id: "type", header: "Tipe", meta: { mobile: "secondary" }, cell: ({ row }) => <CellText max={200} muted={!row.original.type_name}>{row.original.type_name ?? "—"}</CellText> },
+      { id: "crit", header: "Kritikalitas default", meta: { nowrap: true }, cell: ({ row }) => row.original.default_criticality ? <PriorityBadge priority={row.original.default_criticality} /> : "—", size: 140 },
+      { id: "count", header: "Aset", meta: { nowrap: true, mobile: "secondary" }, cell: ({ row }) => <span className="tnum">{row.original.asset_count}</span>, size: 70 },
+      { id: "active", header: "Aktif", meta: { nowrap: true, mobile: "status" }, cell: ({ row }) => <span className={cn("text-xs", row.original.is_active ? "text-success-text" : "text-muted-foreground")}>{row.original.is_active ? "Aktif" : "Nonaktif"}</span>, size: 80 },
     ],
     [],
   );
@@ -37,7 +38,7 @@ export default function EquipmentPage() {
       <PageHeader title={t("nav.equipment")} subtitle="Master kategori & tipe peralatan untuk Asset Register." actions={can("engineering.equipment.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Tambah Equipment</Button>}>
         <Input className="w-72" placeholder="Cari kategori / tipe…" value={q} onChange={(e) => setQ(e.target.value)} />
       </PageHeader>
-      <DataGrid columns={columns} rows={list.data ?? []} rowId={(r) => r.id} onRowClick={(r) => { if (can("engineering.equipment.update")) setEdit(r); }} loading={list.isLoading} empty={{ message: "Belum ada equipment." }} />
+      <DataGrid columns={columns} rows={list.data ?? []} rowId={(r) => r.id} onRowClick={(r) => { if (can("engineering.equipment.update")) setEdit(r); }} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} empty={{ message: "Belum ada equipment." }} />
       {edit && <EquipmentDialog item={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
     </div>
   );
@@ -55,7 +56,7 @@ function EquipmentDialog({ item, onClose }: { item: Eq | null; onClose: () => vo
     try {
       if (item) await update.mutateAsync({ id: item.id, version: item.version, ...body });
       else await create.mutateAsync(body);
-      toast.success("Equipment disimpan");
+      toast.action("saved", "Equipment");
       onClose();
     } catch (e) {
       toast.error(e);

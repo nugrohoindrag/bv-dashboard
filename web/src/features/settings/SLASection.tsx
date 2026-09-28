@@ -61,7 +61,7 @@ function SLADialog({ objectType, priority, propertyId, existing, onClose }: { ob
   const upsert = useCreate<Record<string, unknown>>("sla-policies");
   const submit = () => {
     if (!form.resolution) return toast.error(new Error("Resolution (menit) wajib"));
-    upsert.mutateAsync({ property_id: propertyId, object_type: objectType, priority, response_minutes: form.response ? Number(form.response) : null, resolution_minutes: Number(form.resolution), risk_threshold_pct: Number(form.risk), calendar: form.calendar, is_active: form.is_active }).then(() => { toast.success("SLA disimpan"); onClose(); }).catch(toast.error);
+    upsert.mutateAsync({ property_id: propertyId, object_type: objectType, priority, response_minutes: form.response ? Number(form.response) : null, resolution_minutes: Number(form.resolution), risk_threshold_pct: Number(form.risk), calendar: form.calendar, is_active: form.is_active }).then(() => { toast.action("saved", "SLA"); onClose(); }).catch(toast.error);
   };
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>

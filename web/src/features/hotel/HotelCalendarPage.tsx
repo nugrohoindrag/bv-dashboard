@@ -4,11 +4,13 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Icon } from "@buildingvision/ui";
 import { PageHeader } from "@/components/shell/AppShell";
-import { Alert, Badge, Button } from "@/components/ui/primitives";
+import { Alert, Button } from "@/components/ui/primitives";
 import { AsyncState } from "@/components/bv/common";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { RES_STATUS, ROOM_STATUS, type Room } from "./hotel-api";
+import { type Room } from "./hotel-api";
+import { StatusBadge } from "@/components/bv/badges";
+import { statusLabel } from "@/lib/status";
 
 interface Entry { reservation_id: string; reservation_number: string; guest_name: string; room_type_id: string; room_type_name: string; room_location_id: string | null; room_number: string | null; check_in_date: string; check_out_date: string; status: string }
 interface Calendar { from: string; to: string; rooms: Room[]; entries: Entry[] }
@@ -46,7 +48,7 @@ export default function HotelCalendarPage() {
                   <tbody>
                     {c.rooms.map((rm) => (
                       <tr key={rm.location_id} className="border-t border-border">
-                        <td className="sticky left-0 z-10 bg-surface p-2"><div className="font-semibold">{rm.room_number}</div><div className="text-[10px] text-muted-foreground">{rm.room_type_name}</div><Badge tone={ROOM_STATUS[rm.room_status]?.tone ?? "neutral"} className="mt-0.5">{ROOM_STATUS[rm.room_status]?.label}</Badge></td>
+                        <td className="sticky left-0 z-10 bg-surface p-2"><div className="font-semibold">{rm.room_number}</div><div className="text-[10px] text-muted-foreground">{rm.room_type_name}</div><StatusBadge objectType="hotel_room" status={rm.room_status} className="mt-0.5" /></td>
                         {dates.map((d) => {
                           const ds = iso(d);
                           const e = c.entries.find((x) => x.room_location_id === rm.location_id && x.check_in_date.slice(0, 10) <= ds && x.check_out_date.slice(0, 10) > ds);
@@ -54,7 +56,7 @@ export default function HotelCalendarPage() {
                           return (
                             <td key={ds} className="h-12 border-l border-border p-0.5 align-top">
                               {e && (
-                                <button type="button" onClick={() => nav(`/commercial/hotel/reservations/${e.reservation_id}`)} className={`block h-full w-full truncate rounded px-1 py-1 text-left text-[11px] text-on-primary ${e.status === "checked_in" ? "bg-primary" : e.status === "checked_out" ? "bg-outline" : "bg-primary/70"}`} title={`${e.reservation_number} · ${e.guest_name} · ${RES_STATUS[e.status]?.label}`}>
+                                <button type="button" onClick={() => nav(`/commercial/hotel/reservations/${e.reservation_id}`)} className={`block h-full w-full truncate rounded px-1 py-1 text-left text-[11px] text-on-primary ${e.status === "checked_in" ? "bg-primary" : e.status === "checked_out" ? "bg-outline" : "bg-primary/70"}`} title={`${e.reservation_number} · ${e.guest_name} · ${statusLabel("hotel_reservation", e.status)}`}>
                                   {first || ds === from ? e.guest_name : " "}
                                 </button>
                               )}

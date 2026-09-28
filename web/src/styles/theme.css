@@ -125,12 +125,36 @@
   --text-sm--line-height: 18px;
   --text-xs: 12px;
   --text-xs--line-height: 16px;
+  /* Label & Caption (PRD P0 §20.2) — nilai = design-tokens/tokens.json type.label / type.caption */
+  --text-label: 12px;
+  --text-label--line-height: 16px;
+  --text-label--font-weight: 600;
+  --text-caption: 11px;
+  --text-caption--line-height: 16px;
+  --text-caption--font-weight: 400;
+
+  /* Breakpoint responsive (PRD P0 §22; lib/responsive.ts): sm 640 kartu tabel · md 768 tablet · xl 1280 desktop */
+  --breakpoint-sm: 40rem;
+  --breakpoint-md: 48rem;
+  --breakpoint-xl: 80rem;
 }
 
 /* safelist kelas semantic dinamis (StatusBadge, tone map) */
 @source inline("bg-success bg-warning bg-error bg-info bg-neutral bg-success-container bg-warning-container bg-error-container bg-info-container bg-surface-container-high text-on-success-container text-on-warning-container text-on-error-container text-on-info-container text-on-surface-variant text-success text-warning text-error text-info bg-critical bg-critical-soft text-critical-text text-critical bg-success-soft text-success-text bg-warning-soft text-warning-text bg-info-soft text-info-text bg-neutral-soft text-neutral-text border-l-success border-l-warning border-l-error border-l-info border-l-critical");
 
 @layer base {
+  /* Top bar putih (29 Sep 2026): latar root diberi pita warna top bar setinggi header, sehingga sudut kanan-atas
+     sidebar yang membulat menyatu dengan top bar sebagai sudut cekung (tanpa celah abu). Tinggi pita & header memakai
+     variabel yang sama agar pita berakhir tepat di garis bawah header (56px < 768px, 64px ≥ 768px). */
+  .bv-shell {
+    --bv-header-h: 56px;
+    background-image: linear-gradient(var(--color-surface), var(--color-surface));
+    background-repeat: no-repeat;
+    background-size: 100% var(--bv-header-h);
+  }
+  @media (min-width: 48rem) {
+    .bv-shell { --bv-header-h: 64px; }
+  }
   html, body, #root { height: 100%; }
   body {
     margin: 0;
@@ -145,6 +169,6 @@
   *:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
 }
 
-.tnum { font-variant-numeric: tabular-nums; }
-@media (max-width: 1279px) { .bv-narrow-banner { display: block; } }
-@media (min-width: 1280px) { .bv-narrow-banner { display: none; } }
+@utility tnum { font-variant-numeric: tabular-nums; }
+/* Area aman bawah (notch/home indicator) untuk MobileActionBar & FAB */
+@utility pb-safe { padding-bottom: max(12px, env(safe-area-inset-bottom)); }

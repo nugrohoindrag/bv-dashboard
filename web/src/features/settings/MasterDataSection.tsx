@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle, THead, TBody, TD, TH, TR, Table } from "@/components/ui/primitives";
 import { AsyncState } from "@/components/bv/common";
 import { PriorityBadge } from "@/components/bv/badges";
+import { CellText } from "@/components/bv/cells";
 import { useSRCategories } from "@/features/operations/FindingDialogs";
 
 export default function MasterDataSection() {
@@ -18,7 +19,7 @@ export default function MasterDataSection() {
                 <THead><tr><TH>Kode</TH><TH>Nama</TH><TH>Domain default</TH><TH>Prioritas default</TH><TH>Aktif</TH></tr></THead>
                 <TBody>
                   {list.map((c) => (
-                    <TR key={c.id}><TD className="font-mono text-xs">{c.code}</TD><TD>{c.name}</TD><TD>{c.default_domain ?? "—"}</TD><TD><PriorityBadge priority={c.default_priority} /></TD><TD>{c.is_active ? "Ya" : "Tidak"}</TD></TR>
+                    <TR key={c.id}><TD className="whitespace-nowrap font-mono text-xs">{c.code}</TD><TD><CellText max={260}>{c.name}</CellText></TD><TD className="whitespace-nowrap">{c.default_domain ?? "—"}</TD><TD><PriorityBadge priority={c.default_priority} /></TD><TD className="whitespace-nowrap">{c.is_active ? "Ya" : "Tidak"}</TD></TR>
                   ))}
                 </TBody>
               </Table>

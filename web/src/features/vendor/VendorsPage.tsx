@@ -8,11 +8,13 @@ import { PageHeader } from "@/components/shell/AppShell";
 import { Badge, Button, Checkbox, Dialog, DialogContent, DialogFooter, Drawer, Field, Input, NativeSelect, Textarea } from "@/components/ui/primitives";
 import { DataGrid } from "@/components/bv/datagrid";
 import { StatusBadge } from "@/components/bv/badges";
+import { CellText, CellTitle } from "@/components/bv/cells";
 import { AsyncState, KeyValue, useToast } from "@/components/bv/common";
 import { useAction, useAll, useList, useOne, useUpdate } from "@/api/hooks";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { fmtDateTime } from "@/lib/format";
+import { fmtDate, fmtDateTime } from "@/lib/format";
+import { ExportButton } from "@/components/bv/export";
 
 export interface VendorContact { id?: string; name: string; role: string | null; phone: string | null; email: string | null; is_primary: boolean }
 export interface Vendor {
@@ -34,23 +36,29 @@ export default function VendorsPage() {
   const list = useList<Vendor>("vendors", { q: q || undefined, category: category || undefined, status: status || undefined });
   const rows = list.data?.pages.flatMap((p) => p.data) ?? [];
   const columns = useMemo<ColumnDef<Vendor, unknown>[]>(() => [
-    { id: "code", header: "Kode", cell: ({ row }) => <span className="font-mono text-[13px] font-semibold">{row.original.vendor_code}</span>, size: 120 },
-    { id: "name", header: "Vendor", cell: ({ row }) => <div><div className="font-medium">{row.original.name}</div><div className="text-xs text-muted-foreground">{row.original.contact_name ?? ""} {row.original.contact_phone ?? ""}</div></div> },
-    { id: "categories", header: "Layanan", cell: ({ row }) => <div className="flex flex-wrap gap-1">{row.original.service_categories.map((c) => <Badge key={c} tone="neutral">{VENDOR_CATEGORIES[c] ?? c}</Badge>)}</div> },
-    { id: "perf", header: "Performance", cell: ({ row }) => <div className="text-xs"><span className="tnum font-semibold">{row.original.performance.completed_work_orders}</span>/{row.original.performance.total_work_orders} WO selesai{row.original.performance.on_time_pct != null ? ` · on-time ${row.original.performance.on_time_pct.toFixed(0)}%` : ""}{row.original.performance.open_work_orders ? ` · ${row.original.performance.open_work_orders} berjalan` : ""}</div>, size: 220 },
-    { id: "contract", header: "Kontrak", cell: ({ row }) => <span className="text-xs text-muted-foreground">{row.original.contract_ref ?? "—"}{row.original.contract_end ? ` · s/d ${row.original.contract_end.slice(0, 10)}` : ""}</span>, size: 180 },
-    { id: "status", header: t("label.status"), cell: ({ row }) => <Badge tone={row.original.status === "active" ? "success" : row.original.status === "blacklisted" ? "error" : "neutral"}>{row.original.status}</Badge>, size: 110 },
+    // Tabel disederhanakan (29 Sep 2026, pola Tasks): kode + nama vendor dalam satu kolom, layanan & kontak satu baris (teks
+    // lengkap di tooltip), performance ringkas, akhir kontrak, satu status. Rincian performance & kontak ada di drawer detail.
+    { id: "name", header: "Vendor", meta: { mobile: "primary" }, cell: ({ row }) => <CellTitle code={row.original.vendor_code} title={row.original.name} /> },
+    { id: "categories", header: "Layanan", meta: { mobile: "secondary" }, cell: ({ row }) => { const cats = row.original.service_categories.map((c) => VENDOR_CATEGORIES[c] ?? c).join(", "); return <CellText max={170} muted={!cats}>{cats || "—"}</CellText>; } },
+    { id: "contact", header: "Kontak", meta: { mobile: "secondary" }, cell: ({ row }) => <CellText max={160} muted={!row.original.contact_name} title={[row.original.contact_name, row.original.contact_phone].filter(Boolean).join(" · ") || undefined}>{row.original.contact_name ?? "—"}</CellText> },
+    { id: "perf", header: "Performance", meta: { mobile: "hidden" }, size: 150, cell: ({ row: { original: { performance: p } } }) => (
+      <span className="whitespace-nowrap text-sm" title={`${p.completed_work_orders}/${p.total_work_orders} WO selesai${p.open_work_orders ? ` · ${p.open_work_orders} berjalan` : ""}`}>
+        <span className="tnum font-semibold">{p.completed_work_orders}</span><span className="text-on-surface-variant">/{p.total_work_orders} WO</span>{p.on_time_pct != null ? <span className="text-on-surface-variant"> · {p.on_time_pct.toFixed(0)}%</span> : null}
+      </span>
+    ) },
+    { id: "contract", header: "Kontrak s/d", meta: { mobile: "hidden" }, size: 120, cell: ({ row }) => <span className="whitespace-nowrap text-sm text-muted-foreground" title={row.original.contract_ref ?? undefined}>{row.original.contract_end ? fmtDate(row.original.contract_end) : "—"}</span> },
+    { id: "status", header: t("label.status"), meta: { mobile: "status" }, cell: ({ row }) => <Badge tone={row.original.status === "active" ? "success" : row.original.status === "blacklisted" ? "error" : "neutral"}>{row.original.status}</Badge>, size: 110 },
   ], [t]);
   return (
     <div>
-      <PageHeader title="Vendors" subtitle="Vendor eksternal untuk Vendor Work Order; performance dihitung dari Work Order yang ditugaskan." actions={can("vendor.vendors.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Tambah Vendor</Button>}>
+      <PageHeader title="Vendors" subtitle="Vendor eksternal untuk Vendor Work Order; performance dihitung dari Work Order yang ditugaskan." actions={<><ExportButton resource="vendors" filters={{ q, category, status }} />{can("vendor.vendors.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Tambah Vendor</Button>}</>}>
         <div className="flex items-center gap-2">
           <Input className="w-64" placeholder="Cari vendor / kontak…" value={q} onChange={(e) => setQ(e.target.value)} />
           <NativeSelect className="w-44" value={category} onChange={(e) => setCategory(e.target.value)}><option value="">Layanan: {t("label.all")}</option>{Object.entries(VENDOR_CATEGORIES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</NativeSelect>
           <NativeSelect className="w-40" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option><option value="active">active</option><option value="inactive">inactive</option><option value="blacklisted">blacklisted</option></NativeSelect>
         </div>
       </PageHeader>
-      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/vendors/${r.id}`} loading={list.isLoading} isFiltered={!!q || !!category} empty={{ message: "Belum ada vendor." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} rowActions={(r) => (can("vendor.vendors.update") ? [{ label: "Edit", icon: "edit", onSelect: () => setEdit(r) }] : [])} />
+      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/vendors/${r.id}`} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} isFiltered={!!q || !!category} empty={{ message: "Belum ada vendor." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} rowActions={(r) => (can("vendor.vendors.update") ? [{ label: "Edit", icon: "edit", onSelect: () => setEdit(r) }] : [])} />
       {edit && <VendorDialog item={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
       {id && <VendorDrawer id={id} onClose={() => nav("/vendors")} onEdit={(v) => setEdit(v)} />}
     </div>
@@ -111,7 +119,7 @@ function VendorDialog({ item, onClose }: { item: Vendor | null; onClose: () => v
     try {
       if (item) await update.mutateAsync({ id: item.id, version: item.version, ...body, status: f.status });
       else await create.mutateAsync(body);
-      toast.success("Vendor disimpan");
+      toast.action("saved", "Vendor");
       onClose();
     } catch (e) {
       toast.error(e);

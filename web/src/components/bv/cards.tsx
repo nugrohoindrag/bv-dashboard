@@ -14,12 +14,18 @@ import type { AttentionItem, Incident, ServiceRequest, WorkItem } from "@/api/ty
 function accentTone(flags?: string[]): Tone | undefined {
   if (!flags?.length) return undefined;
   if (flags.includes("overdue") || flags.includes("sla_breach")) return "error";
-  if (flags.includes("sla_risk") || flags.includes("evidence_incomplete")) return "warning";
+  if (flags.includes("sla_risk") || flags.includes("escalated") || flags.includes("evidence_incomplete")) return "warning";
   return undefined;
 }
 
 export function itemLink(ot: string, id: string): string {
-  return ({ task: "/operations/tasks/", work_order: "/operations/work-orders/", service_request: "/operations/service-requests/", incident: "/operations/incidents/", finding: "/findings/", maintenance_schedule: "/engineering/preventive-maintenance/", asset: "/assets/" }[ot] ?? "/") + id;
+  return ({
+    task: "/operations/tasks/", work_order: "/operations/work-orders/", service_request: "/operations/service-requests/", incident: "/operations/incidents/", finding: "/findings/", maintenance_schedule: "/engineering/preventive-maintenance/", asset: "/assets/",
+    // PRD P2 v2.1: object Security (deep link sama dengan notifikasi server)
+    emergency_alert: "/security/emergency/", parking_violation: "/security/parking/violations/", lost_found_item: "/security/lost-found/",
+    // PRD P2 v2.1: sama dengan deep link notifikasi server (notification/service.go)
+    cleaning_route_run: "/housekeeping/routes?run=", inventory_item: "/inventory?item=",
+  }[ot] ?? "/") + id;
 }
 
 export function WorkItemCard({ item, compact, actions }: { item: WorkItem; compact?: boolean; actions?: React.ReactNode }) {
@@ -37,7 +43,7 @@ export function WorkItemCard({ item, compact, actions }: { item: WorkItem; compa
         </div>
         <div className="flex shrink-0 flex-wrap justify-end gap-1">
           <StatusBadge objectType={item.object_type} status={item.status} />
-          <FlagBadges flags={item.flags} />
+          <FlagBadges item={item} />
         </div>
       </div>
       <div className={cn("mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-on-surface-variant", compact && "mt-1")}>
@@ -72,7 +78,7 @@ export function ServiceRequestCard({ item, compact }: { item: ServiceRequest; co
         </div>
         <div className="flex shrink-0 flex-wrap justify-end gap-1">
           <StatusBadge objectType="service_request" status={item.status} />
-          <FlagBadges flags={item.flags} />
+          <FlagBadges item={item} />
         </div>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-on-surface-variant">
@@ -131,9 +137,19 @@ export function TodayCounter({ label, value, breakdown, link, loading }: { label
 }
 
 // ---------- AttentionRequiredList (DS §4.4): severity · object · location · age/due · CTA (dari allowed_actions server) ----------
-const categoryLabel: Record<string, string> = { sla_breach: "SLA Breach", sla_risk: "SLA Risk", maintenance_overdue: "Maintenance Overdue", patrol_overdue: "Patrol Overdue", unresolved_finding: "Finding Belum Selesai", critical_incident: "Incident Kritis", incident: "Incident", overdue: "Overdue", sync_conflict: "Sync Conflict" };
+// Kategori PRD P1 v2 §11 (kategori lama "overdue" diganti overdue_task / overdue_work_order) + PRD P2 v2.1 (Emergency aktif,
+// checkpoint terlewat, dokumen/sertifikat kedaluwarsa, kekurangan staf on-duty)
+export const attentionCategoryLabel: Record<string, string> = {
+  sla_breach: "SLA Breach", sla_risk: "SLA Risk", critical_incident: "Incident Kritis", critical_asset_issue: "Aset Kritis", maintenance_overdue: "Maintenance Overdue", patrol_overdue: "Patrol Overdue", overdue_task: "Task Overdue", overdue_work_order: "Work Order Overdue", reopened_request: "Request Dibuka Kembali", unresolved_finding: "Finding Belum Selesai", incident: "Incident", sync_conflict: "Sync Conflict",
+  active_emergency: "Emergency Aktif", checkpoint_missed: "Checkpoint Terlewat", document_expiring: "Dokumen Kedaluwarsa", workforce_shortage: "Kekurangan Staf On-Duty", recurring_issue: "Isu Berulang",
+};
+const ATTENTION_ICONS: Record<string, string> = {
+  sla_breach: "timer_off", sla_risk: "timer", critical_incident: "emergency_home", critical_asset_issue: "precision_manufacturing", maintenance_overdue: "event_repeat", patrol_overdue: "directions_walk", overdue_task: "task_alt", overdue_work_order: "construction", reopened_request: "replay", unresolved_finding: "report_problem", incident: "report", sync_conflict: "merge_type",
+  active_emergency: "e911_emergency", checkpoint_missed: "location_off", document_expiring: "description", workforce_shortage: "group_off",
+};
+const DUE_CATEGORIES = new Set(["overdue_task", "overdue_work_order", "patrol_overdue", "maintenance_overdue"]);
 
-export function AttentionRequiredList({ items, onAction, total, limit = 10, seeAllTo }: { items: AttentionItem[]; onAction?: (item: AttentionItem, action: string) => void; total?: number; limit?: number; seeAllTo?: string }) {
+export function AttentionRequiredList({ items, onAction, total, limit = 10, seeAllTo, onSeeAll }: { items: AttentionItem[]; onAction?: (item: AttentionItem, action: string) => void; total?: number; limit?: number; seeAllTo?: string; /** Alternatif `seeAllTo`: perluas daftar di tempat (daftar lintas object type). */ onSeeAll?: () => void }) {
   const { t } = useTranslation();
   const shown = items.slice(0, limit);
   return (
@@ -143,7 +159,7 @@ export function AttentionRequiredList({ items, onAction, total, limit = 10, seeA
           <span aria-label={it.severity} className={cn("mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full", it.severity === "critical" ? "bg-error" : "bg-warning")} />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <span className={cn("text-xs font-semibold uppercase tracking-wide", it.severity === "critical" ? "text-on-error-container" : "text-on-warning-container")}>{categoryLabel[it.category] ?? it.category}</span>
+              <span className={cn("inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide", it.severity === "critical" ? "text-on-error-container" : "text-on-warning-container")}><Icon name={ATTENTION_ICONS[it.category] ?? "warning"} size={14} aria-hidden />{attentionCategoryLabel[it.category] ?? it.category}</span>
               <Link to={it.deep_link} className="font-mono text-[13px] font-semibold hover:underline">{it.label}</Link>
               <span className="truncate text-body">{it.title}</span>
             </div>
@@ -151,7 +167,7 @@ export function AttentionRequiredList({ items, onAction, total, limit = 10, seeA
               {it.location_path && <LocationPath pathText={it.location_path} />}
               <span className="text-xs">{objectTypeLabel[it.object_type] ?? it.object_type}</span>
               <span className={cn("tnum text-xs", it.severity === "critical" ? "text-on-error-container" : "text-on-warning-container")}>
-                {it.category === "overdue" || it.category === "patrol_overdue" || it.category === "maintenance_overdue" ? "due " : ""}
+                {DUE_CATEGORIES.has(it.category) ? "due " : ""}
                 <RelativeTime value={it.since} />
               </span>
               {it.assignee_name && <span className="text-xs">{it.assignee_name}</span>}
@@ -169,9 +185,13 @@ export function AttentionRequiredList({ items, onAction, total, limit = 10, seeA
           </div>
         </div>
       ))}
-      {total !== undefined && total > shown.length && seeAllTo && (
+      {total !== undefined && total > shown.length && (seeAllTo || onSeeAll) && (
         <div className="pt-3 text-sm">
-          <Link to={seeAllTo} className="font-semibold text-primary hover:underline">{t("overview.see_all", { n: total })}</Link>
+          {onSeeAll ? (
+            <button type="button" onClick={onSeeAll} className="font-semibold text-primary hover:underline">{t("overview.see_all", { n: total })}</button>
+          ) : (
+            <Link to={seeAllTo!} className="font-semibold text-primary hover:underline">{t("overview.see_all", { n: total })}</Link>
+          )}
         </div>
       )}
     </div>

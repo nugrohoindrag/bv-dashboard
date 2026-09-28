@@ -1,6 +1,6 @@
 // Property Profile (PRD P1 v1.3 §3, Onboarding Brief §18–§19): profile aktif, capability, konfigurasi OD-P1-004..008,
 // override terminologi, dan aksi administratif Ubah Profile (validasi server + guard data tidak kompatibel).
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Alert, Badge, Button, Card, CardContent, CardHeader, CardSubtitle, CardTitle, Checkbox, Dialog, DialogContent, DialogFooter, Field, Icon, Input, NativeSelect, Textarea } from "@/components/ui/primitives";
@@ -43,53 +43,12 @@ const TERM_KEYS: { key: string; label: string }[] = [
 ];
 
 export default function PropertyProfileSection() {
-  const { t } = useTranslation();
   const { propertyId, properties, can, refreshPrincipal } = useAuth();
   const qc = useQueryClient();
-  const toast = useToast();
   const ctx = useQuery({ queryKey: ["property-context", propertyId], enabled: !!propertyId, queryFn: ({ signal }) => fetchPropertyContext(propertyId!, signal) });
-  const [form, setForm] = useState<Partial<PropertyContext["config"]>>({});
-  const [terms, setTerms] = useState<Record<string, Term>>({});
-  const [saving, setSaving] = useState(false);
   const [changeOpen, setChangeOpen] = useState(false);
-  useEffect(() => {
-    if (ctx.data) {
-      setForm(ctx.data.config);
-      setTerms(ctx.data.config.terminology ?? {});
-    }
-  }, [ctx.data]);
   const property = properties.find((p) => p.id === propertyId);
-  const canUpdate = can("property.properties.update");
   const canChange = can("property.properties.change_profile");
-
-  const save = async () => {
-    if (!propertyId) return;
-    setSaving(true);
-    try {
-      const cleanTerms: Record<string, Term> = {};
-      for (const [k, v] of Object.entries(terms)) if (v.id || v.en) cleanTerms[k] = v;
-      const res = await api<PropertyContext>(`properties/${propertyId}/profile-config`, {
-        method: "PATCH",
-        body: {
-          expose_sla_to_tenant: form.expose_sla_to_tenant,
-          tenant_confirmation_required: form.tenant_confirmation_required,
-          csat_enabled: form.csat_enabled,
-          booking_approval_required: form.booking_approval_required,
-          visitor_approval_required: form.visitor_approval_required,
-          tenant_self_registration: form.tenant_self_registration,
-          auto_close_resolved_hours: Number(form.auto_close_resolved_hours ?? 72),
-          terminology: cleanTerms,
-        },
-        ifMatch: ctx.data?.config.version || undefined,
-      });
-      qc.setQueryData(["property-context", propertyId], res);
-      toast.success("Konfigurasi profile disimpan");
-    } catch (e) {
-      toast.error(e);
-    } finally {
-      setSaving(false);
-    }
-  };
 
   if (!propertyId) {
     return <Alert variant="info" title="Pilih property">Property Profile melekat pada Property (Onboarding Brief §4). Pilih satu property di header untuk melihat dan mengatur profile-nya.</Alert>;
@@ -126,6 +85,81 @@ export default function PropertyProfileSection() {
               </CardContent>
             </Card>
 
+            {/* form konfigurasi di-remount saat versi berubah (setelah simpan / ubah profile) — tanpa sinkronisasi state via effect */}
+            <ProfileConfigForms key={`${c.property_id}:${c.config.version}:${c.config.updated_at}`} ctx={c} />
+
+            {changeOpen && <ChangeProfileDialog ctx={c} onClose={() => setChangeOpen(false)} onChanged={async (res) => { qc.setQueryData(["property-context", propertyId], res); qc.invalidateQueries({ queryKey: ["property-context"] }); await refreshPrincipal(); }} />}
+          </>
+        )}
+      </AsyncState>
+    </div>
+  );
+}
+
+type ConfigForm = Partial<PropertyContext["config"]> & { recurring_issue_threshold?: number; recurring_issue_window_days?: number; package_reminder_days?: number };
+
+/** Batas server (api/internal/profile): ambang isu berulang 2..50, jendela 1..365 hari, pengingat paket 0..60 hari (0 = nonaktif). */
+const SERVICE_LIMITS = { recurring_issue_threshold: [2, 50], recurring_issue_window_days: [1, 365], package_reminder_days: [0, 60] } as const;
+type ServiceKey = keyof typeof SERVICE_LIMITS;
+
+function ProfileConfigForms({ ctx: c }: { ctx: PropertyContext }) {
+  const { t } = useTranslation();
+  const { can } = useAuth();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const initial = c.config as ConfigForm;
+  const [form, setForm] = useState<ConfigForm>(initial);
+  const [terms, setTerms] = useState<Record<string, Term>>(c.config.terminology ?? {});
+  // PRD P3 v2.1: ambang & jendela Recurring Issue Detection (P3-TSH-07), pengingat paket (P3-PKG-04)
+  const [svc, setSvc] = useState<Record<ServiceKey, string>>({
+    recurring_issue_threshold: String(initial.recurring_issue_threshold ?? 3),
+    recurring_issue_window_days: String(initial.recurring_issue_window_days ?? 30),
+    package_reminder_days: String(initial.package_reminder_days ?? 3),
+  });
+  const [saving, setSaving] = useState(false);
+  const canUpdate = can("property.properties.update");
+  const svcError = (k: ServiceKey): string | undefined => {
+    const [min, max] = SERVICE_LIMITS[k];
+    const v = svc[k].trim();
+    const n = Number(v);
+    return v === "" || !Number.isInteger(n) || n < min || n > max ? `Harus ${min}–${max}` : undefined;
+  };
+  const svcValid = (Object.keys(SERVICE_LIMITS) as ServiceKey[]).every((k) => !svcError(k));
+
+  const save = async () => {
+    if (!svcValid) return;
+    setSaving(true);
+    try {
+      const cleanTerms: Record<string, Term> = {};
+      for (const [k, v] of Object.entries(terms)) if (v.id || v.en) cleanTerms[k] = v;
+      const res = await api<PropertyContext>(`properties/${c.property_id}/profile-config`, {
+        method: "PATCH",
+        body: {
+          expose_sla_to_tenant: form.expose_sla_to_tenant,
+          tenant_confirmation_required: form.tenant_confirmation_required,
+          csat_enabled: form.csat_enabled,
+          booking_approval_required: form.booking_approval_required,
+          visitor_approval_required: form.visitor_approval_required,
+          tenant_self_registration: form.tenant_self_registration,
+          auto_close_resolved_hours: Number(form.auto_close_resolved_hours ?? 72),
+          recurring_issue_threshold: Number(svc.recurring_issue_threshold),
+          recurring_issue_window_days: Number(svc.recurring_issue_window_days),
+          package_reminder_days: Number(svc.package_reminder_days),
+          terminology: cleanTerms,
+        },
+        ifMatch: c.config.version || undefined,
+      });
+      qc.setQueryData(["property-context", c.property_id], res);
+      toast.action("saved", "Konfigurasi profile");
+    } catch (e) {
+      toast.error(e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
             <Card>
               <CardHeader><CardTitle>Aturan Tenant Experience (Open Decisions P1)</CardTitle><CardSubtitle>Berlaku untuk Tenant App dan alur Service Request pada property ini.</CardSubtitle></CardHeader>
               <CardContent>
@@ -138,6 +172,19 @@ export default function PropertyProfileSection() {
                   <Checkbox label="Izinkan tenant mendaftar sendiri dari Tenant App (validasi oleh Tenant Relation)" checked={!!form.tenant_self_registration} onCheckedChange={(v) => setForm({ ...form, tenant_self_registration: v })} disabled={!canUpdate} />
                   <Field label="Auto-close ticket Resolved tanpa respons tenant (jam, 0 = nonaktif)"><Input type="number" min={0} max={720} value={form.auto_close_resolved_hours ?? 72} onChange={(e) => setForm({ ...form, auto_close_resolved_hours: Number(e.target.value) })} disabled={!canUpdate} /></Field>
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader><CardTitle>Layanan Tenant: Isu Berulang &amp; Paket</CardTitle><CardSubtitle>PRD P3 v2.1 — deteksi keluhan berulang per lokasi &amp; kategori, dan pengingat paket yang belum diambil.</CardSubtitle></CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm md:grid-cols-3">
+                  <Field label="Ambang isu berulang (jumlah permintaan)" error={svcError("recurring_issue_threshold")} help="2–50. Lokasi + kategori yang mencapai ambang ini menjadi sinyal Isu Berulang."><Input type="number" min={2} max={50} value={svc.recurring_issue_threshold} onChange={(e) => setSvc({ ...svc, recurring_issue_threshold: e.target.value })} disabled={!canUpdate} /></Field>
+                  <Field label="Jendela waktu (hari)" error={svcError("recurring_issue_window_days")} help="1–365. Rentang hari penghitungan permintaan berulang."><Input type="number" min={1} max={365} value={svc.recurring_issue_window_days} onChange={(e) => setSvc({ ...svc, recurring_issue_window_days: e.target.value })} disabled={!canUpdate} /></Field>
+                  <Field label="Pengingat paket setelah (hari)" error={svcError("package_reminder_days")} help="0–60; 0 = nonaktif. Pengingat harian ke tenant, maks. 3 kali."><Input type="number" min={0} max={60} value={svc.package_reminder_days} onChange={(e) => setSvc({ ...svc, package_reminder_days: e.target.value })} disabled={!canUpdate} /></Field>
+                </div>
+                <p className="text-xs text-muted-foreground">Contoh: {svc.recurring_issue_threshold || "…"} permintaan dalam {svc.recurring_issue_window_days || "…"} hari pada lokasi &amp; kategori yang sama menjadi Isu Berulang; keluhan berulang otomatis dinaikkan ke prioritas tinggi.</p>
+                {canUpdate && <div><Button loading={saving} disabled={!svcValid} onClick={save}>{t("action.save")}</Button></div>}
               </CardContent>
             </Card>
 
@@ -157,15 +204,11 @@ export default function PropertyProfileSection() {
                     ))}
                   </tbody>
                 </table>
-                {canUpdate && <div className="mt-4"><Button loading={saving} onClick={save}>{t("action.save")}</Button></div>}
+                {canUpdate && <div className="mt-4"><Button loading={saving} disabled={!svcValid} onClick={save}>{t("action.save")}</Button></div>}
               </CardContent>
             </Card>
 
-            {changeOpen && <ChangeProfileDialog ctx={c} onClose={() => setChangeOpen(false)} onChanged={async (res) => { qc.setQueryData(["property-context", propertyId], res); qc.invalidateQueries({ queryKey: ["property-context"] }); await refreshPrincipal(); }} />}
-          </>
-        )}
-      </AsyncState>
-    </div>
+    </>
   );
 }
 

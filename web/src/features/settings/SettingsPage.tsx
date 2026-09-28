@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/shell/AppShell";
 import { DetailSkeleton } from "@/components/bv/common";
+import { ForbiddenPage, NotFoundPage } from "@/components/shell/SystemPages";
 import { useAuth } from "@/lib/auth";
 
 const OrganizationSection = lazy(() => import("./OrganizationSection"));
@@ -21,8 +22,14 @@ const AuditLogsSection = lazy(() => import("./AuditLogsSection"));
 const PlanSection = lazy(() => import("./PlanSection"));
 const AppDownloadsSection = lazy(() => import("./AppDownloadsSection"));
 const DemoDataSection = lazy(() => import("./DemoDataSection"));
+const ProfileSection = lazy(() => import("./ProfileSection"));
+const BroadcastSection = lazy(() => import("./BroadcastSection"));
+const ExportsSection = lazy(() => import("./ExportsSection"));
+const PlatformOrganizationsSection = lazy(() => import("./PlatformOrganizationsSection"));
 
-const SECTIONS: { key: string; label: string; perm: string; el: React.LazyExoticComponent<() => React.JSX.Element>; internalOnly?: boolean }[] = [
+const SECTIONS: { key: string; label: string; perm?: string; el: React.LazyExoticComponent<() => React.JSX.Element>; internalOnly?: boolean; platformAdmin?: boolean }[] = [
+  // PRD P0 v2 §8.1/§24.1: profil & sesi milik sendiri — semua user
+  { key: "profile", label: "nav.my_profile", el: ProfileSection },
   { key: "organization", label: "nav.organization", perm: "platform.organizations.view", el: OrganizationSection },
   { key: "plan", label: "nav.plan", perm: "platform.organizations.view", el: PlanSection },
   { key: "property-profile", label: "nav.property_profile", perm: "property.properties.view", el: PropertyProfileSection },
@@ -34,19 +41,27 @@ const SECTIONS: { key: string; label: string; perm: string; el: React.LazyExotic
   { key: "payment-providers", label: "nav.payment_providers", perm: "billing.payments.view", el: PaymentProvidersSection },
   { key: "master-data", label: "nav.master_data", perm: "engineering.equipment.view", el: MasterDataSection },
   { key: "notifications", label: "nav.notifications", perm: "notification.inbox.view", el: NotificationsSection },
+  { key: "broadcast", label: "nav.broadcast", perm: "platform.notifications.broadcast", el: BroadcastSection },
+  { key: "exports", label: "nav.exports", perm: "platform.exports.create", el: ExportsSection },
   { key: "sync-conflicts", label: "nav.sync_conflicts", perm: "sync.conflicts.view", el: SyncConflictsSection },
   { key: "audit-logs", label: "nav.audit", perm: "platform.audit_logs.view", el: AuditLogsSection },
   // Website PRD §16/§44: hanya admin_internal (menu disembunyikan; backend tetap menolak yang lain)
   { key: "app-downloads", label: "nav.app_downloads", perm: "platform.app_downloads.view", el: AppDownloadsSection, internalOnly: true },
   // Demo Seed Database §29: Admin Internal → Demo Data (seed/reset/verify tiga environment demo)
   { key: "demo-data", label: "nav.demo_data", perm: "platform.demo_data.view", el: DemoDataSection, internalOnly: true },
+  // PRD P0 v2 §6: registry organization — hanya Platform Admin
+  { key: "platform-organizations", label: "nav.platform_organizations", perm: "platform.org_registry.view", el: PlatformOrganizationsSection, platformAdmin: true },
 ];
 
 export default function SettingsPage() {
   const { section = "organization" } = useParams();
   const { t } = useTranslation();
   const { can, principal } = useAuth();
-  const visible = SECTIONS.filter((s) => can(s.perm) && (!s.internalOnly || principal?.is_internal_admin));
+  const visible = SECTIONS.filter((s) => (!s.perm || can(s.perm) || (s.platformAdmin && principal?.is_platform_admin)) && (!s.internalOnly || principal?.is_internal_admin) && (!s.platformAdmin || principal?.is_platform_admin));
+  const requested = SECTIONS.find((s) => s.key === section);
+  // PRD P0 §21/§23: seksi yang ada tapi tidak diizinkan → 403; seksi tak dikenal → 404 (bukan diam-diam pindah seksi).
+  if (section && !requested && section !== "organization") return <NotFoundPage />;
+  if (requested && !visible.includes(requested) && !(section === "organization" && visible.length > 0)) return <ForbiddenPage />;
   const current = visible.find((s) => s.key === section) ?? visible[0];
   const Section = current?.el;
   // Navigasi antar seksi sudah ada di submenu sidebar "Settings" (AppShell) — tidak diulang di halaman.

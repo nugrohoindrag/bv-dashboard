@@ -1,83 +1,121 @@
-// Tenant Relation › Announcements (PRD P1 v1.3 §3.5 Communication; Tenant App Home "Important Announcement").
-// Draft → Published (notifikasi ke seluruh tenant user property) → Archived.
+// Tenant Relation › Announcements (PRD P1 v1.3 §3.5 Communication; PRD P3 v2.1 §5.10 P3-ANN-01..06, §6.5 P3-BRC-01).
+// Kategori Pengumuman · News · Alert, sasaran building/tower/lantai/unit/tenant, jadwal publish & kedaluwarsa, gambar, pelacakan
+// baca & konfirmasi, dan Broadcast darurat (langsung terbit, in-app + push). Draft → Terjadwal → Terbit → Diarsipkan.
+// Detail = drawer di /tenant-relation/announcements/:id (deep link notifikasi).
 import { useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Icon } from "@buildingvision/ui";
+import { FilterChip } from "@buildingvision/ui/bv";
 import { PageHeader } from "@/components/shell/AppShell";
-import { Badge, Button, Checkbox, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect, Textarea } from "@/components/ui/primitives";
-import { DataGrid } from "@/components/bv/datagrid";
-import { RelativeTime, useToast } from "@/components/bv/common";
-import { useAction, useList, useUpdate } from "@/api/hooks";
+import { Badge, Button } from "@/components/ui/primitives";
+import { DataGrid, useUrlFilters } from "@/components/bv/datagrid";
+import { RelativeTime } from "@/components/bv/common";
+import { StatusBadge } from "@/components/bv/badges";
+import { CellText } from "@/components/bv/cells";
+import { useList } from "@/api/hooks";
 import { useAuth } from "@/lib/auth";
-
-interface Announcement { id: string; property_id: string | null; property_name: string | null; title: string; excerpt: string | null; body: string; audience: string; importance: string; status: string; published_at: string | null; expires_at: string | null; created_at: string; created_by_name: string | null; version: number; allowed_actions: string[] }
+import { statusOptions } from "@/lib/status";
+import { fmtDateTime, fmtNumber } from "@/lib/format";
+import { FilterRow, SelectFilter } from "@/features/security/shared";
+import type { Announcement } from "./types";
+import { ANNOUNCEMENT_AUDIENCES, ANNOUNCEMENT_CATEGORIES, ANNOUNCEMENT_CATEGORY_ICON, labelOf, optionsOf } from "./labels";
+import { AnnouncementActionDialog, AnnouncementDrawer, type AnnAction } from "./AnnouncementDrawer";
+import { AnnouncementFormDialog, BroadcastDialog } from "./AnnouncementForm";
+import { useNow } from "./hooks";
 
 export default function AnnouncementsPage() {
-  const { t } = useTranslation();
+  const { id } = useParams();
+  const nav = useNavigate();
+  const { search } = useLocation();
   const { propertyId, can } = useAuth();
-  const toast = useToast();
-  const [status, setStatus] = useState("");
-  const [edit, setEdit] = useState<Announcement | "new" | null>(null);
-  const list = useList<Announcement>("announcements", { property_id: propertyId ?? undefined, status: status || undefined });
+  const f = useUrlFilters();
+  const status = f.get("status");
+  const category = f.get("category");
+  const list = useList<Announcement>("announcements", { property_id: propertyId ?? undefined, status: status || undefined, category: category || undefined });
   const rows = list.data?.pages.flatMap((p) => p.data) ?? [];
-  const act = useAction<{ id: string; action: string }, Announcement>((i) => `announcements/${i.id}/${i.action}`, { body: () => ({}), invalidate: ["list", "one"] });
+  const [edit, setEdit] = useState<Announcement | "new" | null>(null);
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [pending, setPending] = useState<{ a: Announcement; action: AnnAction } | null>(null);
+  const now = useNow();
   const columns = useMemo<ColumnDef<Announcement, unknown>[]>(() => [
-    { id: "title", header: "Judul", cell: ({ row }) => <div><div className="font-medium">{row.original.importance === "important" && <Icon name="priority_high" size={14} className="mr-1 align-middle text-warning" />}{row.original.title}</div><div className="line-clamp-1 text-xs text-muted-foreground">{row.original.excerpt ?? row.original.body}</div></div> },
-    { id: "scope", header: "Lingkup", cell: ({ row }) => <span className="text-xs">{row.original.property_name ?? "Seluruh organisasi"} · {row.original.audience}</span>, size: 200 },
-    { id: "status", header: t("label.status"), cell: ({ row }) => <Badge tone={row.original.status === "published" ? "success" : row.original.status === "draft" ? "neutral" : "neutral"}>{row.original.status}</Badge>, size: 110 },
-    { id: "published_at", header: "Dipublikasikan", cell: ({ row }) => <span className="text-xs text-muted-foreground">{row.original.published_at ? <RelativeTime value={row.original.published_at} /> : "—"}</span>, size: 130 },
-    { id: "created_at", header: "Dibuat", cell: ({ row }) => <span className="text-xs text-muted-foreground"><RelativeTime value={row.original.created_at} /> · {row.original.created_by_name}</span>, size: 170 },
-  ], [t]);
+    // Tabel disederhanakan (29 Sep 2026, pola Tasks): judul satu baris (ikon kategori), sasaran satu baris, satu status (+ satu
+    // penanda kedaluwarsa), dibaca, terbit/jadwal. Ringkasan isi, badge kategori/penting/wajib konfirmasi, rincian target,
+    // konfirmasi baca & pembuat ada di drawer detail.
+    { id: "title", header: "Judul", meta: { mobile: "primary" }, cell: ({ row: { original: a } }) => (
+      <div className="flex min-w-0 items-center gap-1.5 font-medium text-on-surface">
+        <Icon name={ANNOUNCEMENT_CATEGORY_ICON[a.category] ?? "campaign"} size={16} className="shrink-0 text-on-surface-variant" aria-label={labelOf(ANNOUNCEMENT_CATEGORIES, a.category)} />
+        <span className="truncate" title={a.title}>{a.title}</span>
+      </div>
+    ) },
+    { id: "scope", header: "Sasaran", meta: { mobile: "secondary" }, cell: ({ row: { original: a } }) => {
+      const locs = a.targets.filter((t) => t.kind === "location").length;
+      const tens = a.targets.filter((t) => t.kind === "tenant").length;
+      const who = locs || tens ? [locs ? `${locs} lokasi` : "", tens ? `${tens} tenant` : ""].filter(Boolean).join(" · ") : "Semua tenant property";
+      const text = `${a.property_name ?? "Seluruh organisasi"} · ${labelOf(ANNOUNCEMENT_AUDIENCES, a.audience)}`;
+      return <CellText max={200} title={`${text} · ${who}`}>{text}</CellText>;
+    } },
+    { id: "status", header: "Status", meta: { mobile: "status" }, size: 150, cell: ({ row: { original: a } }) => (
+      <div className="flex flex-wrap items-center gap-1">
+        <StatusBadge objectType="announcement" status={a.status} />
+        {a.status === "published" && a.expires_at && new Date(a.expires_at).getTime() < now && <Badge tone="neutral">Kedaluwarsa</Badge>}
+      </div>
+    ) },
+    { id: "reads", header: "Dibaca", meta: { mobile: "secondary" }, size: 110, cell: ({ row: { original: a } }) => (a.status === "published" || a.status === "archived") && a.recipients_count != null ? (
+      <span className="tnum whitespace-nowrap text-sm" title={a.requires_ack ? `${fmtNumber(a.ack_count)} dikonfirmasi` : undefined}><span className="font-semibold text-on-surface">{fmtNumber(a.read_count)}</span><span className="text-on-surface-variant"> / {fmtNumber(a.recipients_count)}</span></span>
+    ) : <span className="text-sm text-on-surface-variant">—</span> },
+    { id: "published_at", header: "Terbit", meta: { mobile: "hidden" }, size: 140, cell: ({ row: { original: a } }) => (
+      <span className="whitespace-nowrap text-sm text-on-surface-variant">{a.published_at ? <RelativeTime value={a.published_at} /> : a.status === "scheduled" && a.publish_at ? fmtDateTime(a.publish_at) : "—"}</span>
+    ) },
+  ], [now]);
+  const close = () => nav(`/tenant-relation/announcements${search}`);
+  const rowActions = (a: Announcement) => [
+    ...(a.allowed_actions.includes("update") ? [{ label: "Edit", icon: "edit", onSelect: () => setEdit(a) }] : []),
+    ...(a.allowed_actions.includes("publish") ? [{ label: "Publikasikan sekarang", icon: "publish", onSelect: () => setPending({ a, action: "publish" }) }] : []),
+    ...(a.allowed_actions.includes("schedule") && a.publish_at && new Date(a.publish_at).getTime() > now ? [{ label: "Jadwalkan", icon: "schedule", onSelect: () => setPending({ a, action: "schedule" }) }] : []),
+    ...(a.allowed_actions.includes("unschedule") ? [{ label: "Batalkan jadwal", icon: "event_busy", onSelect: () => setPending({ a, action: "unschedule" }) }] : []),
+    ...(a.allowed_actions.includes("archive") ? [{ label: "Arsipkan", icon: "archive", destructive: true, onSelect: () => setPending({ a, action: "archive" }) }] : []),
+  ];
   return (
     <div>
-      <PageHeader title="Announcements" subtitle="Informasi dari building management ke tenant (tampil di Tenant App)." actions={can("tenant_relation.announcements.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Buat Announcement</Button>}>
-        <NativeSelect className="w-44" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option><option value="draft">Draft</option><option value="published">Published</option><option value="archived">Archived</option></NativeSelect>
-      </PageHeader>
-      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => { setEdit(r); }} loading={list.isLoading} isFiltered={!!status} empty={{ message: "Belum ada announcement." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage}
-        rowActions={(r) => [
-          ...(r.allowed_actions.includes("publish") ? [{ label: t("action.publish"), icon: "publish", onSelect: () => act.mutateAsync({ id: r.id, action: "publish" }).then(() => toast.success("Dipublikasikan ke tenant")).catch(toast.error) }] : []),
-          ...(r.allowed_actions.includes("archive") ? [{ label: t("action.archive"), icon: "archive", onSelect: () => act.mutateAsync({ id: r.id, action: "archive" }).then(() => toast.success("Diarsipkan")).catch(toast.error) }] : []),
-        ]} />
-      {edit && <AnnouncementDialog item={edit === "new" ? null : edit} propertyId={propertyId} onClose={() => setEdit(null)} />}
+      <PageHeader
+        title="Announcements"
+        subtitle="Pengumuman, News, dan Alert dari building management ke tenant (tampil di Tenant App) — bertarget, terjadwal, dan terlacak bacanya."
+        actions={
+          <>
+            {can("tenant_relation.announcements.broadcast") && <Button variant="secondary" icon="emergency_home" onClick={() => setBroadcastOpen(true)}>Broadcast darurat</Button>}
+            {can("tenant_relation.announcements.create") && <Button icon="add" onClick={() => setEdit("new")}>Buat Announcement</Button>}
+          </>
+        }
+      />
+      <div className="mb-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Kategori">
+        <FilterChip selected={!category} onClick={() => f.set({ category: null })}>Semua</FilterChip>
+        {optionsOf(ANNOUNCEMENT_CATEGORIES).map((c) => <FilterChip key={c.value} selected={category === c.value} onClick={() => f.set({ category: category === c.value ? null : c.value })}>{c.label}</FilterChip>)}
+      </div>
+      <FilterRow>
+        <SelectFilter label="Status" value={status} onChange={(v) => f.set({ status: v })} options={statusOptions("announcement")} />
+        {(status || category) && <Button variant="ghost" size="sm" icon="replay" onClick={() => f.set({ status: null, category: null })}>Reset filter</Button>}
+      </FilterRow>
+      <DataGrid
+        columns={columns}
+        rows={rows}
+        rowId={(r) => r.id}
+        onRowClick={(r) => `/tenant-relation/announcements/${r.id}${search}`}
+        loading={list.isLoading}
+        error={list.error}
+        onRetry={() => list.refetch()}
+        isFiltered={!!status || !!category}
+        empty={{ icon: "campaign", title: "Belum ada announcement.", description: "Buat pengumuman, News, atau Alert untuk tenant — dapat ditargetkan ke building, lantai, unit, atau tenant tertentu.", action: can("tenant_relation.announcements.create") ? <Button icon="add" onClick={() => setEdit("new")}>Buat Announcement</Button> : undefined }}
+        hasMore={list.hasNextPage}
+        onLoadMore={() => list.fetchNextPage()}
+        loadingMore={list.isFetchingNextPage}
+        rowActions={rowActions}
+        rowClassName={(r) => (r.id === id ? "bg-primary-soft" : r.category === "alert" && r.status === "published" ? "border-l-4 border-l-critical" : undefined)}
+      />
+      {id && <AnnouncementDrawer id={id} onClose={close} onEdit={(a) => setEdit(a)} />}
+      {edit && <AnnouncementFormDialog item={edit === "new" ? null : edit} propertyId={propertyId} onClose={() => setEdit(null)} onSaved={(a) => { if (edit === "new") nav(`/tenant-relation/announcements/${a.id}${search}`); }} />}
+      {broadcastOpen && <BroadcastDialog onClose={() => setBroadcastOpen(false)} onSent={(a) => nav(`/tenant-relation/announcements/${a.id}${search}`)} />}
+      {pending && <AnnouncementActionDialog a={pending.a} action={pending.action} onClose={() => setPending(null)} />}
     </div>
-  );
-}
-
-function AnnouncementDialog({ item, propertyId, onClose }: { item: Announcement | null; propertyId: string | null; onClose: () => void }) {
-  const { t } = useTranslation();
-  const toast = useToast();
-  const [form, setForm] = useState({ title: item?.title ?? "", excerpt: item?.excerpt ?? "", body: item?.body ?? "", audience: item?.audience ?? "tenant", importance: item?.importance ?? "normal", orgWide: item ? item.property_id === null : false });
-  const create = useAction<Record<string, unknown>, Announcement>(() => "announcements", { invalidate: ["list"] });
-  const update = useUpdate<{ id: string; version: number } & Record<string, unknown>>("announcements");
-  const readOnly = !!item && !item.allowed_actions.includes("update");
-  const submit = async () => {
-    try {
-      const body = { title: form.title.trim(), excerpt: form.excerpt.trim() || null, body: form.body.trim(), audience: form.audience, importance: form.importance };
-      if (item) await update.mutateAsync({ id: item.id, version: item.version, ...body });
-      else await create.mutateAsync({ ...body, property_id: form.orgWide ? null : propertyId });
-      toast.success("Announcement disimpan");
-      onClose();
-    } catch (e) {
-      toast.error(e);
-    }
-  };
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent side="right" title={item ? `Announcement · ${item.status}` : "Buat Announcement"} description="Disimpan sebagai draft; publikasikan dari daftar untuk mengirim notifikasi ke tenant.">
-        <div className="space-y-4">
-          <Field label="Judul" required><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} disabled={readOnly} /></Field>
-          <Field label="Ringkasan (tampil di kartu Home)"><Input value={form.excerpt} onChange={(e) => setForm({ ...form, excerpt: e.target.value })} disabled={readOnly} /></Field>
-          <Field label="Isi" required><Textarea rows={8} value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} disabled={readOnly} /></Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Audiens"><NativeSelect value={form.audience} onChange={(e) => setForm({ ...form, audience: e.target.value })} disabled={readOnly}><option value="tenant">Tenant</option><option value="staff">Staf</option><option value="all">Semua</option></NativeSelect></Field>
-            <Field label="Prioritas"><NativeSelect value={form.importance} onChange={(e) => setForm({ ...form, importance: e.target.value })} disabled={readOnly}><option value="normal">Normal</option><option value="important">Penting (Important Announcement)</option></NativeSelect></Field>
-          </div>
-          {!item && <Checkbox label="Berlaku untuk seluruh property organisasi" checked={form.orgWide} onCheckedChange={(v) => setForm({ ...form, orgWide: v })} disabled={!propertyId ? true : false} />}
-          {!propertyId && !item && <p className="text-xs text-muted-foreground">Tidak ada property terpilih — announcement dibuat untuk seluruh organisasi.</p>}
-        </div>
-        <DialogFooter><Button variant="secondary" onClick={onClose}>{t("action.discard")}</Button>{!readOnly && <Button loading={create.isPending || update.isPending} disabled={!form.title.trim() || !form.body.trim()} onClick={submit}>{t("action.save")}</Button>}</DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }

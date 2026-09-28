@@ -8,12 +8,14 @@ import { PageHeader } from "@/components/shell/AppShell";
 import { Button, Checkbox, Dialog, DialogContent, DialogFooter, Field, Input, NativeSelect, Textarea } from "@/components/ui/primitives";
 import { DataGrid } from "@/components/bv/datagrid";
 import { StatusBadge } from "@/components/bv/badges";
+import { CellText, CellTitle } from "@/components/bv/cells";
 import { AsyncState, KeyValue, useToast } from "@/components/bv/common";
 import { useAll, useCreate, useList, useOne, useUpdate } from "@/api/hooks";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import type { Location, ServiceRequest, Tenant } from "@/api/types";
 import { CreateServiceRequestDialog } from "@/features/operations/FindingDialogs";
+import { ExportButton } from "@/components/bv/export";
 
 interface Occupant { id: string; tenant_id: string | null; full_name: string; phone: string | null; email: string | null; is_primary_contact: boolean; status: string; unit_ids: string[]; version: number }
 
@@ -29,23 +31,25 @@ export default function TenantListPage() {
   const [edit, setEdit] = useState<Tenant | null | "new">(null);
   const columns = useMemo<ColumnDef<Tenant, unknown>[]>(
     () => [
-      { id: "code", header: "Kode", cell: ({ row }) => <span className="font-mono text-[13px] font-semibold">{row.original.tenant_code}</span>, size: 130 },
-      { id: "name", header: "Tenant", cell: ({ row }) => <div><div className="font-medium">{row.original.name}</div><div className="text-xs text-muted-foreground">{row.original.tenant_type} · {row.original.contact_name ?? "—"} {row.original.contact_phone ?? ""}</div></div> },
-      { id: "units", header: "Unit", cell: ({ row }) => <span className="text-sm">{row.original.units.map((u) => u.unit_number).join(", ") || <span className="text-muted-foreground">—</span>}</span> },
-      { id: "sr", header: "SR open", cell: ({ row }) => <span className={cn("tnum", row.original.open_requests > 0 && "font-semibold")}>{row.original.open_requests}</span>, size: 80 },
-      { id: "status", header: t("label.status"), cell: ({ row }) => <span className={cn("text-xs", row.original.status === "active" ? "text-success-text" : "text-muted-foreground")}>{row.original.status}</span>, size: 90 },
+      // Tabel disederhanakan (29 Sep 2026, pola Tasks): kode + nama tenant dalam satu kolom, unit & kontak satu baris (telepon di
+      // tooltip), SR open, status. Tipe tenant, email & path unit ada di drawer detail.
+      { id: "name", header: "Tenant", meta: { mobile: "primary" }, cell: ({ row }) => <CellTitle code={row.original.tenant_code} title={row.original.name} /> },
+      { id: "units", header: "Unit", meta: { mobile: "secondary" }, cell: ({ row }) => { const units = row.original.units.map((u) => u.unit_number).join(", "); return <CellText max={160} muted={!units}>{units || "—"}</CellText>; } },
+      { id: "contact", header: "Kontak", meta: { mobile: "secondary" }, cell: ({ row }) => <CellText max={170} muted={!row.original.contact_name} title={[row.original.contact_name, row.original.contact_phone].filter(Boolean).join(" · ") || undefined}>{row.original.contact_name ?? "—"}</CellText> },
+      { id: "sr", header: "SR open", meta: { mobile: "hidden" }, cell: ({ row }) => <span className={cn("tnum whitespace-nowrap", row.original.open_requests > 0 && "font-semibold")}>{row.original.open_requests}</span>, size: 80 },
+      { id: "status", header: t("label.status"), meta: { mobile: "status" }, cell: ({ row }) => <span className={cn("whitespace-nowrap text-xs", row.original.status === "active" ? "text-success-text" : "text-muted-foreground")}>{row.original.status}</span>, size: 90 },
     ],
     [t],
   );
   return (
     <div>
-      <PageHeader title={t("nav.tenants")} actions={can("property.tenants.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Tambah Tenant</Button>}>
+      <PageHeader title={t("nav.tenants")} actions={<><ExportButton resource="tenants" filters={{ property_id: propertyId, q, status }} />{can("property.tenants.create") && <Button onClick={() => setEdit("new")}><Icon name="add" size={16} /> Tambah Tenant</Button>}</>}>
         <div className="flex items-center gap-2">
           <Input className="w-72" placeholder="Cari tenant / unit…" value={q} onChange={(e) => setQ(e.target.value)} />
           <NativeSelect className="w-40" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Status: {t("label.all")}</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="moved_out">Moved out</option></NativeSelect>
         </div>
       </PageHeader>
-      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/tenant/tenants/${r.id}`} loading={list.isLoading} isFiltered={!!q || !!status} empty={{ message: "Belum ada tenant." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} rowActions={(r) => (can("property.tenants.update") ? [{ label: "Edit", onSelect: () => setEdit(r) }] : [])} />
+      <DataGrid columns={columns} rows={rows} rowId={(r) => r.id} onRowClick={(r) => `/tenant/tenants/${r.id}`} loading={list.isLoading} error={list.error} onRetry={() => list.refetch()} isFiltered={!!q || !!status} empty={{ message: "Belum ada tenant." }} hasMore={list.hasNextPage} onLoadMore={() => list.fetchNextPage()} loadingMore={list.isFetchingNextPage} rowActions={(r) => (can("property.tenants.update") ? [{ label: "Edit", onSelect: () => setEdit(r) }] : [])} />
       {edit && <TenantDialog item={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
       {id && <TenantDrawer id={id} onClose={() => nav("/tenant/tenants")} onEdit={(tn) => setEdit(tn)} />}
     </div>
@@ -111,7 +115,7 @@ function TenantDialog({ item, onClose }: { item: Tenant | null; onClose: () => v
     try {
       if (item) await update.mutateAsync({ id: item.id, version: item.version, ...body });
       else await create.mutateAsync(body);
-      toast.success("Tenant disimpan");
+      toast.action("saved", "Tenant");
       onClose();
     } catch (e) {
       toast.error(e);
@@ -160,7 +164,7 @@ function OccupantDialog({ tenant, item, onClose }: { tenant: Tenant; item: Occup
     try {
       if (item) await update.mutateAsync({ id: item.id, version: item.version, ...body });
       else await create.mutateAsync(body);
-      toast.success("Occupant disimpan");
+      toast.action("saved", "Occupant");
       onClose();
     } catch (e) {
       toast.error(e);

@@ -64,7 +64,7 @@ function RoleEditor({ role, perms, onClose }: { role: Role | null; perms: Perm[]
       if (role) await api(`roles/${role.id}`, { method: "PATCH", body });
       else await create.mutateAsync(body);
       invalidate("roles");
-      toast.success("Role disimpan");
+      toast.action("saved", "Role");
       if (!role) onClose();
     } catch (e) {
       toast.error(e);
@@ -94,7 +94,7 @@ function RoleEditor({ role, perms, onClose }: { role: Role | null; perms: Perm[]
         ))}
       </div>
       <div className="flex justify-end gap-2">
-        {role && !role.is_system && can("iam.roles.delete") && (del ? <><span className="text-sm text-muted-foreground">Hapus role ini?</span><Button variant="destructive" onClick={() => api(`roles/${role.id}`, { method: "DELETE" }).then(() => { invalidate("roles"); toast.success("Role dihapus"); onClose(); }).catch(toast.error)}>Ya, hapus</Button></> : <Button variant="ghost" className="mr-auto" onClick={() => setDel(true)}>Hapus</Button>)}
+        {role && !role.is_system && can("iam.roles.delete") && (del ? <><span className="text-sm text-muted-foreground">Hapus role ini?</span><Button variant="destructive" onClick={() => api(`roles/${role.id}`, { method: "DELETE" }).then(() => { invalidate("roles"); toast.action("deleted", "Role"); onClose(); }).catch(toast.error)}>Ya, hapus</Button></> : <Button variant="ghost" className="mr-auto" onClick={() => setDel(true)}>Hapus</Button>)}
         <Button variant="secondary" onClick={onClose}>Tutup</Button>
         {!readOnly && <Button loading={saving} onClick={save}>{t("action.save")}</Button>}
       </div>
