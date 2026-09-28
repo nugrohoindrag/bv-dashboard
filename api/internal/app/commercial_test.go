@@ -237,6 +237,7 @@ func TestApartmentSalesAndRental(t *testing.T) {
 		t.Fatalf("login pemilik: %d %v", st, resp)
 	}
 	ownerTok, _ := resp["access_token"].(string)
+	e.changeTempPassword(t, ownerTok, sact.Onboarding.TemporaryPassword)
 	var me struct {
 		Property struct {
 			Profile     string `json:"profile"`
@@ -357,6 +358,7 @@ func TestApartmentSalesAndRental(t *testing.T) {
 		t.Fatalf("login penyewa: %d %v", st, resp)
 	}
 	renterTok, _ := resp["access_token"].(string)
+	e.changeTempPassword(t, renterTok, ract.Onboarding.TemporaryPassword)
 	st, body = e.do(renterTok, http.MethodGet, "/api/v1/tenant/me", nil)
 	e.mustJSON(st, body, 200, &me)
 	if me.Property.Profile != "apartment" || me.PrimaryUnit == nil || me.PrimaryUnit.ID != u2.ID {

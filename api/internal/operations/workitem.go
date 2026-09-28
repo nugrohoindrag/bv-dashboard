@@ -57,11 +57,15 @@ func (s *Service) CreateTaskTx(ctx context.Context, tx pgx.Tx, in CreateTaskInpu
 	if !Priorities[in.Priority] {
 		return uuid.Nil, apperr.Validation("priority harus low|medium|high|critical")
 	}
+	category, err := normalizeCategory(in.Category)
+	if err != nil {
+		return uuid.Nil, err
+	}
 	propertyID, err := s.resolveProperty(ctx, tx, in.PropertyID, in.LocationID, in.AssetID)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if !p.HasOnProperty("operations.tasks.create", propertyID) {
+	if !canAt(ctx, tx, "operations.tasks.create", propertyID, in.LocationID) || (p.VendorID != nil && !p.IsSystem) {
 		return uuid.Nil, apperr.Forbidden("Tidak memiliki operations.tasks.create pada property ini")
 	}
 	if err := s.validateRefs(ctx, tx, propertyID, in.LocationID, in.AssetID, in.AssigneeUserID, in.AssigneeTeamID, in.ChecklistTemplateID); err != nil {
@@ -82,14 +86,14 @@ func (s *Service) CreateTaskTx(ctx context.Context, tx pgx.Tx, in CreateTaskInpu
 	var id uuid.UUID
 	err = tx.QueryRow(ctx, `
 		INSERT INTO tasks (organization_id, property_id, task_number, task_type, title, description, location_id, asset_id, priority, status,
-		  scheduled_start_at, due_at, checklist_template_id, requires_photo, assignee_user_id, assignee_team_id, source_type, source_id, created_by, updated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$19) RETURNING id`,
+		  scheduled_start_at, due_at, checklist_template_id, requires_photo, assignee_user_id, assignee_team_id, source_type, source_id, created_by, updated_by, category)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$19,$20) RETURNING id`,
 		p.OrganizationID, propertyID, number, in.TaskType, in.Title, in.Description, in.LocationID, in.AssetID, in.Priority, status,
-		in.ScheduledStartAt, in.DueAt, in.ChecklistTemplateID, in.RequiresPhoto, in.AssigneeUserID, in.AssigneeTeamID, in.SourceType, in.SourceID, actorOrNil(p)).Scan(&id)
+		in.ScheduledStartAt, in.DueAt, in.ChecklistTemplateID, in.RequiresPhoto, in.AssigneeUserID, in.AssigneeTeamID, in.SourceType, in.SourceID, actorOrNil(p), category).Scan(&id)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if err := s.afterCreate(ctx, tx, ObjTask, id, number, propertyID, in.Priority, in.DueAt, in.ChecklistTemplateID, in.AssigneeUserID, in.AssigneeTeamID, in.LinkTo, in.SourceType, in.SourceID); err != nil {
+	if err := s.afterCreate(ctx, tx, ObjTask, id, number, propertyID, in.Priority, in.DueAt, in.ChecklistTemplateID, in.AssigneeUserID, in.AssigneeTeamID, in.LinkTo, in.SourceType, in.SourceID, false); err != nil {
 		return uuid.Nil, err
 	}
 	return id, nil
@@ -120,7 +124,15 @@ func (s *Service) CreateWorkOrderTx(ctx context.Context, tx pgx.Tx, in CreateWor
 		return uuid.Nil, apperr.Validation("title wajib").WithField("title", "wajib")
 	}
 	if !WorkOrderTypes[in.WorkOrderType] {
-		return uuid.Nil, apperr.Validation("work_order_type harus maintenance|corrective|repair|service").WithField("work_order_type", "tidak valid")
+		return uuid.Nil, apperr.Validation("work_order_type harus corrective|preventive|inspection|repair|service|other|maintenance").WithField("work_order_type", "tidak valid")
+	}
+	if in.Draft && (in.AssigneeUserID != nil || in.AssigneeTeamID != nil) {
+		return uuid.Nil, apperr.Validation("Draft Work Order belum dapat di-assign; submit terlebih dahulu").WithField("assignee_user_id", "tidak diizinkan untuk draft")
+	}
+	for f, m := range map[string]*Money{"estimated_cost": in.EstimatedCost, "service_cost": in.ServiceCost, "other_cost": in.OtherCost} {
+		if m != nil && m.Amount < 0 {
+			return uuid.Nil, apperr.Validation(f+" tidak boleh negatif").WithField(f, "harus ≥ 0")
+		}
 	}
 	if in.Priority == "" {
 		in.Priority = "medium"
@@ -148,7 +160,7 @@ func (s *Service) CreateWorkOrderTx(ctx context.Context, tx pgx.Tx, in CreateWor
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if !p.HasOnProperty("operations.work_orders.create", propertyID) {
+	if !canAt(ctx, tx, "operations.work_orders.create", propertyID, in.LocationID) || (p.VendorID != nil && !p.IsSystem) {
 		return uuid.Nil, apperr.Forbidden("Tidak memiliki operations.work_orders.create pada property ini")
 	}
 	if err := s.validateRefs(ctx, tx, propertyID, in.LocationID, in.AssetID, in.AssigneeUserID, in.AssigneeTeamID, in.ChecklistTemplateID); err != nil {
@@ -170,6 +182,13 @@ func (s *Service) CreateWorkOrderTx(ctx context.Context, tx pgx.Tx, in CreateWor
 	if in.AssigneeUserID != nil || in.AssigneeTeamID != nil {
 		status = workflow.Assigned
 	}
+	var submittedAt *time.Time
+	if in.Draft {
+		status = workflow.Draft
+	} else {
+		now := time.Now().UTC()
+		submittedAt = &now
+	}
 	var estAmt *int64
 	if in.EstimatedCost != nil {
 		estAmt = &in.EstimatedCost.Amount
@@ -182,15 +201,15 @@ func (s *Service) CreateWorkOrderTx(ctx context.Context, tx pgx.Tx, in CreateWor
 	err = tx.QueryRow(ctx, `
 		INSERT INTO work_orders (organization_id, property_id, work_order_number, work_order_type, title, description, location_id, asset_id, priority, status,
 		  scheduled_start_at, due_at, checklist_template_id, requires_evidence, assignee_user_id, assignee_team_id, estimated_cost_amount, vendor_reference,
-		  requester_user_id, source_type, source_id, maintenance_schedule_id, created_by, updated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$23) RETURNING id`,
+		  requester_user_id, source_type, source_id, maintenance_schedule_id, notes, created_by, updated_by, service_cost_amount, other_cost_amount, submitted_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$24,$23,$23,$25,$26,$27) RETURNING id`,
 		p.OrganizationID, propertyID, number, in.WorkOrderType, in.Title, in.Description, in.LocationID, in.AssetID, in.Priority, status,
 		in.ScheduledStartAt, in.DueAt, in.ChecklistTemplateID, requiresEvidence, in.AssigneeUserID, in.AssigneeTeamID, estAmt, in.VendorReference,
-		requester, in.SourceType, in.SourceID, in.MaintenanceScheduleID, actorOrNil(p)).Scan(&id)
+		requester, in.SourceType, in.SourceID, in.MaintenanceScheduleID, actorOrNil(p), in.Notes, moneyAmt(in.ServiceCost), moneyAmt(in.OtherCost), submittedAt).Scan(&id)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if err := s.afterCreate(ctx, tx, ObjWorkOrder, id, number, propertyID, in.Priority, in.DueAt, in.ChecklistTemplateID, in.AssigneeUserID, in.AssigneeTeamID, in.LinkTo, in.SourceType, in.SourceID); err != nil {
+	if err := s.afterCreate(ctx, tx, ObjWorkOrder, id, number, propertyID, in.Priority, in.DueAt, in.ChecklistTemplateID, in.AssigneeUserID, in.AssigneeTeamID, in.LinkTo, in.SourceType, in.SourceID, in.Draft); err != nil {
 		return uuid.Nil, err
 	}
 	return id, nil
@@ -203,10 +222,89 @@ func actorOrNil(p *authctx.Principal) *uuid.UUID {
 	return &p.UserID
 }
 
+func moneyAmt(m *Money) *int64 {
+	if m == nil {
+		return nil
+	}
+	return &m.Amount
+}
+
+// normalizeCategory: kategori operasional Task (PRD P1 v2 §13.3) — teks bebas pendek, snake/kode dari master data.
+func normalizeCategory(c *string) (*string, error) {
+	if c == nil {
+		return nil, nil
+	}
+	v := strings.TrimSpace(*c)
+	if v == "" {
+		return nil, nil
+	}
+	if len(v) > 60 {
+		return nil, apperr.Validation("category maksimal 60 karakter").WithField("category", "terlalu panjang")
+	}
+	return &v, nil
+}
+
+// DefaultTaskCategories: kategori operasional bawaan (PRD P1 v2 §13.3); kategori lain yang sudah dipakai organisasi ikut ditampilkan.
+var DefaultTaskCategories = []string{"general", "engineering", "electrical", "plumbing", "hvac", "cleaning", "security", "safety", "landscaping", "inspection", "tenant_service"}
+
+type TaskCategory struct {
+	Code  string `json:"code"`
+	Count int    `json:"count"` // jumlah task (org) dengan kategori ini
+}
+
+func (s *Service) TaskCategories(ctx context.Context) ([]TaskCategory, error) {
+	counts := map[string]int{}
+	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT category, count(*) FROM tasks WHERE category IS NOT NULL GROUP BY category`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var c string
+			var n int
+			if err := rows.Scan(&c, &n); err != nil {
+				return err
+			}
+			counts[c] = n
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := []TaskCategory{}
+	seen := map[string]bool{}
+	for _, c := range DefaultTaskCategories {
+		out = append(out, TaskCategory{Code: c, Count: counts[c]})
+		seen[c] = true
+	}
+	for c, n := range counts {
+		if !seen[c] {
+			out = append(out, TaskCategory{Code: c, Count: n})
+		}
+	}
+	return out, nil
+}
+
+// escalatable: eskalasi hanya untuk pekerjaan yang masih berjalan (bukan draft/selesai/batal).
+func escalatable(st workflow.Status) bool {
+	switch st {
+	case workflow.New, workflow.Scheduled, workflow.Assigned, workflow.InProgress, workflow.OnHold:
+		return true
+	}
+	return false
+}
+
 // afterCreate: assignment row, checklist run, SLA tracking, link, activity, audit, event.
+// draft=true (WO Draft, PRD P1 v2 §23): SLA belum berjalan — diterapkan saat submit.
 func (s *Service) afterCreate(ctx context.Context, tx pgx.Tx, objectType string, id uuid.UUID, number string, propertyID uuid.UUID, priority string, dueAt *time.Time,
-	templateID, assigneeUser, assigneeTeam *uuid.UUID, link *LinkRef, sourceType *string, sourceID *uuid.UUID) error {
+	templateID, assigneeUser, assigneeTeam *uuid.UUID, link *LinkRef, sourceType *string, sourceID *uuid.UUID, draft bool) error {
 	p := authctx.Must(ctx)
+	// PRD P1 v2.1 P1-XMW-01: SR asal rantai ikut diturunkan dari object sumber
+	if err := setOriginTx(ctx, tx, objectType, id, sourceType, sourceID); err != nil {
+		return err
+	}
 	if assigneeUser != nil || assigneeTeam != nil {
 		if _, err := tx.Exec(ctx, `INSERT INTO assignments (organization_id, object_type, object_id, assignee_user_id, assignee_team_id, assigned_by) VALUES ($1,$2,$3,$4,$5,$6)`,
 			p.OrganizationID, objectType, id, assigneeUser, assigneeTeam, actorOrNil(p)); err != nil {
@@ -218,13 +316,10 @@ func (s *Service) afterCreate(ctx context.Context, tx pgx.Tx, objectType string,
 			return err
 		}
 	}
-	if err := s.applySLATx(ctx, tx, objectType, id, propertyID, priority, time.Now().UTC()); err != nil {
-		return err
-	}
-	// due_at default = SLA resolution due bila tidak diisi
-	if dueAt == nil {
-		t, _ := tableFor(objectType)
-		_, _ = tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET due_at = (SELECT resolution_due_at FROM sla_tracking WHERE object_type = $2 AND object_id = $1) WHERE id = $1 AND due_at IS NULL`, t.table), id, objectType)
+	if !draft {
+		if err := s.startSLATx(ctx, tx, objectType, id, propertyID, priority, dueAt == nil); err != nil {
+			return err
+		}
 	}
 	if link != nil {
 		if _, err := s.linkTx(ctx, tx, objectType, id, link.ObjectType, link.ObjectID, link.LinkType); err != nil {
@@ -257,6 +352,18 @@ func (s *Service) afterCreate(ctx context.Context, tx pgx.Tx, objectType string,
 				Payload: map[string]any{"assignee_user_id": assigneeUser, "assignee_team_id": assigneeTeam}})
 		}
 		_ = s.Jobs.EnqueueTx(ctx, tx, searchIndexArgs(p.OrganizationID, objectType, id))
+	}
+	return nil
+}
+
+// startSLATx: SLA tracking mulai sekarang; due_at default = SLA resolution due bila belum diisi.
+func (s *Service) startSLATx(ctx context.Context, tx pgx.Tx, objectType string, id, propertyID uuid.UUID, priority string, setDue bool) error {
+	if err := s.applySLATx(ctx, tx, objectType, id, propertyID, priority, time.Now().UTC()); err != nil {
+		return err
+	}
+	if setDue {
+		t, _ := tableFor(objectType)
+		_, _ = tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET due_at = (SELECT resolution_due_at FROM sla_tracking WHERE object_type = $2 AND object_id = $1) WHERE id = $1 AND due_at IS NULL`, t.table), id, objectType)
 	}
 	return nil
 }
@@ -351,17 +458,26 @@ func (s *Service) Update(ctx context.Context, objectType string, id uuid.UUID, i
 		if err != nil {
 			return err
 		}
-		if !p.HasOnProperty(t.perm("update"), w.PropertyID) {
+		if !canWI(ctx, tx, t.perm("update"), w) {
 			return apperr.Forbidden("")
 		}
 		if ifVersion != nil && *ifVersion != w.Version {
 			return apperr.StaleVersion()
 		}
-		if t.wf.IsTerminal(w.Status) && !p.HasOnProperty(t.perm("manage"), w.PropertyID) {
+		if t.wf.IsTerminal(w.Status) && !canWI(ctx, tx, t.perm("manage"), w) {
 			return apperr.Conflict("OBJECT_TERMINAL", objectLabel(objectType)+" sudah "+workflow.Label(w.Status))
 		}
 		if in.Priority != nil && !Priorities[*in.Priority] {
 			return apperr.Validation("priority tidak valid")
+		}
+		for f, m := range map[string]*Money{"estimated_cost": in.EstimatedCost, "actual_cost": in.ActualCost, "parts_cost": in.PartsCost, "service_cost": in.ServiceCost, "other_cost": in.OtherCost} {
+			if m != nil && m.Amount < 0 {
+				return apperr.Validation(f+" tidak boleh negatif").WithField(f, "harus ≥ 0")
+			}
+		}
+		category, err := normalizeCategory(in.Category)
+		if err != nil {
+			return err
 		}
 		if err := s.validateRefs(ctx, tx, w.PropertyID, in.LocationID, in.AssetID, nil, nil, in.ChecklistTemplateID); err != nil {
 			return err
@@ -399,6 +515,9 @@ func (s *Service) Update(ctx context.Context, objectType string, id uuid.UUID, i
 		if in.ChecklistTemplateID != nil {
 			add("checklist_template_id", *in.ChecklistTemplateID)
 		}
+		if objectType == ObjTask && in.Category != nil {
+			add("category", category)
+		}
 		if objectType == ObjWorkOrder {
 			if in.RequiresEvidence != nil {
 				add("requires_evidence", *in.RequiresEvidence)
@@ -409,6 +528,16 @@ func (s *Service) Update(ctx context.Context, objectType string, id uuid.UUID, i
 			if in.ActualCost != nil {
 				add("actual_cost_amount", in.ActualCost.Amount)
 			}
+			// PRD P1 v2 §26: rincian biaya parts / jasa / lain-lain
+			if in.PartsCost != nil {
+				add("parts_cost_amount", in.PartsCost.Amount)
+			}
+			if in.ServiceCost != nil {
+				add("service_cost_amount", in.ServiceCost.Amount)
+			}
+			if in.OtherCost != nil {
+				add("other_cost_amount", in.OtherCost.Amount)
+			}
 			if in.PartsUsage != nil {
 				add("parts_usage", *in.PartsUsage)
 			}
@@ -418,11 +547,19 @@ func (s *Service) Update(ctx context.Context, objectType string, id uuid.UUID, i
 			if in.Resolution != nil {
 				add("resolution", *in.Resolution)
 			}
+			if in.Notes != nil {
+				add("notes", *in.Notes)
+			}
 		} else if in.RequiresEvidence != nil {
 			add("requires_photo", *in.RequiresEvidence)
 		}
 		if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET %s WHERE id = $1`, t.table, strings.Join(sets, ", ")), args...); err != nil {
 			return err
+		}
+		if objectType == ObjWorkOrder && in.ActualCost == nil && (in.PartsCost != nil || in.ServiceCost != nil || in.OtherCost != nil) {
+			if err := syncActualCost(ctx, tx, id); err != nil {
+				return err
+			}
 		}
 		if in.ChecklistTemplateID != nil && (w.ChecklistTemplateID == nil || *w.ChecklistTemplateID != *in.ChecklistTemplateID) {
 			if _, err := s.startChecklistRunTx(ctx, tx, objectType, id, *in.ChecklistTemplateID); err != nil {
@@ -445,7 +582,6 @@ func (s *Service) Update(ctx context.Context, objectType string, id uuid.UUID, i
 			_, _ = tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET is_overdue = false WHERE id = $1 AND due_at > now()`, t.table), id)
 		}
 		_ = audit.Record(ctx, tx, audit.Entry{ObjectType: objectType, ObjectID: id, Action: audit.ActUpdated})
-		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditUpdate, EntityType: objectType, EntityID: &id, EntityLabel: w.Number, Before: w, After: in})
 		if s.Jobs != nil {
 			_ = s.Jobs.EnqueueTx(ctx, tx, searchIndexArgs(p.OrganizationID, objectType, id))
 		}
@@ -453,6 +589,8 @@ func (s *Service) Update(ctx context.Context, objectType string, id uuid.UUID, i
 		if err != nil {
 			return err
 		}
+		// audit menyimpan kondisi sebelum & sesudah (bukan hanya patch input) — PRD P0 v2 §16
+		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditUpdate, EntityType: objectType, EntityID: &id, EntityLabel: w.Number, Before: w, After: nw})
 		out = nw
 		return s.enrich(ctx, tx, nw, t, true)
 	})
@@ -480,10 +618,11 @@ func (s *Service) AssignTx(ctx context.Context, tx pgx.Tx, objectType string, id
 	if err != nil {
 		return nil, err
 	}
-	if !p.HasOnProperty(t.perm("assign"), w.PropertyID) {
+	if !canWI(ctx, tx, t.perm("assign"), w) {
 		return nil, apperr.Forbidden("Memerlukan " + t.perm("assign"))
 	}
-	if t.wf.IsTerminal(w.Status) || w.Status == workflow.Completed {
+	if t.wf.IsTerminal(w.Status) || w.Status == workflow.Completed || w.Status == workflow.Draft {
+		// Draft WO harus di-submit (Open) sebelum di-assign (PRD P1 v2 §23)
 		return nil, apperr.InvalidTransition(fmt.Sprintf("%s %s tidak dapat di-assign dari status %s", objectLabel(objectType), w.Number, workflow.Label(w.Status)))
 	}
 	if in.AssigneeUserID == nil && in.AssigneeTeamID == nil {
@@ -602,7 +741,7 @@ func (s *Service) TransitionTx(ctx context.Context, tx pgx.Tx, objectType string
 	if !ok {
 		return nil, apperr.InvalidTransition(fmt.Sprintf("%s %s cannot be %s from status %s", objectLabel(objectType), w.Number, action, w.Status))
 	}
-	if tr.Perm != "" && !p.HasOnProperty(tr.Perm, w.PropertyID) {
+	if tr.Perm != "" && !canWI(ctx, tx, tr.Perm, w) {
 		return nil, apperr.Forbidden("Memerlukan permission " + tr.Perm)
 	}
 	if tr.RequireReason && strings.TrimSpace(in.Reason) == "" {
@@ -649,6 +788,12 @@ func (s *Service) TransitionTx(ctx context.Context, tx pgx.Tx, objectType string
 			if in.ActualCost != nil {
 				add("actual_cost_amount", in.ActualCost.Amount)
 			}
+			if in.ServiceCost != nil {
+				add("service_cost_amount", in.ServiceCost.Amount)
+			}
+			if in.OtherCost != nil {
+				add("other_cost_amount", in.OtherCost.Amount)
+			}
 			if in.PartsUsage != nil {
 				add("parts_usage", *in.PartsUsage)
 			}
@@ -660,9 +805,8 @@ func (s *Service) TransitionTx(ctx context.Context, tx pgx.Tx, objectType string
 	case workflow.ActReopen:
 		add("completed_at", nil)
 		add("closed_at", nil)
-		if objectType == ObjWorkOrder {
-			add("reopen_count", ptrInt(w.ReopenCount)+1)
-		}
+		add("reopen_count", ptrInt(w.ReopenCount)+1)
+		add("last_reopened_at", now)
 	case workflow.ActCancel:
 		add("cancelled_at", now)
 		add("is_overdue", false)
@@ -679,9 +823,24 @@ func (s *Service) TransitionTx(ctx context.Context, tx pgx.Tx, objectType string
 		if _, err := tx.Exec(ctx, `UPDATE assignments SET is_current = false, unassigned_at = now() WHERE object_type = $1 AND object_id = $2 AND is_current`, objectType, id); err != nil {
 			return nil, err
 		}
+	case workflow.ActSubmit:
+		add("submitted_at", now)
 	}
 	if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET %s WHERE id = $1`, t.table, strings.Join(sets, ", ")), args...); err != nil {
 		return nil, err
+	}
+	if action == workflow.ActComplete && objectType == ObjWorkOrder && in.ActualCost == nil {
+		// actual cost = parts + jasa + lain-lain bila belum diisi eksplisit (PRD P1 v2 §26)
+		if _, err := tx.Exec(ctx, `UPDATE work_orders SET actual_cost_amount = COALESCE(parts_cost_amount,0) + COALESCE(service_cost_amount,0) + COALESCE(other_cost_amount,0)
+			WHERE id = $1 AND actual_cost_amount IS NULL AND (parts_cost_amount IS NOT NULL OR service_cost_amount IS NOT NULL OR other_cost_amount IS NOT NULL)`, id); err != nil {
+			return nil, err
+		}
+	}
+	if action == workflow.ActSubmit {
+		// Draft → Open: SLA mulai berjalan sejak submit (PRD P1 v2 §23)
+		if err := s.startSLATx(ctx, tx, objectType, id, w.PropertyID, w.Priority, w.DueAt == nil); err != nil {
+			return nil, err
+		}
 	}
 	// SLA tracking
 	switch action {
@@ -717,6 +876,10 @@ func (s *Service) TransitionTx(ctx context.Context, tx pgx.Tx, objectType string
 	}
 	ctxAct := authctx.With(ctx, withSource(p, src))
 	_ = audit.Record(ctxAct, tx, audit.Entry{ObjectType: objectType, ObjectID: id, Action: audit.ActStatusChanged, From: string(w.Status), To: string(tr.To), Payload: payload, ClientRecordedAt: in.ClientRecordedAt})
+	if action == workflow.ActReopen {
+		// PRD P0 v2 §10.4: Reopened tercatat eksplisit di activity history
+		_ = audit.Record(ctxAct, tx, audit.Entry{ObjectType: objectType, ObjectID: id, Action: audit.ActReopened, From: string(w.Status), To: string(tr.To), Payload: map[string]any{"reason": in.Reason, "reopen_count": ptrInt(w.ReopenCount) + 1}})
+	}
 	_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditStatusChange, EntityType: objectType, EntityID: &id, EntityLabel: w.Number, Before: map[string]any{"status": w.Status}, After: map[string]any{"status": tr.To, "action": action, "reason": in.Reason}})
 	if s.Jobs != nil {
 		evType := objectType + "." + eventVerb(action)
@@ -732,6 +895,17 @@ func (s *Service) TransitionTx(ctx context.Context, tx pgx.Tx, objectType string
 	}
 	for _, h := range s.hooksFor(nw) {
 		if err := h.AfterTransition(ctx, tx, nw, action, w.Status, tr.To); err != nil {
+			return nil, err
+		}
+	}
+	// PRD P1 v2.1 §5.15 / P2 v2.1 §10: rantai lintas tim — setelah semua hook (finding hook sudah menyelesaikan finding)
+	if action == workflow.ActComplete || action == workflow.ActClose {
+		if nw.FollowUpPurpose != nil {
+			if err := s.resolveAncestorsAfterFollowUp(ctx, tx, nw); err != nil {
+				return nil, err
+			}
+		}
+		if err := s.chainProgressTx(ctx, tx, objectType, id, nw.Number, nw.Resolution); err != nil {
 			return nil, err
 		}
 	}
@@ -766,8 +940,79 @@ func eventVerb(action string) string {
 		return "resolved"
 	case workflow.ActAcknowledge:
 		return "acknowledged"
+	case workflow.ActSubmit:
+		return "submitted"
 	}
 	return action
+}
+
+// syncActualCost: actual = parts + jasa + lain-lain (dipakai saat rincian biaya berubah tanpa actual eksplisit).
+func syncActualCost(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE work_orders SET actual_cost_amount = COALESCE(parts_cost_amount,0) + COALESCE(service_cost_amount,0) + COALESCE(other_cost_amount,0) WHERE id = $1`, id)
+	return err
+}
+
+// ---------- Escalation (PRD P1 v2 §4.2, §52) ----------
+
+// Escalate: tandai task/WO tereskalasi (level +1), opsional naikkan prioritas & tujuan eskalasi; activity + audit + event
+// `{object}.escalated` → notifikasi supervisor team & manager property.
+func (s *Service) Escalate(ctx context.Context, objectType string, id uuid.UUID, in EscalateInput) (*WorkItem, error) {
+	p := authctx.Must(ctx)
+	var out *WorkItem
+	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		w, t, err := s.loadTx(ctx, tx, objectType, id, true)
+		if err != nil {
+			return err
+		}
+		if !canWI(ctx, tx, t.perm("escalate"), w) {
+			return apperr.Forbidden("Memerlukan " + t.perm("escalate"))
+		}
+		if !escalatable(w.Status) {
+			return apperr.InvalidTransition(fmt.Sprintf("%s %s tidak dapat dieskalasi dari status %s", objectLabel(objectType), w.Number, workflow.Label(w.Status)))
+		}
+		in.Reason = strings.TrimSpace(in.Reason)
+		if in.Reason == "" {
+			return apperr.Validation("reason wajib untuk eskalasi").WithField("reason", "wajib")
+		}
+		if in.EscalateToUser != nil {
+			if err := s.validateRefs(ctx, tx, w.PropertyID, nil, nil, in.EscalateToUser, nil, nil); err != nil {
+				return apperr.Validation("escalate_to_user_id tidak valid").WithField("escalate_to_user_id", "tidak valid")
+			}
+		}
+		newPriority := w.Priority
+		if in.RaisePriority {
+			newPriority = map[string]string{"low": "medium", "medium": "high", "high": "critical", "critical": "critical"}[w.Priority]
+		}
+		level := w.EscalationLevel + 1
+		if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET escalated_at = now(), escalation_level = $2, priority = $3, updated_by = $4 WHERE id = $1`, t.table), id, level, newPriority, actorOrNil(p)); err != nil {
+			return err
+		}
+		_, _ = tx.Exec(ctx, `UPDATE sla_tracking SET escalated_at = COALESCE(escalated_at, now()) WHERE object_type = $1 AND object_id = $2`, objectType, id)
+		pl := map[string]any{"reason": in.Reason, "level": level}
+		if in.EscalateToUser != nil {
+			pl["escalate_to"] = assigneePayload(ctx, tx, in.EscalateToUser, nil)
+		}
+		_ = audit.Record(ctx, tx, audit.Entry{ObjectType: objectType, ObjectID: id, Action: audit.ActEscalated, Payload: pl})
+		if newPriority != w.Priority {
+			_ = audit.Record(ctx, tx, audit.Entry{ObjectType: objectType, ObjectID: id, Action: audit.ActPriorityChanged, From: w.Priority, To: newPriority})
+			if err := s.applySLATx(ctx, tx, objectType, id, w.PropertyID, newPriority, w.CreatedAt); err != nil {
+				return err
+			}
+		}
+		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: "escalated", EntityType: objectType, EntityID: &id, EntityLabel: w.Number, Before: map[string]any{"escalation_level": w.EscalationLevel, "priority": w.Priority}, After: map[string]any{"escalation_level": level, "priority": newPriority, "reason": in.Reason}})
+		if s.Jobs != nil {
+			_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: objectType + ".escalated", OrganizationID: p.OrganizationID, PropertyID: &w.PropertyID, ObjectType: objectType, ObjectID: id, ObjectLabel: w.Number, ActorUserID: actorOrNil(p),
+				Payload: map[string]any{"reason": in.Reason, "level": level, "assignee_user_id": w.Assignee.UserID, "assignee_team_id": w.Assignee.TeamID, "escalate_to_user_id": in.EscalateToUser}})
+			_ = s.Jobs.EnqueueTx(ctx, tx, searchIndexArgs(p.OrganizationID, objectType, id))
+		}
+		nw, _, err := s.loadTx(ctx, tx, objectType, id, false)
+		if err != nil {
+			return err
+		}
+		out = nw
+		return s.enrich(ctx, tx, nw, t, true)
+	})
+	return out, err
 }
 
 func (s *Service) hasPendingEvidence(ctx context.Context, tx pgx.Tx, objectType string, id uuid.UUID) bool {

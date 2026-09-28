@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/buildingvision/api/internal/attachments"
 	"github.com/buildingvision/api/internal/iam"
 	"github.com/buildingvision/api/internal/platform/apperr"
 	"github.com/buildingvision/api/internal/platform/httpx"
@@ -15,11 +16,14 @@ import (
 type Handler struct {
 	Svc *Service
 	IAM *iam.Service
+	Att *attachments.Service // bukti transfer (P4-VRF-02)
 }
 
 // MountPublic: callback gateway (tanpa token user; verifikasi signature per provider).
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/webhooks/payments/{provider}", h.webhook)
+	// PDF invoice/kwitansi/statement lewat tautan bertanda tangan HMAC (P4-TNT-03; dibagikan via WhatsApp manual)
+	r.Get("/public/documents/{token}", h.publicDocument)
 }
 
 // Mount: Billing (dashboard) + Mobile Tenant (`/tenant/invoices`, `/tenant/payments`).
@@ -37,7 +41,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.With(req("billing.payments.verify")).Post("/payments/{id}/verify", h.verify)
 	r.With(req("billing.payments.verify")).Post("/payments/{id}/fail", h.fail)
 	r.With(req("billing.payments.view")).Get("/payment-providers", h.providers)
-	r.With(req("platform.organizations.update")).Put("/payment-providers/{code}", h.upsertProvider)
+	r.With(req("billing.settings.manage")).Put("/payment-providers/{code}", h.upsertProvider) // B-15
 	// Mobile Tenant
 	r.With(req("tenant_app.invoices.view")).Get("/tenant/invoices/summary", h.tenantSummary)
 	r.With(req("tenant_app.invoices.view")).Get("/tenant/invoices", h.tenantInvoices)
@@ -46,6 +50,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.With(req("tenant_app.payments.view")).Get("/tenant/payments", h.tenantPayments)
 	r.With(req("tenant_app.payments.view")).Get("/tenant/payments/{id}", h.tenantPayment)
 	r.With(req("tenant_app.payments.view")).Get("/tenant/payment-providers", h.tenantProviders)
+	h.mountP4(r)
 }
 
 func pathID(r *http.Request) (uuid.UUID, error) { return httpx.PathUUID(r, chi.URLParam, "id") }
@@ -59,10 +64,20 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	var f Filter
 	f.PropertyID, _ = httpx.QueryUUID(r, "property_id")
 	f.TenantID, _ = httpx.QueryUUID(r, "tenant_id")
+	f.UnitID, _ = httpx.QueryUUID(r, "unit_location_id")
 	f.Statuses = httpx.QueryCSV(r, "status")
 	f.Type = r.URL.Query().Get("type")
+	f.Source = r.URL.Query().Get("source")
+	f.SourceID, _ = httpx.QueryUUID(r, "source_id")
+	f.BillingRunID, _ = httpx.QueryUUID(r, "billing_run_id")
+	f.Aging = r.URL.Query().Get("aging")
+	f.DueFrom, f.DueFromDate = qTimeOrDate(r, "due_from")
+	f.DueTo, f.DueToDate = qTimeOrDate(r, "due_to")
+	f.IssuedFrom, f.IssuedFromDate = qTimeOrDate(r, "issued_from")
+	f.IssuedTo, f.IssuedToDate = qTimeOrDate(r, "issued_to")
 	f.Q = r.URL.Query().Get("q")
 	f.Overdue = r.URL.Query().Get("overdue") == "true"
+	f.Open = r.URL.Query().Get("open") == "true"
 	items, next, err := h.Svc.List(r.Context(), f, page)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -169,8 +184,14 @@ func (h *Handler) listPayments(w http.ResponseWriter, r *http.Request) {
 	var f PaymentFilter
 	f.PropertyID, _ = httpx.QueryUUID(r, "property_id")
 	f.InvoiceID, _ = httpx.QueryUUID(r, "invoice_id")
+	f.TenantID, _ = httpx.QueryUUID(r, "tenant_id")
 	f.Statuses = httpx.QueryCSV(r, "status")
 	f.Provider = r.URL.Query().Get("provider")
+	f.Method = r.URL.Query().Get("method")
+	f.ReceiptGroup = r.URL.Query().Get("receipt_group")
+	f.PaidFrom, f.PaidFromDate = qTimeOrDate(r, "paid_from")
+	f.PaidTo, f.PaidToDate = qTimeOrDate(r, "paid_to")
+	f.Q = r.URL.Query().Get("q")
 	items, next, err := h.Svc.ListPayments(r.Context(), f, page)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -344,7 +365,12 @@ func (h *Handler) tenantPayments(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	items, next, err := h.Svc.TenantPayments(r.Context(), page)
+	invoiceID, err := httpx.QueryUUID(r, "invoice_id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	items, next, err := h.Svc.TenantPayments(r.Context(), invoiceID, page)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

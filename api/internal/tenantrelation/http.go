@@ -33,6 +33,14 @@ func (h *Handler) Mount(r chi.Router) {
 	r.With(req("tenant_relation.tenant_users.validate")).Post("/tenant-users/{id}/reactivate", h.decide("reactivate"))
 	r.With(req("tenant_relation.tenant_users.update")).Post("/tenant-users/{id}/access", h.grant)
 	r.With(req("tenant_relation.tenant_users.update")).Delete("/tenant-users/{id}/access/{accessId}", h.revoke)
+	// PRD P3 v2.1 P3-ACC-05: reset password (password sementara dikirim staf lewat tombol WhatsApp)
+	r.With(req("tenant_relation.tenant_users.reset_password")).Post("/tenant-users/{id}/reset-password", h.resetPassword)
+	// PRD P3 v2.1 P3-FDB-03: feedback umum tenant
+	r.With(req("tenant_relation.feedback.view")).Get("/tenant-relation/general-feedback", h.listGeneralFeedback)
+	r.With(req("tenant_relation.feedback.view")).Get("/tenant-relation/general-feedback/{id}", h.getGeneralFeedback)
+	for _, a := range []string{"review", "respond", "close"} {
+		r.With(req("tenant_relation.feedback.respond")).Post("/tenant-relation/general-feedback/{id}/"+a, h.actGeneralFeedback(a))
+	}
 	// Komunikasi tenant ↔ BM pada Service Request (terpisah dari komentar internal)
 	r.With(req("tenant_relation.messages.view")).Get("/service-requests/{id}/messages", h.messages)
 	r.With(req("tenant_relation.messages.create")).Post("/service-requests/{id}/messages", h.postMessage)
@@ -46,9 +54,108 @@ func (h *Handler) Mount(r chi.Router) {
 	r.With(req("tenant_relation.announcements.update")).Patch("/announcements/{id}", h.updateAnn)
 	r.With(req("tenant_relation.announcements.publish")).Post("/announcements/{id}/publish", h.annAction("publish"))
 	r.With(req("tenant_relation.announcements.publish")).Post("/announcements/{id}/archive", h.annAction("archive"))
+	// PRD P3 v2.1 P3-ANN-03, P3-ANN-05, P3-BRC-01: jadwal publish, pelacakan baca, broadcast darurat
+	r.With(req("tenant_relation.announcements.publish")).Post("/announcements/{id}/schedule", h.annAction("schedule"))
+	r.With(req("tenant_relation.announcements.publish")).Post("/announcements/{id}/unschedule", h.annAction("unschedule"))
+	r.With(req("tenant_relation.announcements.view")).Get("/announcements/{id}/reads", h.annReads)
+	r.With(req("tenant_relation.announcements.broadcast")).Post("/announcements/broadcast", h.broadcast)
 	// News Staff App: baca pengumuman audience staff|all (semua staf terautentikasi, bukan tenant)
 	r.Get("/staff/announcements", h.staffAnnouncements)
 	r.Get("/staff/announcements/{id}", h.staffAnnouncement)
+}
+
+func (h *Handler) resetPassword(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Svc.ResetPassword(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) listGeneralFeedback(w http.ResponseWriter, r *http.Request) {
+	page, err := httpx.ParsePage(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	pid, _ := httpx.QueryUUID(r, "property_id")
+	items, next, err := h.Svc.ListGeneralFeedback(r.Context(), pid, httpx.QueryCSV(r, "status"), r.URL.Query().Get("category"), page)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, httpx.NewList(items, next))
+}
+
+func (h *Handler) getGeneralFeedback(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Svc.GetGeneralFeedback(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) actGeneralFeedback(action string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := httpx.PathUUID(r, chi.URLParam, "id")
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		var in FeedbackActionInput
+		if r.ContentLength > 0 {
+			if err := httpx.Decode(r, &in); err != nil {
+				httpx.WriteError(w, r, err)
+				return
+			}
+		}
+		out, err := h.Svc.ActGeneralFeedback(r.Context(), id, action, in)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, out)
+	}
+}
+
+func (h *Handler) annReads(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Svc.AnnouncementReads(r.Context(), id, r.URL.Query().Get("unread") == "true")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) broadcast(w http.ResponseWriter, r *http.Request) {
+	var in BroadcastInput
+	if err := httpx.Decode(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Svc.Broadcast(r.Context(), in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, out)
 }
 
 func (h *Handler) staffAnnouncements(w http.ResponseWriter, r *http.Request) {
@@ -235,6 +342,7 @@ func (h *Handler) messages(w http.ResponseWriter, r *http.Request) {
 	err = h.Svc.DB.WithTx(r.Context(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		items, err = tenantapp.ListMessagesTx(ctx, tx, id, false)
+		tenantapp.FillMessageAttachments(ctx, tx, h.Svc.Attachments, items)
 		return err
 	})
 	if err != nil {
@@ -261,7 +369,16 @@ func (h *Handler) postMessage(w http.ResponseWriter, r *http.Request) {
 	var out *tenantapp.Message
 	err = h.Svc.DB.WithTx(r.Context(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
+		// P3-SRQ-05: lampiran pesan staf harus file pada SR yang sama
+		if err := tenantapp.ValidateStaffMessageAttachments(ctx, tx, id, in.AttachmentIDs); err != nil {
+			return err
+		}
 		out, err = tenantapp.PostMessageTx(ctx, tx, h.Svc.Jobs, id, "staff", in)
+		if err == nil {
+			list := []tenantapp.Message{*out}
+			tenantapp.FillMessageAttachments(ctx, tx, h.Svc.Attachments, list)
+			out = &list[0]
+		}
 		return err
 	})
 	if err != nil {
@@ -303,7 +420,7 @@ func (h *Handler) listAnn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pid, _ := httpx.QueryUUID(r, "property_id")
-	items, next, err := h.Svc.ListAnnouncements(r.Context(), pid, httpx.QueryCSV(r, "status"), page)
+	items, next, err := h.Svc.ListAnnouncementsFiltered(r.Context(), pid, httpx.QueryCSV(r, "status"), r.URL.Query().Get("category"), page)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

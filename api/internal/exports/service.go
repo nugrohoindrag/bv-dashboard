@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,7 +27,9 @@ import (
 	"github.com/buildingvision/api/internal/platform/httpx"
 	"github.com/buildingvision/api/internal/platform/jobs"
 	"github.com/buildingvision/api/internal/platform/storage"
+	"github.com/buildingvision/api/internal/property"
 	"github.com/buildingvision/api/internal/tenantservice"
+	"github.com/buildingvision/api/internal/vendor"
 )
 
 type Service struct {
@@ -37,6 +40,8 @@ type Service struct {
 	Ops         *operations.Service
 	Assets      *asset.Service
 	SR          *tenantservice.Service
+	Property    *property.Service // PRD P0 v2 §18: locations & tenants
+	Vendors     *vendor.Service
 	DownloadTTL time.Duration
 }
 
@@ -53,13 +58,35 @@ type Export struct {
 	DownloadURL *string    `json:"download_url"`
 }
 
-var resources = map[string]bool{"tasks": true, "work_orders": true, "service_requests": true, "incidents": true, "assets": true, "findings": true}
+// resources → permission view yang wajib dimiliki peminta (dicek saat request; scope baris tetap diterapkan List service).
+var resources = map[string]string{
+	"tasks": "operations.tasks.view", "work_orders": "operations.work_orders.view", "service_requests": "tenant.service_requests.view",
+	"incidents": "operations.incidents.view", "assets": "engineering.assets.view", "findings": "operations.findings.view",
+	// PRD P0 v2 §18
+	"users": "iam.users.view", "locations": "property.locations.view", "tenants": "property.tenants.view",
+	"vendors": "vendor.vendors.view", "audit_logs": "platform.audit_logs.view",
+}
+
+// Resources: daftar resource yang dapat diekspor.
+func Resources() []string {
+	out := make([]string, 0, len(resources))
+	for k := range resources {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // Request: buat export request → job (audit: export selalu dicatat).
 func (s *Service) Request(ctx context.Context, resource, format string, filters map[string]string) (*Export, error) {
 	p := authctx.Must(ctx)
-	if !resources[resource] {
-		return nil, apperr.Validation("resource harus tasks|work_orders|service_requests|incidents|assets|findings")
+	perm, ok := resources[resource]
+	if !ok {
+		return nil, apperr.Validation("resource harus salah satu: " + strings.Join(Resources(), "|"))
+	}
+	// export mengikuti permission user (PRD P0 v2 §18): tanpa akses view resource → ditolak di depan
+	if !p.Has(perm) || (p.VendorID != nil && !p.IsSystem) {
+		return nil, apperr.Forbidden("Memerlukan permission " + perm)
 	}
 	if format != "csv" && format != "xlsx" {
 		return nil, apperr.Validation("format harus csv|xlsx")
@@ -84,6 +111,29 @@ func (s *Service) Request(ctx context.Context, resource, format string, filters 
 		return nil, err
 	}
 	return &out, nil
+}
+
+// ListMine: riwayat export milik user (30 hari terakhir).
+func (s *Service) ListMine(ctx context.Context) ([]Export, error) {
+	p := authctx.Must(ctx)
+	out := []Export{}
+	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT id, resource, format, status, row_count, error, created_at, completed_at, expires_at FROM exports
+			WHERE requested_by = $1 AND created_at > now() - interval '30 days' ORDER BY created_at DESC LIMIT 100`, p.UserID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var x Export
+			if err := rows.Scan(&x.ID, &x.Resource, &x.Format, &x.Status, &x.RowCount, &x.Error, &x.CreatedAt, &x.CompletedAt, &x.ExpiresAt); err != nil {
+				return err
+			}
+			out = append(out, x)
+		}
+		return rows.Err()
+	})
+	return out, err
 }
 
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (*Export, error) {
@@ -203,6 +253,9 @@ func (s *Service) collect(ctx context.Context, resource string, filters map[stri
 		}
 		return *s
 	}
+	if h, rows, ok, err := s.collectFinance(ctx, resource, q); ok {
+		return h, rows, err
+	}
 	switch resource {
 	case "tasks", "work_orders":
 		ot := operations.ObjTask
@@ -210,7 +263,14 @@ func (s *Service) collect(ctx context.Context, resource string, filters map[stri
 			ot = operations.ObjWorkOrder
 		}
 		f := listFilterFromQuery(q)
-		headers := []string{"Number", "Type", "Title", "Status", "Priority", "Location", "Asset", "Assignee", "Team", "Due", "Overdue", "SLA Risk", "Created", "Completed", "Closed"}
+		headers := []string{"Number", "Type", "Title", "Status", "Priority", "Location", "Asset", "Assignee", "Team", "Due", "Overdue", "SLA Risk", "Created", "Completed", "Closed",
+			"Category", "SLA Status", "Escalation Level", "Completion Notes", "Estimated Cost", "Actual Cost", "Parts Cost", "Service Cost", "Other Cost"}
+		money := func(m *operations.Money) any {
+			if m == nil {
+				return ""
+			}
+			return m.Amount
+		}
 		var rows [][]any
 		page := httpx.Page{Limit: 200}
 		for {
@@ -219,7 +279,8 @@ func (s *Service) collect(ctx context.Context, resource string, filters map[stri
 				return nil, nil, err
 			}
 			for _, w := range items {
-				rows = append(rows, []any{w.Number, w.Type, w.Title, string(w.Status), w.Priority, deref(w.Location.PathText), deref(w.Asset.AssetCode), deref(w.Assignee.UserName), deref(w.Assignee.TeamName), fmtTime(w.DueAt), w.IsOverdue, w.SLARiskAt != nil, fmtTime(&w.CreatedAt), fmtTime(w.CompletedAt), fmtTime(w.ClosedAt)})
+				rows = append(rows, []any{w.Number, w.Type, w.Title, string(w.Status), w.Priority, deref(w.Location.PathText), deref(w.Asset.AssetCode), deref(w.Assignee.UserName), deref(w.Assignee.TeamName), fmtTime(w.DueAt), w.IsOverdue, w.SLARiskAt != nil, fmtTime(&w.CreatedAt), fmtTime(w.CompletedAt), fmtTime(w.ClosedAt),
+					deref(w.Category), w.SLAStatus, w.EscalationLevel, deref(w.CompletionNotes), money(w.EstimatedCost), money(w.ActualCost), money(w.PartsCost), money(w.ServiceCost), money(w.OtherCost)})
 			}
 			if next == nil || len(rows) >= 50000 {
 				break
@@ -234,7 +295,13 @@ func (s *Service) collect(ctx context.Context, resource string, filters map[stri
 		f.Statuses = splitCSV(q.Get("status"))
 		f.Priorities = splitCSV(q.Get("priority"))
 		f.Q = q.Get("q")
-		headers := []string{"Number", "Category", "Title", "Tenant", "Status", "Priority", "Location", "Assignee", "Team", "Created", "Resolved", "Closed"}
+		f.RequestTypes = splitCSV(q.Get("request_type"))
+		f.SLAStatus = splitCSV(q.Get("sla_status"))
+		if q.Get("open") == "true" {
+			b := true
+			f.Open = &b
+		}
+		headers := []string{"Number", "Category", "Title", "Tenant", "Status", "Priority", "Location", "Assignee", "Team", "Created", "Resolved", "Closed", "Request Type", "SLA Status", "Reopen Count", "Rating"}
 		var rows [][]any
 		page := httpx.Page{Limit: 200}
 		for {
@@ -243,7 +310,12 @@ func (s *Service) collect(ctx context.Context, resource string, filters map[stri
 				return nil, nil, err
 			}
 			for _, r := range items {
-				rows = append(rows, []any{r.RequestNumber, r.CategoryCode, r.Title, deref(r.TenantName), string(r.Status), r.Priority, deref(r.Location.PathText), deref(r.Assignee.UserName), deref(r.Assignee.TeamName), fmtTime(&r.CreatedAt), fmtTime(r.ResolvedAt), fmtTime(r.ClosedAt)})
+				rating := any("")
+				if r.Feedback != nil {
+					rating = r.Feedback.Rating
+				}
+				rows = append(rows, []any{r.RequestNumber, r.CategoryCode, r.Title, deref(r.TenantName), string(r.Status), r.Priority, deref(r.Location.PathText), deref(r.Assignee.UserName), deref(r.Assignee.TeamName), fmtTime(&r.CreatedAt), fmtTime(r.ResolvedAt), fmtTime(r.ClosedAt),
+					r.RequestType, r.SLAStatus, r.ReopenCount, rating})
 			}
 			if next == nil || len(rows) >= 50000 {
 				break
@@ -257,7 +329,8 @@ func (s *Service) collect(ctx context.Context, resource string, filters map[stri
 		f.PropertyID = parseUUID(q.Get("property_id"))
 		f.Statuses = splitCSV(q.Get("status"))
 		f.Severities = splitCSV(q.Get("severity"))
-		headers := []string{"Number", "Category", "Title", "Severity", "Priority", "Status", "Location", "Reported By", "Reported At", "Resolved", "Closed"}
+		f.SLAStatus = splitCSV(q.Get("sla_status"))
+		headers := []string{"Number", "Category", "Title", "Severity", "Priority", "Status", "Location", "Reported By", "Reported At", "Resolved", "Closed", "Action Taken", "Resolution", "SLA Status"}
 		var rows [][]any
 		page := httpx.Page{Limit: 200}
 		for {
@@ -266,7 +339,8 @@ func (s *Service) collect(ctx context.Context, resource string, filters map[stri
 				return nil, nil, err
 			}
 			for _, i := range items {
-				rows = append(rows, []any{i.IncidentNumber, i.Category, i.Title, i.Severity, i.Priority, string(i.Status), deref(i.Location.PathText), deref(i.ReportedByName), fmtTime(&i.ReportedAt), fmtTime(i.ResolvedAt), fmtTime(i.ClosedAt)})
+				rows = append(rows, []any{i.IncidentNumber, i.Category, i.Title, i.Severity, i.Priority, string(i.Status), deref(i.Location.PathText), deref(i.ReportedByName), fmtTime(&i.ReportedAt), fmtTime(i.ResolvedAt), fmtTime(i.ClosedAt),
+					deref(i.ActionTaken), deref(i.Resolution), i.SLAStatus})
 			}
 			if next == nil || len(rows) >= 50000 {
 				break
@@ -322,8 +396,142 @@ func (s *Service) collect(ctx context.Context, resource string, filters map[stri
 			page.Cursor = c
 		}
 		return headers, rows, nil
+	case "users":
+		f := iam.UserFilter{Q: q.Get("q"), RoleCode: q.Get("role"), PropertyID: parseUUID(q.Get("property_id"))}
+		if v := q.Get("is_active"); v != "" {
+			b := v == "true"
+			f.IsActive = &b
+		}
+		headers := []string{"User ID", "Name", "Email", "Username", "Phone", "Active", "Roles", "Teams", "Last Login"}
+		var rows [][]any
+		page := httpx.Page{Limit: 200}
+		for {
+			items, next, err := s.IAM.ListUsers(ctx, f, page)
+			if err != nil {
+				return nil, nil, err
+			}
+			for _, u := range items {
+				roles := make([]string, 0, len(u.Roles))
+				for _, r := range u.Roles {
+					roles = append(roles, r.RoleName)
+				}
+				teams := make([]string, 0, len(u.Teams))
+				for _, t := range u.Teams {
+					teams = append(teams, t.TeamName)
+				}
+				rows = append(rows, []any{u.UserCode, u.FullName, deref(u.Email), deref(u.Username), deref(u.Phone), yesNo(u.IsActive), strings.Join(roles, ", "), strings.Join(teams, ", "), fmtTime(u.LastLoginAt)})
+			}
+			if next == nil || len(rows) >= 50000 {
+				break
+			}
+			c, _ := httpx.DecodeCursor(*next)
+			page.Cursor = c
+		}
+		return headers, rows, nil
+	case "locations":
+		f := property.LocationFilter{PropertyID: parseUUID(q.Get("property_id")), AncestorID: parseUUID(q.Get("ancestor_id")), PortfolioID: parseUUID(q.Get("portfolio_id")), LocationType: property.LocationType(q.Get("location_type")), Q: q.Get("q"), IncludeInactive: q.Get("include_inactive") == "true"}
+		items, err := s.Property.ListLocations(ctx, f)
+		if err != nil {
+			return nil, nil, err
+		}
+		headers := []string{"Code", "Name", "Type", "Path", "Active"}
+		rows := make([][]any, 0, len(items))
+		for _, l := range items {
+			rows = append(rows, []any{l.Code, l.Name, string(l.LocationType), l.PathText, yesNo(l.IsActive)})
+		}
+		return headers, rows, nil
+	case "tenants":
+		f := property.TenantFilter{PropertyID: parseUUID(q.Get("property_id")), Status: q.Get("status"), Q: q.Get("q")}
+		headers := []string{"Tenant ID", "Name", "Type", "Contact", "Phone", "Email", "Status", "Units", "Open Requests"}
+		var rows [][]any
+		page := httpx.Page{Limit: 200}
+		for {
+			items, next, err := s.Property.ListTenants(ctx, f, page)
+			if err != nil {
+				return nil, nil, err
+			}
+			for _, t := range items {
+				units := make([]string, 0, len(t.Units))
+				for _, u := range t.Units {
+					units = append(units, u.UnitNumber)
+				}
+				rows = append(rows, []any{t.TenantCode, t.Name, t.TenantType, deref(t.ContactName), deref(t.ContactPhone), deref(t.ContactEmail), t.Status, strings.Join(units, ", "), t.OpenRequests})
+			}
+			if next == nil || len(rows) >= 50000 {
+				break
+			}
+			c, _ := httpx.DecodeCursor(*next)
+			page.Cursor = c
+		}
+		return headers, rows, nil
+	case "vendors":
+		headers := []string{"Vendor ID", "Name", "Categories", "Contact", "Phone", "Email", "Status", "Contract", "Contract End"}
+		var rows [][]any
+		page := httpx.Page{Limit: 200}
+		for {
+			items, next, err := s.Vendors.List(ctx, q.Get("q"), q.Get("category"), q.Get("status"), page)
+			if err != nil {
+				return nil, nil, err
+			}
+			for _, v := range items {
+				end := ""
+				if v.ContractEnd != nil {
+					end = v.ContractEnd.Format("2006-01-02")
+				}
+				rows = append(rows, []any{v.VendorCode, v.Name, strings.Join(v.ServiceCategories, ", "), deref(v.ContactName), deref(v.ContactPhone), deref(v.ContactEmail), v.Status, deref(v.ContractRef), end})
+			}
+			if next == nil || len(rows) >= 50000 {
+				break
+			}
+			c, _ := httpx.DecodeCursor(*next)
+			page.Cursor = c
+		}
+		return headers, rows, nil
+	case "audit_logs":
+		var f audit.AuditFilter
+		f.EntityType = q.Get("entity_type")
+		f.Action = q.Get("action")
+		f.EntityID = parseUUID(q.Get("entity_id"))
+		f.ActorID = parseUUID(q.Get("actor_id"))
+		if t, err := time.Parse(time.RFC3339, q.Get("from")); err == nil {
+			f.From = &t
+		}
+		if t, err := time.Parse(time.RFC3339, q.Get("to")); err == nil {
+			f.To = &t
+		}
+		headers := []string{"Time", "Actor", "Action", "Entity", "Label", "IP", "Request ID", "Before", "After"}
+		var rows [][]any
+		page := httpx.Page{Limit: 200}
+		for {
+			var items []audit.AuditLog
+			var next *string
+			if err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+				var err error
+				items, next, err = audit.ListAuditLogs(ctx, tx, f, page)
+				return err
+			}); err != nil {
+				return nil, nil, err
+			}
+			for _, l := range items {
+				t := l.OccurredAt
+				rows = append(rows, []any{fmtTime(&t), l.ActorName, l.Action, l.EntityType, deref(l.EntityLabel), deref(l.IP), deref(l.RequestID), string(l.Before), string(l.After)})
+			}
+			if next == nil || len(rows) >= 50000 {
+				break
+			}
+			c, _ := httpx.DecodeCursor(*next)
+			page.Cursor = c
+		}
+		return headers, rows, nil
 	}
 	return nil, nil, fmt.Errorf("resource tidak dikenal")
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "Yes"
+	}
+	return "No"
 }
 
 func listFilterFromQuery(q url.Values) operations.ListFilter {
@@ -333,6 +541,23 @@ func listFilterFromQuery(q url.Values) operations.ListFilter {
 	f.Statuses = splitCSV(q.Get("status"))
 	f.Priorities = splitCSV(q.Get("priority"))
 	f.LocationID = parseUUID(q.Get("location_id"))
+	for _, k := range []string{"unit_id", "area_id", "floor_id", "tower_id", "building_id"} {
+		if f.LocationID == nil {
+			f.LocationID = parseUUID(q.Get(k))
+		}
+	}
+	f.AssetID = parseUUID(q.Get("asset_id"))
+	f.EquipmentID = parseUUID(q.Get("equipment_id"))
+	f.VendorID = parseUUID(q.Get("vendor_id"))
+	f.DueFrom = parseTime(q.Get("due_from"))
+	f.DueTo = parseTime(q.Get("due_to"))
+	f.CreatedFrom = parseTime(q.Get("created_from"))
+	f.CreatedTo = parseTime(q.Get("created_to"))
+	f.Mine = q.Get("mine") == "true"
+	if q.Get("sla_risk") == "true" {
+		b := true
+		f.SLARisk = &b
+	}
 	f.AssigneeID = parseUUID(q.Get("assignee_id"))
 	f.TeamID = parseUUID(q.Get("team_id"))
 	if v := q.Get("overdue"); v == "true" {
@@ -343,9 +568,32 @@ func listFilterFromQuery(q url.Values) operations.ListFilter {
 		b := true
 		f.Open = &b
 	}
+	// PRD P1 v2 §38–§39: filter state list yang sama dipakai untuk export
+	f.DueToday = q.Get("due_today") == "true"
+	f.CompletedToday = q.Get("completed_today") == "true"
+	f.CompletedFrom = parseTime(q.Get("completed_from"))
+	f.CompletedTo = parseTime(q.Get("completed_to"))
+	f.SLAStatus = splitCSV(q.Get("sla_status"))
+	f.Categories = splitCSV(q.Get("category"))
+	if v := q.Get("escalated"); v != "" {
+		b := v == "true"
+		f.Escalated = &b
+	}
 	f.Q = q.Get("q")
 	f.Sort = q.Get("sort")
 	return f
+}
+
+func parseTime(s string) *time.Time {
+	if s == "" {
+		return nil
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return &t
+		}
+	}
+	return nil
 }
 
 func parseUUID(s string) *uuid.UUID {

@@ -16,7 +16,17 @@ type Handler struct {
 
 func (h *Handler) Mount(r chi.Router) {
 	r.With(h.IAM.Require("platform.exports.create")).Post("/exports", h.create)
+	r.With(h.IAM.Require("platform.exports.create")).Get("/exports", h.list)
 	r.With(h.IAM.Require("platform.exports.create")).Get("/exports/{id}", h.get)
+}
+
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+	items, err := h.Svc.ListMine(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": items, "next_cursor": nil, "resources": Resources()})
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {

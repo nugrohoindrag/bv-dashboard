@@ -1,6 +1,7 @@
 package overview
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -27,6 +28,37 @@ func (h *Handler) Mount(r chi.Router) {
 	r.With(req).Get("/overview/pm-due", h.pmDue)
 	r.With(req).Get("/overview/tenant-requests", h.tenantRequests)
 	r.With(req).Get("/overview/building-state", h.buildingState)
+	// Building Management Overview: sensus penghuni (permission property.occupants.view dicek di service)
+	r.With(req).Get("/overview/residents", h.residents)
+	// PRD P1 v2 §44: dashboard "Limited" untuk worker — ringkasan pekerjaan milik sendiri
+	r.With(h.IAM.RequireAny("operations.tasks.view", "operations.work_orders.view")).Get("/me/work-summary", h.myWork)
+	// PRD P2 v2.1 GAP-P2-09: dashboard per domain (permission domain dicek di service)
+	r.With(req).Get("/dashboards/engineering", h.domainDashboard(h.Svc.EngineeringDashboard))
+	r.With(req).Get("/dashboards/security", h.domainDashboard(h.Svc.SecurityDashboard))
+	r.With(req).Get("/dashboards/housekeeping", h.domainDashboard(h.Svc.HousekeepingDashboard))
+	// PRD P4 v2.1 P4-FIN-01: dashboard Finance (permission billing.invoices.view dicek di service)
+	r.With(h.IAM.RequireAny("overview.dashboard.view", "billing.invoices.view")).Get("/dashboards/finance", h.domainDashboard(h.Svc.FinanceDashboard))
+}
+
+func (h *Handler) domainDashboard(fn func(context.Context, DashboardParams) (*DomainDashboard, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var in DashboardParams
+		var err error
+		if in.PropertyID, err = httpx.QueryUUID(r, "property_id"); err == nil {
+			in.LocationID, err = httpx.QueryUUID(r, "location_id")
+		}
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		in.From, in.To = r.URL.Query().Get("from"), r.URL.Query().Get("to")
+		out, err := fn(r.Context(), in)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, out)
+	}
 }
 
 func (h *Handler) today(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +113,7 @@ func (h *Handler) workload(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	out, err := h.Svc.TeamWorkload(r.Context(), pid)
+	out, err := h.Svc.TeamWorkload(r.Context(), pid, r.URL.Query().Get("group"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -133,4 +165,27 @@ func (h *Handler) buildingState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, httpx.NewList(out, nil))
+}
+
+func (h *Handler) residents(w http.ResponseWriter, r *http.Request) {
+	pid, err := httpx.QueryUUID(r, "property_id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Svc.Residents(r.Context(), pid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) myWork(w http.ResponseWriter, r *http.Request) {
+	out, err := h.Svc.MyWorkSummary(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }

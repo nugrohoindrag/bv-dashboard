@@ -51,6 +51,23 @@ const (
 	PrefixSaleReservation   = "SRES"  // yearly
 	PrefixRentalListing     = "RLIST" // yearly
 	PrefixRentalReservation = "RRES"  // yearly
+	PrefixPortfolio         = "PF"    // plain (PRD P0 v2 §4.1)
+	// PRD P2 v2.1 (Roadmap v2.1 §8–§10; NC §76.6)
+	PrefixEmergencyAlert   = "EMG" // yearly — Emergency Alert (NC §16)
+	PrefixParkingViolation = "PKV" // yearly
+	PrefixLostFoundItem    = "LNF" // yearly — barang temuan
+	PrefixLostReport       = "LST" // yearly — laporan kehilangan
+	PrefixAssetDocument    = "DOC" // yearly — dokumen equipment
+	PrefixCleaningRoute    = "CRT" // plain
+	PrefixShiftHandover    = "HOV" // yearly — serah terima shift
+	// PRD P3 v2.1 (Roadmap v2.1 §11; NC §76.6)
+	PrefixPackage       = "PKG" // yearly — paket masuk (P3-PKG-01)
+	PrefixParkingPermit = "PRM" // yearly — izin parkir tenant (P3-PRK-02)
+	PrefixFeedback      = "FDB" // yearly — feedback umum tenant (P3-FDB-02)
+	// PRD P4 v2.1 (Roadmap v2.1 §12; NC §76.6)
+	PrefixBillingRun = "BRN" // yearly — generate tagihan periode (P4-BRL-02)
+	PrefixCreditNote = "CN"  // yearly — nomor saat disetujui (P4-INV-07)
+	PrefixReceipt    = "RCV" // yearly — penerimaan dialokasikan ke banyak invoice (P4-PAY-05)
 )
 
 // nextSeq mengambil nomor urut berikutnya (row lock via upsert) — harus dipanggil dalam transaksi create.

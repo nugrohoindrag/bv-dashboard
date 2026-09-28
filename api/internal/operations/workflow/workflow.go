@@ -22,6 +22,7 @@ const (
 	WaitingForTenant Status = "waiting_for_tenant"
 	Resolved         Status = "resolved"
 	Open             Status = "open"
+	Draft            Status = "draft" // Work Order saja (PRD P1 v2 §23: Draft → Open)
 )
 
 // Action names (verb; sub-resource POST /{object}/{id}/{action})
@@ -39,6 +40,7 @@ const (
 	ActResolve     = "resolve"
 	ActWaitTenant  = "wait_tenant"
 	ActUnassign    = "unassign"
+	ActSubmit      = "submit" // Draft → Open (new)
 )
 
 // GuardInput adalah fakta yang dibutuhkan guard; dihitung oleh service, bukan oleh package ini.
@@ -187,15 +189,20 @@ func workItemWorkflow(objectType, permObj string) Workflow {
 	}
 }
 
-func reopenPerm(permObj string) string {
-	if permObj == "work_orders" {
-		return "reopen" // FR-WO-014
-	}
-	return "close"
-}
+// reopenPerm: WO FR-WO-014; Task sejak PRD P0 v2 §8.3 memakai permission reopen tersendiri.
+func reopenPerm(string) string { return "reopen" }
 
 var Task = workItemWorkflow("task", "tasks")
-var WorkOrder = workItemWorkflow("work_order", "work_orders")
+
+// WorkOrder = alur Task + Draft (PRD P1 v2 §23): Draft → Open(new) via submit; Draft dapat dibatalkan/dihapus.
+var WorkOrder = func() Workflow {
+	w := workItemWorkflow("work_order", "work_orders")
+	w.Transitions = append([]Transition{
+		{From: Any(Draft), To: New, Action: ActSubmit, Perm: "operations.work_orders.create"},
+		{From: Any(Draft), To: Cancelled, Action: ActCancel, Perm: "operations.work_orders.cancel", RequireReason: true},
+	}, w.Transitions...)
+	return w
+}()
 
 var Incident = Workflow{
 	ObjectType: "incident",
@@ -284,6 +291,8 @@ func Label(s Status) string {
 		return "Resolved"
 	case Open:
 		return "Open"
+	case Draft:
+		return "Draft"
 	}
 	return string(s)
 }

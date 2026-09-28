@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -44,13 +43,19 @@ func NewFCM(ctx context.Context, projectID, serviceAccount string) (*FCMPusher, 
 	return &FCMPusher{projectID: projectID, client: client}, nil
 }
 
-func (f *FCMPusher) Send(ctx context.Context, token string, notificationID uuid.UUID, deepLink, title, body string) error {
+func (f *FCMPusher) Send(ctx context.Context, token string, msg PushMessage) error {
+	// Staff App (Flutter): channel buildingvision_ops + click_action Flutter; Tenant App (Capacitor): channel bv_tenant,
+	// tap ditangani plugin push-notifications lewat data.deep_link (PRD P3 v2.1 P3-PSH-02).
+	android := map[string]string{"channel_id": "buildingvision_ops", "click_action": "FLUTTER_NOTIFICATION_CLICK"}
+	if msg.App == "tenant" {
+		android = map[string]string{"channel_id": "bv_tenant"}
+	}
 	payload := map[string]any{
 		"message": map[string]any{
 			"token":        token,
-			"notification": map[string]string{"title": title, "body": firstLine(body)},
-			"data":         map[string]string{"notification_id": notificationID.String(), "deep_link": deepLink},
-			"android":      map[string]any{"priority": "high", "notification": map[string]string{"channel_id": "buildingvision_ops", "click_action": "FLUTTER_NOTIFICATION_CLICK"}},
+			"notification": map[string]string{"title": msg.Title, "body": firstLine(msg.Body)},
+			"data":         map[string]string{"notification_id": msg.NotificationID.String(), "deep_link": msg.DeepLink, "severity": msg.Severity, "app": msg.App},
+			"android":      map[string]any{"priority": "high", "notification": android},
 			"apns":         map[string]any{"payload": map[string]any{"aps": map[string]any{"sound": "default"}}},
 		},
 	}
@@ -70,11 +75,4 @@ func (f *FCMPusher) Send(ctx context.Context, token string, notificationID uuid.
 		return InvalidToken(fmt.Errorf("fcm %d: %s", resp.StatusCode, string(rb)))
 	}
 	return fmt.Errorf("fcm %d: %s", resp.StatusCode, string(rb))
-}
-
-func firstLine(s string) string {
-	if i := strings.Index(s, "\n"); i >= 0 {
-		return s[:i]
-	}
-	return s
 }

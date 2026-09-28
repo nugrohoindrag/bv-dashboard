@@ -151,6 +151,10 @@ func (s *Service) wipeOrganization(ctx context.Context, orgID uuid.UUID) (int, i
 	var total int64
 	wiped := map[string]bool{}
 	err = s.DB.WithOrgTx(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
+		// audit_logs immutable (00020): purge organization demo diizinkan eksplisit di transaksi ini saja
+		if _, err := tx.Exec(ctx, `SELECT set_config('bv.org_purge', $1, true)`, orgID.String()); err != nil {
+			return err
+		}
 		// 1) anak tanpa organization_id (mis. user_roles, team_members, unit_occupants, patrol_route_checkpoints)
 		for _, c := range children {
 			parentKey := "id"
@@ -174,6 +178,9 @@ func (s *Service) wipeOrganization(ctx context.Context, orgID uuid.UUID) (int, i
 		// FK melingkar (work_orders ↔ maintenance_schedules) diputus dulu
 		_, _ = tx.Exec(ctx, `UPDATE maintenance_schedules SET work_order_id = NULL WHERE organization_id = $1`, orgID)
 		_, _ = tx.Exec(ctx, `UPDATE work_orders SET maintenance_schedule_id = NULL WHERE organization_id = $1`, orgID)
+		// PRD P2 v2.1: barang temuan ↔ laporan kehilangan saling merujuk (pencocokan)
+		_, _ = tx.Exec(ctx, `UPDATE lost_found_items SET matched_report_id = NULL WHERE organization_id = $1`, orgID)
+		_, _ = tx.Exec(ctx, `UPDATE lost_reports SET matched_item_id = NULL WHERE organization_id = $1`, orgID)
 		// 2) tabel org-scoped: ulang sampai semua kosong (FK RESTRICT/NO ACTION menunggu anaknya terhapus)
 		remaining := append([]string(nil), orgTables...)
 		lastErr := map[string]string{}

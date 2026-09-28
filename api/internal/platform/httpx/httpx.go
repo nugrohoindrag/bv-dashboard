@@ -16,9 +16,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/buildingvision/api/internal/platform/apperr"
+	"github.com/buildingvision/api/internal/platform/errtrack"
 )
 
 const (
@@ -69,12 +71,26 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// LoggingMiddleware: structured JSON log per request (TAD §11.5).
+// logIdentity: diisi middleware autentikasi agar log request memuat organization & user (PRD P0 v2 §24.4).
+type logIdentity struct{ org, user string }
+
+type logIdentityKey struct{}
+
+// SetLogIdentity dipanggil setelah principal diketahui (IAM Authenticate).
+func SetLogIdentity(ctx context.Context, orgID, userID string) {
+	if li, ok := ctx.Value(logIdentityKey{}).(*logIdentity); ok {
+		li.org, li.user = orgID, userID
+	}
+}
+
+// LoggingMiddleware: structured JSON log per request (TAD §11.5) — route = pola chi (bukan path mentah berisi id).
 func LoggingMiddleware(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			rec := &statusRecorder{ResponseWriter: w}
+			li := &logIdentity{}
+			r = r.WithContext(context.WithValue(r.Context(), logIdentityKey{}, li))
 			next.ServeHTTP(rec, r)
 			if rec.status == 0 {
 				rec.status = 200
@@ -85,15 +101,24 @@ func LoggingMiddleware(log *slog.Logger) func(http.Handler) http.Handler {
 			} else if rec.status >= 400 {
 				lvl = slog.LevelWarn
 			}
-			log.LogAttrs(r.Context(), lvl, "http_request",
+			route := r.URL.Path
+			if rc := chi.RouteContext(r.Context()); rc != nil && rc.RoutePattern() != "" {
+				route = rc.RoutePattern()
+			}
+			attrs := []slog.Attr{
 				slog.String("request_id", RequestID(r.Context())),
 				slog.String("method", r.Method),
-				slog.String("route", r.URL.Path),
+				slog.String("route", route),
+				slog.String("path", r.URL.Path),
 				slog.Int("status", rec.status),
 				slog.Int("bytes", rec.bytes),
 				slog.Duration("latency", time.Since(start)),
 				slog.String("ip", ClientIP(r)),
-			)
+			}
+			if li.org != "" {
+				attrs = append(attrs, slog.String("organization_id", li.org), slog.String("user_id", li.user))
+			}
+			log.LogAttrs(r.Context(), lvl, "http_request", attrs...)
 		})
 	}
 }
@@ -103,7 +128,10 @@ func RecoverMiddleware(log *slog.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if rec := recover(); rec != nil {
-					log.Error("panic", slog.Any("panic", rec), slog.String("stack", string(debug.Stack())), slog.String("request_id", RequestID(r.Context())))
+					stack := string(debug.Stack())
+					log.Error("panic", slog.Any("panic", rec), slog.String("stack", stack), slog.String("request_id", RequestID(r.Context())))
+					errtrack.Capture(r.Context(), errtrack.Event{Message: fmt.Sprintf("panic: %v", rec), Level: "fatal", Stack: stack, RequestID: RequestID(r.Context()),
+						Tags: map[string]string{"method": r.Method, "path": r.URL.Path}})
 					WriteError(w, r, apperr.Internal(fmt.Errorf("panic: %v", rec)))
 				}
 			}()
@@ -194,13 +222,17 @@ type problem struct {
 	Detail    string              `json:"detail,omitempty"`
 	Code      string              `json:"code"`
 	Errors    []apperr.FieldError `json:"errors,omitempty"`
+	Meta      map[string]any      `json:"meta,omitempty"`
 	RequestID string              `json:"request_id,omitempty"`
 }
 
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	e := apperr.From(err)
 	if e.Status >= 500 {
-		slog.Default().Error("request_error", slog.String("request_id", RequestID(r.Context())), slog.String("err", fmt.Sprint(errors.Unwrap(e))), slog.String("code", e.Code))
+		cause := fmt.Sprint(errors.Unwrap(e))
+		slog.Default().Error("request_error", slog.String("request_id", RequestID(r.Context())), slog.String("err", cause), slog.String("code", e.Code))
+		errtrack.Capture(r.Context(), errtrack.Event{Message: e.Code + ": " + cause, RequestID: RequestID(r.Context()),
+			Tags: map[string]string{"code": e.Code, "method": r.Method, "path": r.URL.Path}})
 	}
 	p := problem{
 		Type:      ProblemBaseURL + strings.ToLower(strings.ReplaceAll(e.Code, "_", "-")),
@@ -209,6 +241,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		Detail:    e.Detail,
 		Code:      e.Code,
 		Errors:    e.Fields,
+		Meta:      e.Meta,
 		RequestID: RequestID(r.Context()),
 	}
 	w.Header().Set("Content-Type", "application/problem+json; charset=utf-8")

@@ -39,6 +39,18 @@ func (NotificationPushArgs) InsertOpts() river.InsertOpts {
 	return river.InsertOpts{MaxAttempts: 5, Queue: "push"}
 }
 
+// NotificationDeliverArgs: pengiriman notifikasi ke channel eksternal (email/WhatsApp) — PRD P0 v2 §14.3.
+type NotificationDeliverArgs struct {
+	NotificationID uuid.UUID `json:"notification_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Channel        string    `json:"channel"`
+}
+
+func (NotificationDeliverArgs) Kind() string { return "notification.deliver" }
+func (NotificationDeliverArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{MaxAttempts: 5, Queue: "push"}
+}
+
 type AttachmentProcessArgs struct {
 	AttachmentID   uuid.UUID `json:"attachment_id"`
 	OrganizationID uuid.UUID `json:"organization_id"`
@@ -123,6 +135,32 @@ type TrialSweepArgs struct{}
 func (TrialSweepArgs) Kind() string { return "trial.sweep" }
 
 func (ServiceRequestAutoCloseArgs) Kind() string { return "service_request.auto_close" }
+
+// EmergencySweepArgs: Emergency Alert belum di-acknowledge → eskalasi bertingkat (PRD P2 v2.1 P2-EMG-04).
+type EmergencySweepArgs struct{}
+
+func (EmergencySweepArgs) Kind() string { return "emergency.sweep" }
+
+// WorkforceSweepArgs: attendance lupa clock-out ditutup otomatis + pengingat sertifikat kedaluwarsa (PRD P2 v2.1 §8).
+type WorkforceSweepArgs struct{}
+
+func (WorkforceSweepArgs) Kind() string { return "workforce.sweep" }
+
+// TenantExperienceSweepArgs: pengumuman terjadwal terbit, pengingat paket, izin parkir kedaluwarsa (PRD P3 v2.1).
+type TenantExperienceSweepArgs struct{}
+
+func (TenantExperienceSweepArgs) Kind() string { return "tenant_experience.sweep" }
+
+// FinanceSweepArgs: pengiriman webhook keluar tertunda + retry backoff (PRD P4 v2.1 P4-INT-04). Pengingat tagihan bertahap,
+// akrual denda, janji bayar, dan draft tagihan periode terjadwal berjalan di BillingSweepArgs.
+type FinanceSweepArgs struct{}
+
+func (FinanceSweepArgs) Kind() string { return "finance.sweep" }
+
+// EngineeringSweepArgs: pengingat dokumen equipment & warranty + hitung ulang equipment health (PRD P2 v2.1 §5.6).
+type EngineeringSweepArgs struct{}
+
+func (EngineeringSweepArgs) Kind() string { return "engineering.sweep" }
 
 // BVRoomsSweepArgs: booking BVRooms yang lewat batas bayar → hangus; refresh min_rate_cache & popularity (Requirements v0.2 §4.2).
 type BVRoomsSweepArgs struct{}
@@ -222,6 +260,11 @@ func PeriodicJobs() []*river.PeriodicJob {
 		mk(30*time.Minute, ServiceRequestAutoCloseArgs{}),
 		mk(1*time.Hour, TrialSweepArgs{}),
 		mk(1*time.Minute, BVRoomsSweepArgs{}),
+		mk(1*time.Minute, EmergencySweepArgs{}),
+		mk(15*time.Minute, WorkforceSweepArgs{}),
+		mk(6*time.Hour, EngineeringSweepArgs{}),
+		mk(1*time.Minute, TenantExperienceSweepArgs{}),
+		mk(1*time.Minute, FinanceSweepArgs{}),
 	}
 }
 

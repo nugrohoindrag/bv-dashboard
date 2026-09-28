@@ -62,9 +62,13 @@ type Config struct {
 	VisitorApprovalRequired    bool            `json:"visitor_approval_required"`
 	TenantSelfRegistration     bool            `json:"tenant_self_registration"`
 	AutoCloseResolvedHours     int             `json:"auto_close_resolved_hours"`
-	Settings                   map[string]any  `json:"settings"`
-	UpdatedAt                  time.Time       `json:"updated_at"`
-	Version                    int             `json:"version"`
+	// PRD P3 v2.1: Recurring Issue Detection (P3-TSH-07) & pengingat paket (P3-PKG-04)
+	RecurringIssueThreshold  int            `json:"recurring_issue_threshold"`
+	RecurringIssueWindowDays int            `json:"recurring_issue_window_days"`
+	PackageReminderDays      int            `json:"package_reminder_days"`
+	Settings                 map[string]any `json:"settings"`
+	UpdatedAt                time.Time      `json:"updated_at"`
+	Version                  int            `json:"version"`
 }
 
 // Context = Property Context (Onboarding Brief §8): profile + capability + terminologi efektif + config.
@@ -96,13 +100,15 @@ func (s *Service) ResolveTx(ctx context.Context, tx pgx.Tx, propertyID uuid.UUID
 		       COALESCE(c.terminology,'{}'::jsonb), COALESCE(c.expose_sla_to_tenant,false), COALESCE(c.tenant_confirmation_required,false),
 		       COALESCE(c.csat_enabled,true), COALESCE(c.booking_approval_required,false), COALESCE(c.visitor_approval_required,false),
 		       COALESCE(c.tenant_self_registration,true), COALESCE(c.auto_close_resolved_hours,72), COALESCE(c.settings,'{}'::jsonb),
-		       COALESCE(c.updated_at, now()), COALESCE(c.version,0)
+		       COALESCE(c.updated_at, now()), COALESCE(c.version,0),
+		       COALESCE(c.recurring_issue_threshold,3), COALESCE(c.recurring_issue_window_days,30), COALESCE(c.package_reminder_days,3)
 		FROM properties p JOIN locations l ON l.id = p.location_id
 		LEFT JOIN property_profile_configs c ON c.property_id = p.location_id
 		WHERE p.location_id = $1`, propertyID).
 		Scan(&out.PropertyName, &out.Profile, &out.Status, &termJSON, &out.Config.ExposeSLAToTenant, &out.Config.TenantConfirmationRequired,
 			&out.Config.CSATEnabled, &out.Config.BookingApprovalRequired, &out.Config.VisitorApprovalRequired,
-			&out.Config.TenantSelfRegistration, &out.Config.AutoCloseResolvedHours, &settingsJSON, &out.Config.UpdatedAt, &out.Config.Version)
+			&out.Config.TenantSelfRegistration, &out.Config.AutoCloseResolvedHours, &settingsJSON, &out.Config.UpdatedAt, &out.Config.Version,
+			&out.Config.RecurringIssueThreshold, &out.Config.RecurringIssueWindowDays, &out.Config.PackageReminderDays)
 	if err != nil {
 		if db.IsNoRows(err) {
 			return nil, apperr.NotFound("Property")
@@ -182,6 +188,9 @@ type UpdateConfigInput struct {
 	VisitorApprovalRequired    *bool            `json:"visitor_approval_required"`
 	TenantSelfRegistration     *bool            `json:"tenant_self_registration"`
 	AutoCloseResolvedHours     *int             `json:"auto_close_resolved_hours"`
+	RecurringIssueThreshold    *int             `json:"recurring_issue_threshold"`
+	RecurringIssueWindowDays   *int             `json:"recurring_issue_window_days"`
+	PackageReminderDays        *int             `json:"package_reminder_days"`
 	Settings                   *map[string]any  `json:"settings"`
 }
 
@@ -192,6 +201,15 @@ func (s *Service) UpdateConfig(ctx context.Context, propertyID uuid.UUID, in Upd
 	}
 	if in.AutoCloseResolvedHours != nil && (*in.AutoCloseResolvedHours < 0 || *in.AutoCloseResolvedHours > 24*30) {
 		return nil, apperr.Validation("auto_close_resolved_hours harus 0..720")
+	}
+	if in.RecurringIssueThreshold != nil && (*in.RecurringIssueThreshold < 2 || *in.RecurringIssueThreshold > 50) {
+		return nil, apperr.Validation("recurring_issue_threshold harus 2..50")
+	}
+	if in.RecurringIssueWindowDays != nil && (*in.RecurringIssueWindowDays < 1 || *in.RecurringIssueWindowDays > 365) {
+		return nil, apperr.Validation("recurring_issue_window_days harus 1..365")
+	}
+	if in.PackageReminderDays != nil && (*in.PackageReminderDays < 0 || *in.PackageReminderDays > 60) {
+		return nil, apperr.Validation("package_reminder_days harus 0..60")
 	}
 	if in.Terminology != nil {
 		for k := range *in.Terminology {
@@ -231,19 +249,30 @@ func (s *Service) UpdateConfig(ctx context.Context, propertyID uuid.UUID, in Upd
 		if in.Settings != nil {
 			cfg.Settings = *in.Settings
 		}
+		seti := func(dst *int, v *int) {
+			if v != nil {
+				*dst = *v
+			}
+		}
+		seti(&cfg.RecurringIssueThreshold, in.RecurringIssueThreshold)
+		seti(&cfg.RecurringIssueWindowDays, in.RecurringIssueWindowDays)
+		seti(&cfg.PackageReminderDays, in.PackageReminderDays)
 		termJSON, _ := json.Marshal(cfg.Terminology)
 		settingsJSON, _ := json.Marshal(cfg.Settings)
 		_, err = tx.Exec(ctx, `
 			INSERT INTO property_profile_configs (property_id, organization_id, terminology, expose_sla_to_tenant, tenant_confirmation_required, csat_enabled,
-			  booking_approval_required, visitor_approval_required, tenant_self_registration, auto_close_resolved_hours, settings, updated_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			  booking_approval_required, visitor_approval_required, tenant_self_registration, auto_close_resolved_hours, settings, updated_by,
+			  recurring_issue_threshold, recurring_issue_window_days, package_reminder_days)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 			ON CONFLICT (property_id) DO UPDATE SET terminology = EXCLUDED.terminology, expose_sla_to_tenant = EXCLUDED.expose_sla_to_tenant,
 			  tenant_confirmation_required = EXCLUDED.tenant_confirmation_required, csat_enabled = EXCLUDED.csat_enabled,
 			  booking_approval_required = EXCLUDED.booking_approval_required, visitor_approval_required = EXCLUDED.visitor_approval_required,
 			  tenant_self_registration = EXCLUDED.tenant_self_registration, auto_close_resolved_hours = EXCLUDED.auto_close_resolved_hours,
-			  settings = EXCLUDED.settings, updated_by = EXCLUDED.updated_by`,
+			  settings = EXCLUDED.settings, updated_by = EXCLUDED.updated_by, recurring_issue_threshold = EXCLUDED.recurring_issue_threshold,
+			  recurring_issue_window_days = EXCLUDED.recurring_issue_window_days, package_reminder_days = EXCLUDED.package_reminder_days`,
 			propertyID, p.OrganizationID, termJSON, cfg.ExposeSLAToTenant, cfg.TenantConfirmationRequired, cfg.CSATEnabled,
-			cfg.BookingApprovalRequired, cfg.VisitorApprovalRequired, cfg.TenantSelfRegistration, cfg.AutoCloseResolvedHours, settingsJSON, p.UserID)
+			cfg.BookingApprovalRequired, cfg.VisitorApprovalRequired, cfg.TenantSelfRegistration, cfg.AutoCloseResolvedHours, settingsJSON, p.UserID,
+			cfg.RecurringIssueThreshold, cfg.RecurringIssueWindowDays, cfg.PackageReminderDays)
 		if err != nil {
 			return err
 		}
@@ -331,5 +360,47 @@ func SeedCategoriesTx(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) error {
 			return err
 		}
 	}
+	// PRD P1 v2 §27.2: request type default per kategori (kategori baru maupun lama tanpa request_type)
+	rows, err := tx.Query(ctx, `SELECT id, code FROM service_request_categories WHERE organization_id = $1 AND request_type IS NULL`, orgID)
+	if err != nil {
+		return err
+	}
+	type cat struct {
+		id   uuid.UUID
+		code string
+	}
+	var list []cat
+	for rows.Next() {
+		var c cat
+		if err := rows.Scan(&c.id, &c.code); err != nil {
+			rows.Close()
+			return err
+		}
+		list = append(list, c)
+	}
+	rows.Close()
+	for _, c := range list {
+		if _, err := tx.Exec(ctx, `UPDATE service_request_categories SET request_type = $2 WHERE id = $1`, c.id, DefaultRequestType(c.code)); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// DefaultRequestType: pemetaan kategori → request type (PRD P1 v2 §27.2: Service Request, Complaint, Maintenance
+// Request, Cleaning Request, Facility Issue, Other). Sama dengan backfill migrasi 00021.
+func DefaultRequestType(code string) string {
+	switch code {
+	case "complaint", "noise":
+		return "complaint"
+	case "maintenance", "plumbing", "electrical", "air_conditioning", "lift", "building_damage", "renovation":
+		return "maintenance_request"
+	case "cleaning", "cleanliness", "pest", "gardening":
+		return "cleaning_request"
+	case "facility":
+		return "facility_issue"
+	case "other":
+		return "other"
+	}
+	return "service_request"
 }

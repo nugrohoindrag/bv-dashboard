@@ -37,7 +37,9 @@ func TestReports(t *testing.T) {
 	}
 	st, body = e.do(pm, http.MethodGet, "/api/v1/reports", nil)
 	e.mustJSON(st, body, 200, &catalog)
-	if len(catalog.Data) != 9 {
+	// + PRD P1 v2: operations-kpi, tasks, sla, incidents, backlog; + PRD P2 v2.1: team-performance, security;
+	// + PRD P4 v2.1: aging, collection, revenue, ipl, sinking-fund, budget-actual, operating-cost
+	if len(catalog.Data) != 23 {
 		t.Fatalf("katalog laporan: %+v", catalog.Data)
 	}
 	from := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
@@ -58,7 +60,9 @@ func TestReports(t *testing.T) {
 		if r.Name != c.Name || r.Summary == nil || r.Breakdowns == nil {
 			t.Fatalf("laporan %s: %+v", c.Name, r)
 		}
-		if c.Name != "vendors" && len(r.Series) != 8 {
+		// laporan titik-waktu / per bulan (tanpa seri harian)
+		noDaily := map[string]bool{"vendors": true, "aging": true, "ipl": true, "budget-actual": true, "operating-cost": true}
+		if !noDaily[c.Name] && len(r.Series) != 8 {
 			t.Fatalf("laporan %s: seri harian harus 8 hari, dapat %d", c.Name, len(r.Series))
 		}
 		// tanpa property_id: seluruh scope

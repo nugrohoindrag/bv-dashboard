@@ -25,6 +25,7 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/auth/login", h.login)
 	r.Post("/auth/refresh", h.refresh)
 	r.Post("/auth/logout", h.logout)
+	r.Post("/auth/accept-invite", h.acceptInvite) // PRD P0 v2 §26.1 — token sekali pakai dari email undangan
 }
 
 // MountProtected: /me, /users, /roles, /permissions, /teams (dengan token).
@@ -34,12 +35,22 @@ func (h *Handler) MountProtected(r chi.Router) {
 	r.Post("/me/password", h.changePassword)
 	r.Post("/me/devices", h.registerDevice)
 	r.Delete("/me/devices/{token}", h.unregisterDevice)
+	// session management (PRD P0 v2 §24.1)
+	r.Get("/me/sessions", h.mySessions)
+	r.Delete("/me/sessions/{sid}", h.revokeMySession)
+	r.Post("/me/sessions/revoke-others", h.revokeMyOtherSessions)
+	r.Post("/auth/logout-all", h.logoutAll)
 
 	r.With(h.Svc.Require("iam.users.view")).Get("/users", h.listUsers)
 	r.With(h.Svc.Require("iam.users.create")).Post("/users", h.createUser)
 	r.With(h.Svc.Require("iam.users.view")).Get("/users/{id}", h.getUser)
 	r.With(h.Svc.Require("iam.users.update")).Patch("/users/{id}", h.updateUser)
 	r.With(h.Svc.Require("iam.users.reset_password")).Post("/users/{id}/reset-password", h.resetPassword)
+	r.With(h.Svc.Require("iam.users.create")).Post("/users/{id}/invite", h.inviteUser)
+	r.With(h.Svc.Require("iam.users.activate")).Post("/users/{id}/activate", h.activateUser)
+	r.With(h.Svc.Require("iam.users.deactivate")).Post("/users/{id}/deactivate", h.deactivateUser)
+	r.With(h.Svc.Require("iam.sessions.view")).Get("/users/{id}/sessions", h.userSessions)
+	r.With(h.Svc.Require("iam.sessions.revoke")).Post("/users/{id}/sessions/revoke", h.revokeUserSessions)
 
 	r.With(h.Svc.Require("iam.roles.view")).Get("/roles", h.listRoles)
 	r.With(h.Svc.Require("iam.roles.create")).Post("/roles", h.createRole)
@@ -78,18 +89,21 @@ type meResp struct {
 	Permissions     []string        `json:"permissions"`
 	Properties      []propertyScope `json:"properties"`
 	IsInternalAdmin bool            `json:"is_internal_admin"` // Website PRD §18: menu App Downloads hanya untuk admin_internal
+	IsPlatformAdmin bool            `json:"is_platform_admin"` // PRD P0 v2 §8.2: menu Platform › Organizations
+	VendorID        *uuid.UUID      `json:"vendor_id"`         // akun vendor (resource scope)
 }
 
 type propertyScope struct {
-	PropertyID  *uuid.UUID `json:"property_id"` // null = seluruh organization
-	Permissions []string   `json:"permissions"`
+	PropertyID      *uuid.UUID `json:"property_id"`       // null = seluruh organization
+	ScopeLocationID *uuid.UUID `json:"scope_location_id"` // null = seluruh property; terisi = Building/Tower (PRD P0 v2 §8.4)
+	Permissions     []string   `json:"permissions"`
 }
 
 // ToMe: representasi principal untuk respons login/verify (dipakai lintas package).
 func ToMe(p *authctx.Principal) any { return toMe(p) }
 
 func toMe(p *authctx.Principal) meResp {
-	m := meResp{ID: p.UserID, FullName: p.FullName, Organization: p.OrganizationID, Roles: p.RoleCodes, TeamIDs: p.TeamIDs, LeadTeamIDs: p.LeadTeamIDs, Permissions: p.AllPermissions(), IsInternalAdmin: p.IsInternalAdmin}
+	m := meResp{ID: p.UserID, FullName: p.FullName, Organization: p.OrganizationID, Roles: p.RoleCodes, TeamIDs: p.TeamIDs, LeadTeamIDs: p.LeadTeamIDs, Permissions: p.AllPermissions(), IsInternalAdmin: p.IsInternalAdmin, IsPlatformAdmin: p.IsPlatformAdmin, VendorID: p.VendorID}
 	if m.Roles == nil {
 		m.Roles = []string{}
 	}
@@ -101,7 +115,7 @@ func toMe(p *authctx.Principal) meResp {
 	}
 	m.Properties = []propertyScope{}
 	for _, g := range p.Grants {
-		ps := propertyScope{PropertyID: g.PropertyID, Permissions: []string{}}
+		ps := propertyScope{PropertyID: g.PropertyID, ScopeLocationID: g.ScopeLocationID, Permissions: []string{}}
 		for k := range g.Permissions {
 			ps.Permissions = append(ps.Permissions, k)
 		}
@@ -247,6 +261,7 @@ func (h *Handler) registerDevice(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	req.UserAgent = r.UserAgent()
 	if err := h.Svc.RegisterDevice(r.Context(), req); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -255,7 +270,12 @@ func (h *Handler) registerDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) unregisterDevice(w http.ResponseWriter, r *http.Request) {
-	if err := h.Svc.UnregisterDevice(r.Context(), chi.URLParam(r, "token")); err != nil {
+	// token FCM di path; endpoint Web Push (URL) dikirim lewat query ?endpoint= karena mengandung '/'
+	token := chi.URLParam(r, "token")
+	if ep := r.URL.Query().Get("endpoint"); ep != "" {
+		token = ep
+	}
+	if err := h.Svc.UnregisterDevice(r.Context(), token); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -302,6 +322,15 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 	u, err := h.Svc.CreateUser(r.Context(), in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
+		return
+	}
+	if in.Invite {
+		inv, err := h.Svc.Invite(r.Context(), u.ID)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusCreated, map[string]any{"user": u, "invite": inv})
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, u)
@@ -508,3 +537,144 @@ func (h *Handler) deleteTeam(w http.ResponseWriter, r *http.Request) {
 }
 
 var _ = apperr.NotFound
+
+// ----- sessions & activation (PRD P0 v2 §8.1, §24.1) -----
+
+func (h *Handler) mySessions(w http.ResponseWriter, r *http.Request) {
+	items, err := h.Svc.ListSessions(r.Context(), authctx.Must(r.Context()).UserID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, httpx.NewList(items, nil))
+}
+
+func (h *Handler) revokeMySession(w http.ResponseWriter, r *http.Request) {
+	sid, err := httpx.PathUUID(r, chi.URLParam, "sid")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if _, err := h.Svc.RevokeSessions(r.Context(), authctx.Must(r.Context()).UserID, &sid, false); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) revokeMyOtherSessions(w http.ResponseWriter, r *http.Request) {
+	n, err := h.Svc.RevokeSessions(r.Context(), authctx.Must(r.Context()).UserID, nil, true)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"revoked": n})
+}
+
+// logoutAll: cabut seluruh sesi user (termasuk sesi ini) dan hapus cookie refresh.
+func (h *Handler) logoutAll(w http.ResponseWriter, r *http.Request) {
+	n, err := h.Svc.RevokeSessions(r.Context(), authctx.Must(r.Context()).UserID, nil, false)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	h.clearRefreshCookie(w)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"revoked": n})
+}
+
+func (h *Handler) userSessions(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	items, err := h.Svc.ListSessions(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, httpx.NewList(items, nil))
+}
+
+func (h *Handler) revokeUserSessions(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var req struct {
+		SessionID *uuid.UUID `json:"session_id"` // kosong = semua sesi user
+	}
+	if r.ContentLength > 0 {
+		if err := httpx.Decode(r, &req); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
+	n, err := h.Svc.RevokeSessions(r.Context(), id, req.SessionID, false)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"revoked": n})
+}
+
+func (h *Handler) activateUser(w http.ResponseWriter, r *http.Request)   { h.setActive(w, r, true) }
+func (h *Handler) deactivateUser(w http.ResponseWriter, r *http.Request) { h.setActive(w, r, false) }
+
+func (h *Handler) setActive(w http.ResponseWriter, r *http.Request, active bool) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if r.ContentLength > 0 {
+		if err := httpx.Decode(r, &req); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
+	u, err := h.Svc.SetUserActive(r.Context(), id, active, req.Reason)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, u)
+}
+
+func (h *Handler) inviteUser(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	inv, err := h.Svc.Invite(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, inv)
+}
+
+func (h *Handler) acceptInvite(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Token    string `json:"token"`
+		Password string `json:"password"`
+	}
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if !h.Svc.loginLimiter.Allow(httpx.ClientIP(r)) {
+		httpx.WriteError(w, r, apperr.RateLimited())
+		return
+	}
+	if err := h.Svc.AcceptInvite(r.Context(), req.Token, req.Password, httpx.ClientIP(r), r.UserAgent()); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

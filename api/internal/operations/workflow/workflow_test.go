@@ -82,13 +82,13 @@ func TestWorkItemLifecycle(t *testing.T) {
 			}
 		})
 	}
-	// WO reopen memakai permission reopen (FR-WO-014), Task memakai close
+	// WO reopen memakai permission reopen (FR-WO-014); Task sejak PRD P0 v2 §8.3 juga reopen
 	tr, _ := WorkOrder.Find(Completed, ActReopen)
 	if tr.Perm != "operations.work_orders.reopen" {
 		t.Errorf("WO reopen perm: %s", tr.Perm)
 	}
 	tr, _ = Task.Find(Completed, ActReopen)
-	if tr.Perm != "operations.tasks.close" {
+	if tr.Perm != "operations.tasks.reopen" {
 		t.Errorf("Task reopen perm: %s", tr.Perm)
 	}
 }

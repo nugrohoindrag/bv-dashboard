@@ -57,7 +57,10 @@ type CleaningSchedule struct {
 	IsActive              bool       `json:"is_active"`
 	ValidFrom             *string    `json:"valid_from"`
 	ValidUntil            *string    `json:"valid_until"`
-	Version               int        `json:"version"`
+	// PRD P2 v2.1 P2-SHF-04: jadwal cleaning dapat dikaitkan ke shift Housekeeping
+	ShiftID   *uuid.UUID `json:"shift_id"`
+	ShiftName *string    `json:"shift_name"`
+	Version   int        `json:"version"`
 }
 
 type ScheduleInput struct {
@@ -75,6 +78,8 @@ type ScheduleInput struct {
 	IsActive              *bool      `json:"is_active"`
 	ValidFrom             *string    `json:"valid_from"`
 	ValidUntil            *string    `json:"valid_until"`
+	ShiftID               *uuid.UUID `json:"shift_id"` // start_time default = jam mulai shift; UUID nol = lepas shift
+	IfVersion             *int       `json:"-"`        // If-Match (PATCH)
 }
 
 func (s *Service) CreateSchedule(ctx context.Context, in ScheduleInput) (*CleaningSchedule, error) {
@@ -93,10 +98,23 @@ func (s *Service) CreateSchedule(ctx context.Context, in ScheduleInput) (*Cleani
 // CreateScheduleTx: di dalam transaksi (seed / import); langsung generate cleaning task horizon.
 func (s *Service) CreateScheduleTx(ctx context.Context, tx pgx.Tx, in ScheduleInput) (uuid.UUID, error) {
 	p := authctx.Must(ctx)
-	if in.Name == nil || in.LocationID == nil || in.StartTime == nil {
-		return uuid.Nil, apperr.Validation("name, location_id, start_time wajib")
+	if in.Name == nil || in.LocationID == nil || (in.StartTime == nil && in.ShiftID == nil) {
+		return uuid.Nil, apperr.Validation("name, location_id, start_time (atau shift_id) wajib")
 	}
-	st, err := time.Parse("15:04", *in.StartTime)
+	pid, err := property.ResolvePropertyOfLocation(ctx, tx, *in.LocationID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	startStr := ""
+	if in.ShiftID != nil {
+		if startStr, err = shiftForRoute(ctx, tx, *in.ShiftID, pid); err != nil {
+			return uuid.Nil, err
+		}
+	}
+	if in.StartTime != nil && *in.StartTime != "" {
+		startStr = *in.StartTime
+	}
+	st, err := time.Parse("15:04", startStr)
 	if err != nil {
 		return uuid.Nil, apperr.Validation("start_time harus HH:MM")
 	}
@@ -126,17 +144,13 @@ func (s *Service) CreateScheduleTx(ctx context.Context, tx pgx.Tx, in ScheduleIn
 	if in.RequiresPhoto != nil {
 		reqPhoto = *in.RequiresPhoto
 	}
-	pid, err := property.ResolvePropertyOfLocation(ctx, tx, *in.LocationID)
-	if err != nil {
-		return uuid.Nil, err
-	}
 	if !p.HasOnProperty("housekeeping.cleaning_schedules.create", pid) {
 		return uuid.Nil, apperr.Forbidden("")
 	}
 	var id uuid.UUID
-	if err := tx.QueryRow(ctx, `INSERT INTO cleaning_schedules (organization_id, property_id, name, location_id, cleaning_type, start_time, duration_minutes, weekdays, checklist_template_id, responsible_team_id, default_assignee_user_id, priority, requires_photo, valid_from, valid_until, created_by, updated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::date,$15::date,$16,$16) RETURNING id`,
-		p.OrganizationID, pid, strings.TrimSpace(*in.Name), *in.LocationID, ct, st.Format("15:04:05"), dur, wd, in.ChecklistTemplateID, in.ResponsibleTeamID, in.DefaultAssigneeUserID, prio, reqPhoto, nilIfEmpty(in.ValidFrom), nilIfEmpty(in.ValidUntil), actorOrNil(p)).Scan(&id); err != nil {
+	if err := tx.QueryRow(ctx, `INSERT INTO cleaning_schedules (organization_id, property_id, name, location_id, cleaning_type, start_time, duration_minutes, weekdays, checklist_template_id, responsible_team_id, default_assignee_user_id, priority, requires_photo, valid_from, valid_until, created_by, updated_by, shift_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::date,$15::date,$16,$16,$17) RETURNING id`,
+		p.OrganizationID, pid, strings.TrimSpace(*in.Name), *in.LocationID, ct, st.Format("15:04:05"), dur, wd, in.ChecklistTemplateID, in.ResponsibleTeamID, in.DefaultAssigneeUserID, prio, reqPhoto, nilIfEmpty(in.ValidFrom), nilIfEmpty(in.ValidUntil), actorOrNil(p), in.ShiftID).Scan(&id); err != nil {
 		return uuid.Nil, err
 	}
 	_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "cleaning_schedule", EntityID: &id, EntityLabel: *in.Name, After: in})
@@ -171,6 +185,9 @@ func (s *Service) UpdateSchedule(ctx context.Context, id uuid.UUID, in ScheduleI
 		if !p.HasOnProperty("housekeeping.cleaning_schedules.update", before.PropertyID) {
 			return apperr.Forbidden("")
 		}
+		if in.IfVersion != nil && *in.IfVersion != before.Version {
+			return apperr.StaleVersion()
+		}
 		var startStr *string
 		if in.StartTime != nil {
 			st, err := time.Parse("15:04", *in.StartTime)
@@ -183,10 +200,21 @@ func (s *Service) UpdateSchedule(ctx context.Context, id uuid.UUID, in ScheduleI
 		if in.CleaningType != nil && !cleaningTypes[*in.CleaningType] {
 			return apperr.Validation("cleaning_type tidak valid")
 		}
+		if in.ShiftID != nil && *in.ShiftID != uuid.Nil {
+			shiftStart, err := shiftForRoute(ctx, tx, *in.ShiftID, before.PropertyID)
+			if err != nil {
+				return err
+			}
+			if startStr == nil {
+				v := shiftStart + ":00"
+				startStr = &v
+			}
+		}
 		if _, err := tx.Exec(ctx, `UPDATE cleaning_schedules SET name = COALESCE(NULLIF($2,''), name), location_id = COALESCE($3, location_id), cleaning_type = COALESCE(NULLIF($4,''), cleaning_type), start_time = COALESCE($5::time, start_time),
 			duration_minutes = COALESCE($6, duration_minutes), weekdays = COALESCE($7, weekdays), checklist_template_id = COALESCE($8, checklist_template_id), responsible_team_id = COALESCE($9, responsible_team_id), default_assignee_user_id = COALESCE($10, default_assignee_user_id),
-			priority = COALESCE(NULLIF($11,''), priority), requires_photo = COALESCE($12, requires_photo), is_active = COALESCE($13, is_active), valid_from = COALESCE($14::date, valid_from), valid_until = COALESCE($15::date, valid_until), updated_by = $16 WHERE id = $1`,
-			id, deref(in.Name), in.LocationID, deref(in.CleaningType), startStr, in.DurationMinutes, in.Weekdays, in.ChecklistTemplateID, in.ResponsibleTeamID, in.DefaultAssigneeUserID, deref(in.Priority), in.RequiresPhoto, in.IsActive, nilIfEmpty(in.ValidFrom), nilIfEmpty(in.ValidUntil), p.UserID); err != nil {
+			priority = COALESCE(NULLIF($11,''), priority), requires_photo = COALESCE($12, requires_photo), is_active = COALESCE($13, is_active), valid_from = COALESCE($14::date, valid_from), valid_until = COALESCE($15::date, valid_until), updated_by = $16,
+			shift_id = CASE WHEN $17::uuid IS NULL THEN shift_id WHEN $17::uuid = '00000000-0000-0000-0000-000000000000'::uuid THEN NULL ELSE $17::uuid END WHERE id = $1`,
+			id, deref(in.Name), in.LocationID, deref(in.CleaningType), startStr, in.DurationMinutes, in.Weekdays, in.ChecklistTemplateID, in.ResponsibleTeamID, in.DefaultAssigneeUserID, deref(in.Priority), in.RequiresPhoto, in.IsActive, nilIfEmpty(in.ValidFrom), nilIfEmpty(in.ValidUntil), p.UserID, in.ShiftID); err != nil {
 			return err
 		}
 		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditUpdate, EntityType: "cleaning_schedule", EntityID: &id, EntityLabel: before.Name, Before: before, After: in})
@@ -205,8 +233,10 @@ func (s *Service) getScheduleTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*
 	var sc CleaningSchedule
 	var st time.Time
 	var vf, vu *time.Time
-	if err := tx.QueryRow(ctx, `SELECT id, property_id, name, location_id, cleaning_type, start_time, duration_minutes, weekdays, checklist_template_id, responsible_team_id, default_assignee_user_id, priority, requires_photo, is_active, valid_from, valid_until, version FROM cleaning_schedules WHERE id = $1`, id).
-		Scan(&sc.ID, &sc.PropertyID, &sc.Name, &sc.LocationID, &sc.CleaningType, &st, &sc.DurationMinutes, &sc.Weekdays, &sc.ChecklistTemplateID, &sc.ResponsibleTeamID, &sc.DefaultAssigneeUserID, &sc.Priority, &sc.RequiresPhoto, &sc.IsActive, &vf, &vu, &sc.Version); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT cs.id, cs.property_id, cs.name, cs.location_id, cs.cleaning_type, cs.start_time, cs.duration_minutes, cs.weekdays, cs.checklist_template_id, cs.responsible_team_id, cs.default_assignee_user_id, cs.priority, cs.requires_photo, cs.is_active, cs.valid_from, cs.valid_until, cs.version,
+		cs.shift_id, sd.name FROM cleaning_schedules cs LEFT JOIN shift_definitions sd ON sd.id = cs.shift_id WHERE cs.id = $1`, id).
+		Scan(&sc.ID, &sc.PropertyID, &sc.Name, &sc.LocationID, &sc.CleaningType, &st, &sc.DurationMinutes, &sc.Weekdays, &sc.ChecklistTemplateID, &sc.ResponsibleTeamID, &sc.DefaultAssigneeUserID, &sc.Priority, &sc.RequiresPhoto, &sc.IsActive, &vf, &vu, &sc.Version,
+			&sc.ShiftID, &sc.ShiftName); err != nil {
 		if db.IsNoRows(err) {
 			return nil, apperr.NotFound("Cleaning Schedule")
 		}
@@ -482,7 +512,8 @@ func (h cleaningHook) AfterTransition(ctx context.Context, tx pgx.Tx, item *oper
 	if action == workflow.ActReopen {
 		_, _ = tx.Exec(ctx, `UPDATE cleaning_tasks SET inspection_status = 'not_inspected' WHERE task_id = $1`, item.ID)
 	}
-	return nil
+	// PRD P2 v2.1 P2-RTE-03: progres route run (x dari y area)
+	return refreshRunProgressTx(ctx, tx, item.ID)
 }
 
 func strPtr(s string) *string { return &s }

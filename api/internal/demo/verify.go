@@ -141,6 +141,46 @@ func (s *Service) Verify(ctx context.Context) (*Report, error) {
 		c.count("Announcements", `SELECT count(*) FROM announcements WHERE property_id = $1 AND status = 'published'`, 3, pid)
 		c.count("CSAT feedback", `SELECT count(*) FROM service_request_feedback f JOIN service_requests sr ON sr.id = f.service_request_id WHERE sr.property_id = $1`, 2, pid)
 		c.count("Tenant App accounts", `SELECT count(*) FROM tenant_users WHERE property_id = $1 AND status = 'active'`, 1, pid)
+		// ---- PRD P2 v2.1 Workforce Operations (seed 1.2) ----
+		c.count("P2 Emergency contacts", `SELECT count(*) FROM emergency_contacts WHERE property_id = $1 AND is_active`, 5, pid)
+		c.count("P2 Emergency alerts (resolved + false alarm)", `SELECT count(DISTINCT status) FROM emergency_alerts WHERE property_id = $1`, 2, pid)
+		c.count("P2 Emergency → incident otomatis", `SELECT count(*) FROM emergency_alerts WHERE property_id = $1 AND incident_id IS NOT NULL`, 2, pid)
+		c.count("P2 Shift per domain (security + housekeeping)", `SELECT count(DISTINCT domain) FROM shift_definitions WHERE property_id = $1`, 2, pid)
+		c.count("P2 Roster 7 hari", `SELECT count(*) FROM shift_assignments WHERE property_id = $1 AND status = 'scheduled'`, 14, pid)
+		c.count("P2 Clock-in (attendance)", `SELECT count(*) FROM attendance_records WHERE property_id = $1`, 1, pid)
+		c.count("P2 Serah terima shift", `SELECT count(*) FROM shift_handovers WHERE property_id = $1`, 1, pid)
+		c.count("P2 Dokumen equipment (termasuk kedaluwarsa)", `SELECT count(*) FROM asset_documents WHERE property_id = $1 AND is_active`, 4, pid)
+		c.count("P2 Asset health terhitung", `SELECT count(*) FROM assets WHERE property_id = $1 AND deleted_at IS NULL AND health_updated_at IS NOT NULL`, 5, pid)
+		c.count("P2 Inspeksi engineering terjadwal", `SELECT count(*) FROM maintenance_schedules ms JOIN maintenance_plans mp ON mp.id = ms.plan_id WHERE mp.property_id = $1 AND mp.output_type = 'inspection' AND ms.task_id IS NOT NULL`, 1, pid)
+		c.count("P2 Cleaning route + run hari ini berprogres", `SELECT count(*) FROM cleaning_route_runs WHERE property_id = $1 AND completed_stops > 0`, 1, pid)
+		c.count("P2 Consumable per cleaning task", `SELECT count(*) FROM task_consumables tc JOIN tasks t ON t.id = tc.task_id WHERE t.property_id = $1`, 1, pid)
+		c.count("P2 Parkir (area + kendaraan + log + pelanggaran)", `SELECT (SELECT count(*) FROM parking_areas WHERE property_id = $1) + (SELECT count(*) FROM vehicles WHERE property_id = $1) + (SELECT count(*) FROM parking_logs WHERE property_id = $1) + (SELECT count(*) FROM parking_violations WHERE property_id = $1)`, 8, pid)
+		c.count("P2 Lost & Found (barang + laporan)", `SELECT (SELECT count(*) FROM lost_found_items WHERE property_id = $1) + (SELECT count(*) FROM lost_reports WHERE property_id = $1)`, 3, pid)
+	}
+
+	// PRD P3 v2.1 (Tenant Experience) & P4 v2.1 (Financial Operations) — profile office & apartment
+	p3p4 := func(c *checker, pid uuid.UUID, apartment bool) {
+		c.count("B-08 Pembayaran gagal (pending → ditolak Finance)", `SELECT count(*) FROM payments p JOIN invoices i ON i.id = p.invoice_id WHERE i.property_id = $1 AND p.status = 'failed'`, 1, pid)
+		c.count("P3 Paket (menunggu + diambil)", `SELECT count(DISTINCT status) FROM packages WHERE property_id = $1`, 2, pid)
+		c.count("P3 Izin parkir tenant (disetujui)", `SELECT count(*) FROM parking_permits WHERE property_id = $1 AND status = 'approved'`, 1, pid)
+		c.count("P3 Feedback umum (ditanggapi)", `SELECT count(*) FROM tenant_feedback WHERE property_id = $1 AND status = 'responded'`, 1, pid)
+		c.count("P3 Pengumuman bertarget + alert", `SELECT count(DISTINCT category) FROM announcements WHERE property_id = $1 AND category IN ('news','alert')`, 2, pid)
+		c.count("P3 Isu berulang terdeteksi", `SELECT count(*) FROM recurring_issues WHERE property_id = $1`, 1, pid)
+		c.count("P4 Pengaturan billing (PPN/rekening)", `SELECT (SELECT count(*) FROM billing_settings WHERE property_id = $1) + (SELECT count(*) FROM bank_accounts WHERE property_id = $1)`, 2, pid)
+		c.count("P4 Billing rule", `SELECT count(*) FROM billing_rules WHERE property_id = $1 AND is_active`, 1, pid)
+		c.count("P4 Billing run draft menunggu terbit", `SELECT count(*) FROM billing_runs WHERE property_id = $1 AND status = 'generated'`, 1, pid)
+		c.count("P4 Denda terakrual", `SELECT count(*) FROM invoice_penalties WHERE property_id = $1`, 1, pid)
+		c.count("P4 Janji bayar (log penagihan)", `SELECT count(*) FROM collection_logs WHERE property_id = $1 AND promise_status = 'open'`, 1, pid)
+		c.count("P4 Credit note menunggu persetujuan", `SELECT count(*) FROM credit_notes WHERE property_id = $1 AND status = 'pending'`, 1, pid)
+		c.count("P4 Impor mutasi bank (saran pencocokan)", `SELECT count(*) FROM bank_statement_lines WHERE property_id = $1 AND status = 'suggested'`, 1, pid)
+		c.count("P4 Budget disetujui + biaya manual", `SELECT (SELECT count(*) FROM budgets WHERE property_id = $1 AND status = 'approved') + (SELECT count(*) FROM cost_entries WHERE property_id = $1 AND deleted_at IS NULL)`, 4, pid)
+		c.count("P4 Deposit ledger", `SELECT count(*) FROM deposit_entries WHERE property_id = $1`, 1, pid)
+		if apartment {
+			c.count("P4 Meter listrik + pembacaan", `SELECT count(*) FROM meter_readings WHERE property_id = $1`, 6, pid)
+			c.count("P4 Pembacaan flagged (review)", `SELECT count(*) FROM meter_readings WHERE property_id = $1 AND status = 'flagged'`, 1, pid)
+			c.count("P4 Invoice listrik dari pemakaian meter", `SELECT count(*) FROM invoice_items it JOIN invoices i ON i.id = it.invoice_id WHERE i.property_id = $1 AND it.meter_reading_id IS NOT NULL AND i.status <> 'cancelled'`, 1, pid)
+			c.count("P4 Sinking fund (saldo awal + penggunaan)", `SELECT count(DISTINCT entry_type) FROM sinking_fund_entries WHERE property_id = $1`, 2, pid)
+		}
 	}
 
 	// ---- HOTEL ----
@@ -191,6 +231,7 @@ func (s *Service) Verify(ctx context.Context) (*Report, error) {
 		c.count("Prospect pending validation", `SELECT count(*) FROM tenant_users WHERE property_id = $1 AND status = 'pending_validation'`, 1, aptID)
 		c.count("BVRooms apartment listing + unit type", `SELECT count(*) FROM bvrooms_unit_types WHERE property_id = $1`, 1, aptID)
 		c.count("BVRooms apartment booking", `SELECT count(*) FROM bvrooms_bookings WHERE property_id = $1`, 2, aptID)
+		p3p4(c, aptID, true)
 	}
 	rep.Sections = append(rep.Sections, *sec)
 
@@ -209,6 +250,7 @@ func (s *Service) Verify(ctx context.Context) (*Report, error) {
 		c.count("Tenant Users (authorized)", `SELECT count(*) FROM tenant_users WHERE property_id = $1 AND status = 'active'`, 5, offID)
 		c.count("Users dengan akses unit berbeda (isolasi)", `SELECT count(DISTINCT ta.location_id) FROM tenant_access ta JOIN tenant_users tu ON tu.id = ta.tenant_user_id WHERE tu.property_id = $1 AND tu.tenant_id = (SELECT id FROM tenants WHERE property_id = $1 AND name = 'PT Nusantara Digital')`, 2, offID)
 		c.count("Meeting rooms / common areas", `SELECT count(*) FROM locations WHERE property_id = $1 AND location_type IN ('space','area') AND deleted_at IS NULL`, 10, offID)
+		p3p4(c, offID, false)
 	}
 	rep.Sections = append(rep.Sections, *sec)
 

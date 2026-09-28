@@ -369,6 +369,8 @@ func (s *Service) CreateRoom(ctx context.Context, in RoomInput) (*Room, error) {
 			}
 			return err
 		}
+		// kamar baru = Available → occupancy unit Vacant (P1-BLD-08)
+		_, _ = tx.Exec(ctx, `UPDATE units SET occupancy_status = 'vacant' WHERE location_id = $1 AND occupancy_status <> 'vacant'`, locID)
 		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "hotel_room", EntityID: &locID, EntityLabel: code + " " + in.RoomNumber})
 		out, err = s.getRoomTx(ctx, tx, locID)
 		return err
@@ -447,6 +449,10 @@ func (s *Service) setRoomStatusTx(ctx context.Context, tx pgx.Tx, r *Room, to, n
 		return nil
 	}
 	if _, err := tx.Exec(ctx, `UPDATE hotel_rooms SET room_status = $2, status_note = NULLIF($3,''), status_changed_at = now(), updated_by = $4 WHERE location_id = $1`, r.LocationID, to, note, actorOrNil(p)); err != nil {
+		return err
+	}
+	// PRD P1 v2.1 P1-BLD-08 (D-P1-02): occupancy unit mengikuti status kamar agar ringkasan occupancy akurat untuk profile Hotel
+	if _, err := tx.Exec(ctx, `UPDATE units SET occupancy_status = $2 WHERE location_id = $1 AND occupancy_status IS DISTINCT FROM $2`, r.LocationID, RoomOccupancy(to)); err != nil {
 		return err
 	}
 	_ = audit.Record(ctx, tx, audit.Entry{ObjectType: "hotel_room", ObjectID: r.LocationID, Action: audit.ActStatusChanged, From: r.RoomStatus, To: to, Payload: map[string]any{"reason": reason, "note": note}})
@@ -753,6 +759,18 @@ func (s *Service) Availability(ctx context.Context, propertyID uuid.UUID, checkI
 		return nil
 	})
 	return out, err
+}
+
+// RoomOccupancy: status kamar → occupancy unit (PRD P1 v2.1 P1-BLD-08): occupied → occupied; out of order/service →
+// inactive; available/dirty/clean/inspected → vacant.
+func RoomOccupancy(roomStatus string) string {
+	switch roomStatus {
+	case "occupied":
+		return "occupied"
+	case "out_of_order", "out_of_service":
+		return "inactive"
+	}
+	return "vacant"
 }
 
 func has(xs []string, x string) bool {

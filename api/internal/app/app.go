@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,23 +19,28 @@ import (
 	"github.com/buildingvision/api/internal/audit"
 	"github.com/buildingvision/api/internal/billing"
 	"github.com/buildingvision/api/internal/booking"
+	"github.com/buildingvision/api/internal/buildingmap"
 	"github.com/buildingvision/api/internal/bvrooms"
 	"github.com/buildingvision/api/internal/commercial"
 	"github.com/buildingvision/api/internal/demo"
 	"github.com/buildingvision/api/internal/engineering"
 	"github.com/buildingvision/api/internal/exports"
+	"github.com/buildingvision/api/internal/finance"
 	"github.com/buildingvision/api/internal/growth"
 	"github.com/buildingvision/api/internal/hotel"
 	"github.com/buildingvision/api/internal/housekeeping"
 	"github.com/buildingvision/api/internal/iam"
 	"github.com/buildingvision/api/internal/inventory"
+	"github.com/buildingvision/api/internal/metering"
 	"github.com/buildingvision/api/internal/notification"
 	"github.com/buildingvision/api/internal/operations"
 	"github.com/buildingvision/api/internal/overview"
+	"github.com/buildingvision/api/internal/parcels"
 	"github.com/buildingvision/api/internal/platform/apperr"
 	"github.com/buildingvision/api/internal/platform/authctx"
 	"github.com/buildingvision/api/internal/platform/config"
 	"github.com/buildingvision/api/internal/platform/db"
+	"github.com/buildingvision/api/internal/platform/errtrack"
 	"github.com/buildingvision/api/internal/platform/httpx"
 	"github.com/buildingvision/api/internal/platform/jobs"
 	"github.com/buildingvision/api/internal/platform/mailer"
@@ -46,11 +52,14 @@ import (
 	"github.com/buildingvision/api/internal/search"
 	"github.com/buildingvision/api/internal/security"
 	bvsync "github.com/buildingvision/api/internal/sync"
+	"github.com/buildingvision/api/internal/tenancy"
 	"github.com/buildingvision/api/internal/tenantapp"
 	"github.com/buildingvision/api/internal/tenantrelation"
 	"github.com/buildingvision/api/internal/tenantservice"
 	"github.com/buildingvision/api/internal/vendor"
 	"github.com/buildingvision/api/internal/visitor"
+	"github.com/buildingvision/api/internal/waassist"
+	"github.com/buildingvision/api/internal/workforce"
 )
 
 type App struct {
@@ -91,6 +100,11 @@ type App struct {
 	Growth         *growth.Service         // Website PRD: signup, trial, onboarding, Book a Demo, funnel events
 	BVRooms        *bvrooms.Service        // BVRooms customer booking channel (white-label per org; Requirements v0.2)
 	Demo           *demo.Service           // Demo Seed Database (Admin Internal → Demo Data; bvctl demo)
+	Workforce      *workforce.Service      // PRD P2 v2.1 §8: shift per domain, roster, on-duty, serah terima, kompetensi, kapasitas
+	Parcels        *parcels.Service        // PRD P3 v2.1 §5.9: Package (paket masuk, serah terima, pengingat)
+	WAAssist       *waassist.Service       // PRD P3 v2.1 §6.4: WhatsApp manual click-to-chat + log (pengganti email, D-P3-08)
+	Metering       *metering.Service       // PRD P4 v2.1 §5.3: meter listrik/air, tarif, pembacaan (Web & Staff App)
+	Finance        *finance.Service        // PRD P4 v2.1 §8–§9: budget vs actual, biaya, ekspor jurnal, webhook keluar
 	Mailer         mailer.Mailer
 
 	// modul lanjutan didaftarkan lewat Extensions (engineering, security, housekeeping, tenantservice, notification, overview, search, sync)
@@ -127,7 +141,7 @@ func New(opts Options) (*App, error) {
 	a.IAM = iam.NewService(opts.DB, signer, opts.Cfg.RefreshTokenTTL)
 	a.Profile = profile.New(opts.DB, opts.Jobs)
 	a.Property = &property.Service{DB: opts.DB, Jobs: opts.Jobs}
-	a.Attachments = &attachments.Service{DB: opts.DB, Storage: opts.Storage, Jobs: opts.Jobs, UploadTTL: opts.Cfg.PresignUploadTTL, DownloadTTL: opts.Cfg.PresignDownloadTTL, MaxBytes: opts.Cfg.MaxUploadBytes, MaxImageBytes: opts.Cfg.MaxImageBytes}
+	a.Attachments = &attachments.Service{DB: opts.DB, Storage: opts.Storage, Jobs: opts.Jobs, UploadTTL: opts.Cfg.PresignUploadTTL, DownloadTTL: opts.Cfg.PresignDownloadTTL, MaxBytes: opts.Cfg.MaxUploadBytes, MaxImageBytes: opts.Cfg.MaxImageBytes, MaxVideoBytes: opts.Cfg.MaxVideoBytes}
 	a.Operations = operations.NewService(opts.DB, opts.Jobs, a.Attachments)
 	a.Operations.RegisterHook("work_order:*", operations.FindingHook(a.Operations))
 	a.Operations.RegisterHook("task:*", operations.FindingHook(a.Operations))
@@ -139,6 +153,8 @@ func New(opts Options) (*App, error) {
 			a.Mailer = mailer.LogMailer{Log: log}
 		}
 	}
+	a.IAM.Mailer, a.IAM.PublicURL = a.Mailer, opts.Cfg.PublicURL
+	a.IAM.ExposeInviteLink = opts.Cfg.Env != "production" && opts.Cfg.SMTPHost == ""
 	a.AppDownload = appdownload.New(opts.DB)
 	a.Growth = growth.New(opts.DB, opts.Jobs, a.IAM, a.Mailer, log, growth.Config{
 		Env: opts.Cfg.Env, PublicURL: opts.Cfg.PublicURL, WebsiteURL: opts.Cfg.WebsiteURL, TrialDays: opts.Cfg.TrialDays, TrialEndingSoonDays: opts.Cfg.TrialEndingSoonDays,
@@ -164,12 +180,15 @@ func (a *App) BuildRouter() http.Handler {
 
 	r.Get("/health", a.health)
 	r.Get("/ready", a.ready)
+	r.Get("/healthz", a.health) // alias konvensi k8s/uptime monitor (PRD P0 v2 §24.4)
+	r.Get("/readyz", a.ready)
 
 	iamH := &iam.Handler{Svc: a.IAM, CookieDomain: a.Cfg.CookieDomain, CookieSecure: a.Cfg.CookieSecure}
 	propH := &property.Handler{Svc: a.Property, IAM: a.IAM}
 	profH := &profile.Handler{Svc: a.Profile, IAM: a.IAM}
 	attH := &attachments.Handler{Svc: a.Attachments, IAM: a.IAM}
 	opsH := &operations.Handler{Svc: a.Operations, IAM: a.IAM}
+	mapH := &buildingmap.Handler{Svc: &buildingmap.Service{DB: a.DB, Attachments: a.Attachments}, IAM: a.IAM} // PRD P1 v2 §7–§8
 	adH := &appdownload.Handler{Svc: a.AppDownload, IAM: a.IAM}
 	growthH := &growth.Handler{Svc: a.Growth, IAM: a.IAM, CookieDomain: a.Cfg.CookieDomain, CookieSecure: a.Cfg.CookieSecure}
 
@@ -191,7 +210,8 @@ func (a *App) BuildRouter() http.Handler {
 		growthH.MountPublic(r) // signup/verify/demo/events/plans (Website PRD §25, §33–§34, §40)
 		r.Group(func(r chi.Router) {
 			r.Use(a.IAM.Authenticate)
-			r.Use(a.Growth.Guard) // trial expired/cancelled: mutasi diblokir (Website PRD §31)
+			r.Use(a.IAM.PasswordChangeGuard) // P3-ACC-03: tenant password sementara
+			r.Use(a.Growth.Guard)            // trial expired/cancelled: mutasi diblokir (Website PRD §31)
 			r.Use(httpx.Idempotency(a.DB))
 			iamH.MountProtected(r)
 			adH.MountAdmin(r) // /admin/app-downloads — role admin_internal (Website PRD §18–§19, §43)
@@ -203,7 +223,10 @@ func (a *App) BuildRouter() http.Handler {
 			profH.Mount(r)
 			attH.Mount(r)
 			opsH.Mount(r)
+			mapH.Mount(r)
+			(&tenancy.Handler{Svc: &tenancy.Service{DB: a.DB, IAM: a.IAM}, IAM: a.IAM}).Mount(r) // Platform Admin: registry organization (PRD P0 v2 §6)
 			r.With(a.IAM.Require("platform.audit_logs.view")).Get("/audit-logs", a.listAuditLogs)
+			r.Post("/client-errors", a.clientError) // error boundary web/mobile → log + error tracking (PRD P0 v2 §24.4)
 			for _, ext := range a.Extensions {
 				ext.Mount(a, r)
 			}
@@ -255,6 +278,42 @@ func (a *App) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, httpx.NewList(items, next))
+}
+
+// clientError: laporan error dari klien (ErrorBoundary web / crash handler mobile). Dibatasi ukuran; tanpa PII tambahan.
+func (a *App) clientError(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Message   string `json:"message"`
+		Stack     string `json:"stack"`
+		Route     string `json:"route"`
+		Source    string `json:"source"` // web | staff_app | tenant_app
+		UserAgent string `json:"user_agent"`
+		Release   string `json:"release"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	if err := httpx.Decode(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if strings.TrimSpace(in.Message) == "" {
+		httpx.WriteError(w, r, apperr.Validation("message wajib"))
+		return
+	}
+	if in.Source == "" {
+		in.Source = "web"
+	}
+	p := authctx.Must(r.Context())
+	trunc := func(s string, n int) string {
+		if len(s) > n {
+			return s[:n]
+		}
+		return s
+	}
+	a.Log.Warn("client_error", "source", in.Source, "route", trunc(in.Route, 200), "message", trunc(in.Message, 500), "release", in.Release,
+		"organization_id", p.OrganizationID, "user_id", p.UserID, "request_id", httpx.RequestID(r.Context()))
+	errtrack.Capture(r.Context(), errtrack.Event{Message: "[" + in.Source + "] " + trunc(in.Message, 500), Stack: trunc(in.Stack, 8000), RequestID: httpx.RequestID(r.Context()),
+		Tags: map[string]string{"source": in.Source, "route": trunc(in.Route, 200), "client_release": in.Release}})
+	w.WriteHeader(http.StatusAccepted)
 }
 
 var _ = authctx.Must

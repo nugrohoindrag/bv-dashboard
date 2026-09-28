@@ -19,26 +19,36 @@ import (
 	"github.com/buildingvision/api/internal/asset"
 	"github.com/buildingvision/api/internal/attachments"
 	"github.com/buildingvision/api/internal/audit"
+	"github.com/buildingvision/api/internal/booking"
+	"github.com/buildingvision/api/internal/buildingmap"
 	"github.com/buildingvision/api/internal/bvrooms"
 	"github.com/buildingvision/api/internal/engineering"
 	"github.com/buildingvision/api/internal/exports"
 	"github.com/buildingvision/api/internal/housekeeping"
 	"github.com/buildingvision/api/internal/iam"
+	"github.com/buildingvision/api/internal/inventory"
 	"github.com/buildingvision/api/internal/notification"
 	"github.com/buildingvision/api/internal/operations"
 	"github.com/buildingvision/api/internal/overview"
 	"github.com/buildingvision/api/internal/platform/config"
 	"github.com/buildingvision/api/internal/property"
+	"github.com/buildingvision/api/internal/reports"
 	"github.com/buildingvision/api/internal/search"
 	"github.com/buildingvision/api/internal/security"
 	bvsync "github.com/buildingvision/api/internal/sync"
+	"github.com/buildingvision/api/internal/tenancy"
 	"github.com/buildingvision/api/internal/tenantservice"
+	"github.com/buildingvision/api/internal/workforce"
 )
 
 // runOpenAPI: generate contracts/openapi/v1.yaml dari router (path, method, tag) + skema reflektif dari struct Go.
 // TAD ADR-004 menyebut spec-first; P0 memakai code-first dengan spec ter-generate di CI agar tidak menyimpang.
 func runOpenAPI(w io.Writer) error {
 	cfg, _ := config.Load()
+	// probe route (ProbeRoutes) memicu error handler tanpa DB — senyapkan log default selama generate
+	prevLog := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	defer slog.SetDefault(prevLog)
 	a, err := app.New(app.Options{Cfg: cfg, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		return err
@@ -64,9 +74,14 @@ func runOpenAPI(w io.Writer) error {
 		"User": iam.User{}, "CreateUserInput": iam.CreateUserInput{}, "UpdateUserInput": iam.UpdateUserInput{}, "Role": iam.Role{}, "RoleInput": iam.RoleInput{}, "Team": iam.Team{}, "TeamInput": iam.TeamInput{}, "TokenPair": iam.TokenPair{}, "DeviceInput": iam.DeviceInput{},
 		"Attachment": attachments.Attachment{}, "PresignInput": attachments.PresignInput{}, "PresignOutput": attachments.PresignOutput{}, "ConfirmInput": attachments.ConfirmInput{},
 		"Activity": audit.Activity{}, "AuditLog": audit.AuditLog{},
-		"Notification": notification.Notification{}, "NotificationPreference": notification.Preference{},
+		"Notification": notification.Notification{}, "NotificationPreference": notification.Preference{}, "NotificationPreferenceInput": notification.PreferenceInput{},
 		"SearchResult": search.Result{}, "Export": exports.Export{},
-		"OverviewToday": overview.Today{}, "AttentionItem": overview.AttentionItem{}, "TodaysOperations": overview.TodaysOperations{}, "WorkloadRow": overview.WorkloadRow{}, "BuildingState": overview.BuildingState{}, "TenantRequestsPanel": overview.TenantRequestsPanel{},
+		"OverviewToday": overview.Today{}, "AttentionItem": overview.AttentionItem{}, "TodaysOperations": overview.TodaysOperations{}, "WorkloadRow": overview.WorkloadRow{}, "BuildingState": overview.BuildingState{}, "TenantRequestsPanel": overview.TenantRequestsPanel{}, "Residents": overview.Residents{},
+		// PRD P1 v2: floor plan, occupancy, facility, escalation, my work, reports
+		"FloorPlan": buildingmap.FloorPlan{}, "FloorPlanInput": buildingmap.FloorPlanInput{}, "FloorPlanMarker": buildingmap.Marker{}, "FloorPlanMarkerInput": buildingmap.MarkerInput{}, "FloorPlanMarkerRef": buildingmap.MarkerRef{},
+		"OccupancySummary": buildingmap.OccupancySummary{}, "OccupancyUnit": buildingmap.OccupancyUnit{},
+		"Facility": booking.Facility{}, "FacilityInput": booking.FacilityInput{}, "EscalateInput": operations.EscalateInput{}, "TaskCategory": operations.TaskCategory{},
+		"MyWorkSummary": overview.MyWorkSummary{}, "Report": reports.Report{},
 		"SyncBundle": bvsync.Bundle{}, "SyncPushInput": bvsync.PushInput{}, "SyncPushOutput": bvsync.PushOutput{}, "SyncConflict": bvsync.Conflict{},
 		// BVRooms (Requirements v0.2)
 		"BVRoomsAppConfig": bvrooms.AppConfig{}, "BVRoomsOTPRequestInput": bvrooms.OTPRequestInput{}, "BVRoomsOTPRequestResult": bvrooms.OTPRequestResult{}, "BVRoomsOTPVerifyInput": bvrooms.OTPVerifyInput{}, "BVRoomsAuthResult": bvrooms.AuthResult{}, "BVRoomsRegisterInput": bvrooms.RegisterInput{},
@@ -77,6 +92,29 @@ func runOpenAPI(w io.Writer) error {
 		"BVRoomsListing": bvrooms.Listing{}, "BVRoomsListingInput": bvrooms.ListingInput{}, "BVRoomsPhotoPresignInput": bvrooms.PhotoPresignInput{}, "BVRoomsAdminPhoto": bvrooms.AdminPhoto{}, "BVRoomsAddon": bvrooms.Addon{}, "BVRoomsAddonInput": bvrooms.AddonInput{},
 		"BVRoomsUnitType": bvrooms.UnitType{}, "BVRoomsUnitTypeInput": bvrooms.UnitTypeInput{}, "BVRoomsUnitRentalInput": bvrooms.UnitRentalInput{}, "BVRoomsPromotion": bvrooms.Promotion{}, "BVRoomsPromotionInput": bvrooms.PromotionInput{}, "BVRoomsAdminBanner": bvrooms.AdminBanner{}, "BVRoomsBannerInput": bvrooms.BannerInput{},
 		"BVRoomsAdminActionInput": bvrooms.AdminActionInput{}, "BVRoomsVerifyInput": bvrooms.VerifyInput{}, "BVRoomsAdminCustomer": bvrooms.AdminCustomer{},
+		// PRD P0 v2 (Roadmap v2.0) — Product & Platform Foundation
+		"OrganizationInput": property.OrganizationInput{}, "Portfolio": property.Portfolio{}, "PortfolioInput": property.PortfolioInput{},
+		"OrganizationSummary": tenancy.OrgSummary{}, "CreateOrganizationInput": tenancy.CreateInput{}, "Session": iam.Session{},
+		"BroadcastInput": notification.BroadcastInput{}, "ChecklistOption": operations.ChecklistOption{},
+		// PRD P1 v2.1 (Roadmap v2.1): rantai keluhan lintas tim & tindak lanjut WO
+		"ServiceRequestChain": tenantservice.ChainView{}, "ChainItem": operations.ChainItem{}, "FollowUpTaskInput": operations.FollowUpTaskInput{},
+		// PRD P2 v2.1 (Roadmap v2.1) — Workforce Operations
+		"EmergencyAlert": security.EmergencyAlert{}, "RaiseEmergencyInput": security.RaiseEmergencyInput{}, "EmergencyActionInput": security.EmergencyActionInput{}, "EmergencyEvent": security.EmergencyEvent{},
+		"EmergencyContact": security.EmergencyContact{}, "EmergencyContactInput": security.EmergencyContactInput{},
+		"ParkingArea": security.ParkingArea{}, "ParkingAreaInput": security.ParkingAreaInput{}, "Vehicle": security.Vehicle{}, "VehicleInput": security.VehicleInput{}, "ParkingLog": security.ParkingLog{}, "ParkingEntryInput": security.ParkingEntryInput{},
+		"ParkingViolation": security.ParkingViolation{}, "ParkingViolationInput": security.ParkingViolationInput{}, "ViolationActionInput": security.ViolationActionInput{},
+		"LostFoundItem": security.LostFoundItem{}, "LostFoundItemInput": security.LostFoundItemInput{}, "LostFoundActionInput": security.LostFoundActionInput{}, "LostReport": security.LostReport{}, "LostReportInput": security.LostReportInput{},
+		"IncidentInvestigation": operations.IncidentInvestigation{}, "IncidentInvestigationInput": operations.IncidentInvestigationInput{}, "IncidentEscalateInput": operations.IncidentEscalateInput{}, "IncidentPerson": operations.IncidentPerson{}, "IncidentPersonInput": operations.IncidentPersonInput{},
+		"ShiftDefinition": workforce.ShiftDefinition{}, "ShiftInput": workforce.ShiftInput{}, "RosterEntry": workforce.RosterEntry{}, "RosterAssignInput": workforce.RosterAssignInput{}, "RosterAssignResult": workforce.RosterAssignResult{}, "CopyWeekInput": workforce.CopyWeekInput{},
+		"Attendance": workforce.Attendance{}, "ClockInput": workforce.ClockInput{}, "MyAttendance": workforce.MyAttendance{}, "OnDutyBoard": workforce.OnDutyBoard{}, "Handover": workforce.Handover{}, "HandoverInput": workforce.HandoverInput{},
+		"WorkforceCapacity": workforce.CapacitySummary{}, "DomainStaff": workforce.DomainStaff{},
+		"AssetDocument": asset.AssetDocument{}, "AssetDocumentInput": asset.AssetDocumentInput{}, "ExpiringDocument": asset.ExpiringItem{}, "AssetHealth": asset.Health{}, "AssetInsight": asset.AssetInsight{},
+		"CleaningRoute": housekeeping.CleaningRoute{}, "CleaningRouteInput": housekeeping.RouteInput{}, "CleaningRouteRun": housekeeping.RouteRun{},
+		"ConsumableUsage": inventory.ConsumableUsage{}, "ConsumableUsageInput": inventory.ConsumableUsageInput{}, "ConsumableItem": inventory.ConsumableItem{},
+		"DomainDashboard": overview.DomainDashboard{},
+	}
+	for k, v := range p3p4Types() { // PRD P3/P4 v2.1 (B-16)
+		types[k] = v
 	}
 	names := make([]string, 0, len(types))
 	for n := range types {
@@ -91,6 +129,13 @@ func runOpenAPI(w io.Writer) error {
 		"code": map[string]any{"type": "string"}, "errors": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"field": map[string]any{"type": "string"}, "message": map[string]any{"type": "string"}}}}, "request_id": map[string]any{"type": "string"}}}
 
 	paths := map[string]map[string]any{}
+	// security ditentukan dari perilaku nyata (probe tanpa token), bukan daftar prefix manual (PRD P0 v2 §19.2)
+	secured := map[string]bool{}
+	for _, ri := range app.ProbeRoutes(router) {
+		if ri.RequiresStaffAuth() || (ri.Status == http.StatusUnauthorized && strings.HasPrefix(ri.Route, "/api/v1/bvrooms/")) {
+			secured[ri.Method+" "+ri.Route] = true
+		}
+	}
 	_ = chi.Walk(router, func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error {
 		if method == http.MethodOptions || method == http.MethodHead {
 			return nil
@@ -99,7 +144,13 @@ func runOpenAPI(w io.Writer) error {
 		if !strings.HasPrefix(route, "/api/v1") && !strings.HasPrefix(route, "/public") && route != "/health" && route != "/ready" {
 			return nil
 		}
-		op := map[string]any{"tags": []string{tagOf(route)}, "summary": summaryOf(method, route), "responses": responsesFor(method, route)}
+		tag := tagOf(route)
+		if tag == "System" {
+			if t := tagP3P4(route); t != "" {
+				tag = t
+			}
+		}
+		op := map[string]any{"tags": []string{tag}, "summary": summaryOf(method, route), "responses": responsesFor(method, route)}
 		var params []map[string]any
 		for _, seg := range strings.Split(route, "/") {
 			if strings.HasPrefix(seg, "{") {
@@ -107,7 +158,9 @@ func runOpenAPI(w io.Writer) error {
 				params = append(params, map[string]any{"name": name, "in": "path", "required": true, "schema": map[string]any{"type": "string"}})
 			}
 		}
-		if method == http.MethodGet && !strings.Contains(route, "{id}") && strings.HasSuffix(route, "s") {
+		if specific := paramsP3P4(method, strings.TrimPrefix(route, "/api/v1")); specific != nil {
+			params = append(params, specific...)
+		} else if method == http.MethodGet && !strings.Contains(route, "{id}") && strings.HasSuffix(route, "s") && tag != "Billing" && tag != "Finance" {
 			params = append(params, map[string]any{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "default": 25, "maximum": 200}},
 				map[string]any{"name": "cursor", "in": "query", "schema": map[string]any{"type": "string"}},
 				map[string]any{"name": "property_id", "in": "query", "schema": map[string]any{"type": "string", "format": "uuid"}},
@@ -122,10 +175,14 @@ func runOpenAPI(w io.Writer) error {
 		if len(params) > 0 {
 			op["parameters"] = params
 		}
-		if body := bodyFor(method, route); body != "" {
+		body := bodyP3P4(method, strings.TrimPrefix(route, "/api/v1"))
+		if body == "" {
+			body = bodyFor(method, route)
+		}
+		if body != "" {
 			op["requestBody"] = map[string]any{"required": true, "content": map[string]any{"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/" + body}}}}
 		}
-		if !strings.HasPrefix(route, "/api/v1/auth") && !strings.HasPrefix(route, "/public") && route != "/health" && route != "/ready" {
+		if secured[method+" "+route] {
 			op["security"] = []map[string]any{{"bearerAuth": []string{}}}
 		}
 		if paths[route] == nil {
@@ -255,9 +312,10 @@ func tagOf(route string) string {
 		return "Auth"
 	case "users", "roles", "permissions", "teams":
 		return "IAM"
-	case "organizations", "locations", "properties", "buildings", "towers", "floors", "areas", "spaces", "units", "tenants", "occupants":
+	case "organizations", "locations", "properties", "buildings", "towers", "floors", "areas", "spaces", "units", "tenants", "occupants",
+		"floor-plans", "floor-plan-markers", "occupancy", "facilities":
 		return "Property"
-	case "tasks", "work-orders", "checklist-templates", "checklist-runs", "checklist-run-items", "sla-policies", "links", "activities", "comments":
+	case "tasks", "task-categories", "work-orders", "checklist-templates", "checklist-runs", "checklist-run-items", "sla-policies", "links", "activities", "comments":
 		return "Operations"
 	case "incidents", "findings":
 		return "Operations"
@@ -265,10 +323,17 @@ func tagOf(route string) string {
 		return "Asset Management"
 	case "maintenance-plans", "maintenance-schedules", "inspections":
 		return "Engineering"
-	case "checkpoints", "patrol-routes", "patrol-schedules", "patrol-tasks":
+	case "checkpoints", "patrol-routes", "patrol-schedules", "patrol-tasks",
+		"emergency-alerts", "emergency-contacts", "parking-areas", "vehicles", "parking-logs", "parking-violations", "lost-found", "incident-people":
 		return "Security"
-	case "cleaning-schedules", "cleaning-tasks", "housekeeping-inspections":
+	case "cleaning-schedules", "cleaning-tasks", "housekeeping-inspections", "cleaning-routes", "cleaning-route-runs":
 		return "Housekeeping"
+	case "security", "housekeeping":
+		return "Workforce"
+	case "asset-documents":
+		return "Asset Management"
+	case "dashboards", "reports":
+		return "Overview"
 	case "service-requests", "service-request-categories":
 		return "Tenant"
 	case "notifications":
@@ -294,7 +359,7 @@ func tagOf(route string) string {
 
 func tags() []map[string]any {
 	var out []map[string]any
-	for _, t := range []string{"System", "Auth", "IAM", "Property", "Operations", "Asset Management", "Engineering", "Security", "Housekeeping", "Tenant", "Notification", "Overview", "Search", "Export", "Sync", "Attachments", "Audit", "Public Intake"} {
+	for _, t := range append([]string{"System", "Auth", "IAM", "Property", "Operations", "Asset Management", "Engineering", "Security", "Housekeeping", "Workforce", "Tenant", "Notification", "Overview", "Search", "Export", "Sync", "Attachments", "Audit", "Public Intake"}, tagsP3P4()...) {
 		out = append(out, map[string]any{"name": t})
 	}
 	return out
@@ -342,6 +407,69 @@ func bodyFor(method, route string) string {
 	}
 	r := strings.TrimPrefix(route, "/api/v1")
 	switch {
+	case r == "/tasks/{id}/work-orders":
+		return "CreateWorkOrderInput"
+	// PRD P1 v2.1 / P2 v2.1 — sebelum aturan prefix generik /tasks/{id}/, /work-orders/{id}/, */escalate
+	case r == "/work-orders/{id}/tasks":
+		return "FollowUpTaskInput"
+	case r == "/tasks/{id}/consumables":
+		return "ConsumableUsageInput"
+	case r == "/incidents/{id}/escalate":
+		return "IncidentEscalateInput"
+	case r == "/incidents/{id}/people" || strings.HasPrefix(r, "/incident-people/"):
+		return "IncidentPersonInput"
+	case r == "/emergency-alerts":
+		return "RaiseEmergencyInput"
+	case strings.HasPrefix(r, "/emergency-alerts/{id}/"):
+		return "EmergencyActionInput"
+	case strings.HasPrefix(r, "/emergency-contacts"):
+		return "EmergencyContactInput"
+	case strings.HasPrefix(r, "/parking-areas"):
+		return "ParkingAreaInput"
+	case strings.HasPrefix(r, "/vehicles"):
+		return "VehicleInput"
+	case r == "/parking-logs":
+		return "ParkingEntryInput"
+	case r == "/parking-violations":
+		return "ParkingViolationInput"
+	case strings.HasPrefix(r, "/parking-violations/{id}/"):
+		return "ViolationActionInput"
+	case r == "/lost-found/items":
+		return "LostFoundItemInput"
+	case strings.HasPrefix(r, "/lost-found/items/{id}/"):
+		return "LostFoundActionInput"
+	case r == "/lost-found/reports":
+		return "LostReportInput"
+	case strings.HasSuffix(r, "/shifts") || strings.HasSuffix(r, "/shifts/{id}"):
+		return "ShiftInput"
+	case strings.HasSuffix(r, "/roster/copy-week"):
+		return "CopyWeekInput"
+	case strings.HasSuffix(r, "/roster"):
+		return "RosterAssignInput"
+	case strings.HasPrefix(r, "/me/attendance/"):
+		return "ClockInput"
+	case strings.HasSuffix(r, "/handovers"):
+		return "HandoverInput"
+	case r == "/assets/{id}/documents" || strings.HasPrefix(r, "/asset-documents/"):
+		return "AssetDocumentInput"
+	case r == "/cleaning-routes" || (method == http.MethodPatch && strings.HasPrefix(r, "/cleaning-routes/")):
+		return "CleaningRouteInput"
+	case strings.HasSuffix(r, "/escalate"):
+		return "EscalateInput"
+	case r == "/floor-plans" || (method == http.MethodPatch && r == "/floor-plans/{id}"):
+		return "FloorPlanInput"
+	case strings.HasPrefix(r, "/floor-plans/{id}/markers"):
+		return "FloorPlanMarkerInput"
+	case r == "/facilities" || (method == http.MethodPatch && r == "/facilities/{id}"):
+		return "FacilityInput"
+	case r == "/organizations/me" || (method == http.MethodPatch && strings.HasPrefix(r, "/platform/organizations/")):
+		return "OrganizationInput"
+	case r == "/platform/organizations":
+		return "CreateOrganizationInput"
+	case r == "/portfolios" || (method == http.MethodPatch && strings.HasPrefix(r, "/portfolios/")):
+		return "PortfolioInput"
+	case r == "/notifications/broadcast":
+		return "BroadcastInput"
 	case r == "/tasks":
 		return "CreateTaskInput"
 	case r == "/work-orders":
@@ -426,7 +554,7 @@ func bodyFor(method, route string) string {
 	case r == "/sync/mutations":
 		return "SyncPushInput"
 	case r == "/notifications/preferences":
-		return "NotificationPreference"
+		return "NotificationPreferenceInput"
 	}
 	return ""
 }
@@ -435,7 +563,28 @@ func responsesFor(method, route string) map[string]any {
 	r := strings.TrimPrefix(route, "/api/v1")
 	ok := map[string]any{"description": "OK"}
 	schema := ""
+	p4schema, p4list := responseP3P4(method, r)
 	switch {
+	case p4schema != "":
+		schema = p4schema
+	case r == "/task-categories":
+		schema = "TaskCategory"
+	case strings.HasPrefix(r, "/floor-plans/{id}/markers"):
+		schema = "FloorPlanMarker"
+	case strings.HasPrefix(r, "/floor-plans"):
+		schema = "FloorPlan"
+	case r == "/floor-plan-markers":
+		schema = "FloorPlanMarkerRef"
+	case r == "/occupancy/summary":
+		schema = "OccupancySummary"
+	case r == "/occupancy/units":
+		schema = "OccupancyUnit"
+	case r == "/facilities" || r == "/facilities/{id}":
+		schema = "Facility"
+	case r == "/me/work-summary":
+		schema = "MyWorkSummary"
+	case r == "/reports/{name}":
+		schema = "Report"
 	case strings.HasPrefix(r, "/tasks") || strings.HasPrefix(r, "/work-orders") || strings.HasPrefix(r, "/patrol-tasks") || strings.HasPrefix(r, "/cleaning-tasks") || r == "/inspections" || r == "/housekeeping-inspections":
 		schema = "WorkItem"
 	case strings.HasPrefix(r, "/service-requests"):
@@ -500,12 +649,18 @@ func responsesFor(method, route string) map[string]any {
 		schema = "BuildingState"
 	case r == "/overview/tenant-requests":
 		schema = "TenantRequestsPanel"
+	case r == "/overview/residents":
+		schema = "Residents"
 	case r == "/overview/pm-due":
 		schema = "MaintenanceSchedule"
 	}
 	if schema != "" {
 		ref := map[string]any{"$ref": "#/components/schemas/" + schema}
-		if method == http.MethodGet && !strings.Contains(r, "{") && r != "/overview/today" && r != "/overview/tenant-requests" && r != "/sync/work-bundle" {
+		if p4schema != "" {
+			if p4list {
+				ref = map[string]any{"type": "object", "properties": map[string]any{"data": map[string]any{"type": "array", "items": ref}, "next_cursor": map[string]any{"type": "string", "nullable": true}}}
+			}
+		} else if method == http.MethodGet && !strings.Contains(r, "{") && r != "/overview/today" && r != "/overview/tenant-requests" && r != "/overview/residents" && r != "/sync/work-bundle" && r != "/occupancy/summary" && r != "/me/work-summary" {
 			ref = map[string]any{"type": "object", "properties": map[string]any{"data": map[string]any{"type": "array", "items": ref}, "next_cursor": map[string]any{"type": "string", "nullable": true}}}
 		}
 		ok["content"] = map[string]any{"application/json": map[string]any{"schema": ref}}

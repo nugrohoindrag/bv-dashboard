@@ -18,7 +18,9 @@ type Error struct {
 	Title  string       `json:"title"`
 	Detail string       `json:"detail,omitempty"`
 	Fields []FieldError `json:"errors,omitempty"`
-	cause  error
+	// Meta: extension member problem+json (RFC 9457 §3.2), mis. alasan penolakan akun + kontak pengelola (PRD P3 v2.1 B-08).
+	Meta  map[string]any `json:"meta,omitempty"`
+	cause error
 }
 
 func (e *Error) Error() string {
@@ -31,6 +33,18 @@ func (e *Error) Unwrap() error              { return e.cause }
 func (e *Error) WithCause(err error) *Error { e.cause = err; return e }
 func (e *Error) WithField(field, msg string) *Error {
 	e.Fields = append(e.Fields, FieldError{Field: field, Message: msg})
+	return e
+}
+
+// WithMeta menambah extension member (nilai nil diabaikan).
+func (e *Error) WithMeta(key string, value any) *Error {
+	if value == nil {
+		return e
+	}
+	if e.Meta == nil {
+		e.Meta = map[string]any{}
+	}
+	e.Meta[key] = value
 	return e
 }
 

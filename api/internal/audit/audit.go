@@ -144,6 +144,10 @@ const (
 	AuditExport           = "export"
 	AuditAccessDenied     = "access_denied"
 	AuditSyncConflict     = "sync_conflict"
+	AuditSessionRevoke    = "session_revoke" // PRD P0 v2 §24.1
+	AuditConfigChange     = "config_change"  // PRD P0 v2 §16: perubahan konfigurasi (feature flag, preferensi, dsb.)
+	AuditInvite           = "invite"         // PRD P0 v2 §26.1: undangan user
+	AuditBroadcast        = "broadcast"      // PRD P0 v2 §14.2: system notification
 )
 
 type AuditEntry struct {
@@ -205,6 +209,7 @@ type AuditLog struct {
 	Before      json.RawMessage `json:"before"`
 	After       json.RawMessage `json:"after"`
 	IP          *string         `json:"ip"`
+	UserAgent   *string         `json:"user_agent"`
 	RequestID   *string         `json:"request_id"`
 	OccurredAt  time.Time       `json:"occurred_at"`
 	Message     string          `json:"message"` // {User} {Action} {Object}
@@ -251,7 +256,7 @@ func ListAuditLogs(ctx context.Context, q db.Querier, f AuditFilter, page httpx.
 	args = append(args, page.Limit+1)
 	rows, err := q.Query(ctx, `
 		SELECT a.id, a.actor_user_id, COALESCE(u.full_name,'System'), a.action, a.entity_type, a.entity_id, a.entity_label,
-		       COALESCE(a.before,'null'::jsonb), COALESCE(a.after,'null'::jsonb), host(a.ip), a.request_id, a.occurred_at
+		       COALESCE(a.before,'null'::jsonb), COALESCE(a.after,'null'::jsonb), host(a.ip), a.user_agent, a.request_id, a.occurred_at
 		FROM audit_logs a LEFT JOIN users u ON u.id = a.actor_user_id `+where+`
 		ORDER BY a.occurred_at DESC, a.id DESC LIMIT $`+itoa(len(args)), args...)
 	if err != nil {
@@ -261,7 +266,7 @@ func ListAuditLogs(ctx context.Context, q db.Querier, f AuditFilter, page httpx.
 	var out []AuditLog
 	for rows.Next() {
 		var l AuditLog
-		if err := rows.Scan(&l.ID, &l.ActorUserID, &l.ActorName, &l.Action, &l.EntityType, &l.EntityID, &l.EntityLabel, &l.Before, &l.After, &l.IP, &l.RequestID, &l.OccurredAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.ActorUserID, &l.ActorName, &l.Action, &l.EntityType, &l.EntityID, &l.EntityLabel, &l.Before, &l.After, &l.IP, &l.UserAgent, &l.RequestID, &l.OccurredAt); err != nil {
 			return nil, nil, err
 		}
 		label := l.EntityType

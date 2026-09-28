@@ -14,6 +14,7 @@ import (
 	"github.com/buildingvision/api/internal/app"
 	"github.com/buildingvision/api/internal/platform/config"
 	"github.com/buildingvision/api/internal/platform/db"
+	"github.com/buildingvision/api/internal/platform/errtrack"
 	"github.com/buildingvision/api/internal/platform/jobs"
 	"github.com/buildingvision/api/internal/platform/metrics"
 	"github.com/buildingvision/api/internal/platform/storage"
@@ -34,6 +35,9 @@ func main() {
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl}))
 	slog.SetDefault(log)
+	if errtrack.Init(cfg.SentryDSN, cfg.Env, cfg.Release, "api", log) {
+		log.Info("error tracking aktif")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

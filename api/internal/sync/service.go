@@ -14,6 +14,9 @@ import (
 
 	"github.com/buildingvision/api/internal/attachments"
 	"github.com/buildingvision/api/internal/audit"
+	"github.com/buildingvision/api/internal/housekeeping"
+	"github.com/buildingvision/api/internal/inventory"
+	"github.com/buildingvision/api/internal/metering"
 	"github.com/buildingvision/api/internal/operations"
 	"github.com/buildingvision/api/internal/operations/workflow"
 	"github.com/buildingvision/api/internal/platform/apperr"
@@ -24,13 +27,20 @@ import (
 	"github.com/buildingvision/api/internal/platform/jobs"
 	"github.com/buildingvision/api/internal/platform/storage"
 	"github.com/buildingvision/api/internal/security"
+	"github.com/buildingvision/api/internal/workforce"
 )
 
 type Service struct {
-	DB          *db.DB
-	Jobs        jobs.Enqueuer
-	Ops         *operations.Service
-	Security    *security.Service
+	DB        *db.DB
+	Jobs      jobs.Enqueuer
+	Ops       *operations.Service
+	Security  *security.Service
+	Workforce *workforce.Service // PRD P2 v2.1: clock-in/out offline
+	// PRD P2 v2.1 §7.3/§7.5: route cleaning (progres) & consumable per cleaning task (offline use_consumable)
+	Housekeeping *housekeeping.Service
+	Inventory    *inventory.Service
+	// PRD P4 v2.1 P4-UTL-03: pencatatan meter offline (bundle meters + mutasi record_meter_reading)
+	Metering    *metering.Service
 	Attachments *attachments.Service
 	Storage     storage.Storage
 	ClockSkew   time.Duration // C8: default 10 menit
@@ -51,6 +61,25 @@ type Bundle struct {
 	Master        Master                    `json:"master"`
 	Removed       []ObjectRef               `json:"removed"`
 	Me            MeLite                    `json:"me"`
+	// PRD P2 v2.1 P2-EMG-07/08: kontak darurat property (cache offline layar Emergency Staff App)
+	EmergencyContacts []security.EmergencyContact `json:"emergency_contacts"`
+	// PRD P2 v2.1 P2-MOB-04: roster saya (7 hari) + sesi on-duty aktif untuk tampilan offline
+	MyRoster   []workforce.RosterEntry `json:"my_roster"`
+	Attendance *workforce.Attendance   `json:"attendance"`
+	// PRD P2 v2.1 P2-RTE-02/03, P2-MOB-05: run cleaning route hari ini (urutan area + progres) & katalog consumable
+	CleaningRouteRuns []housekeeping.RouteRun    `json:"cleaning_route_runs"`
+	ConsumableItems   []inventory.ConsumableItem `json:"consumable_items"`
+	// PRD P4 v2.1 P4-UTL-03: meter aktif yang dapat dicatat (rute unit/lantai; foto & pencatatan offline)
+	Meters []metering.BundleMeter `json:"meters"`
+	// property yang dapat diakses user (Panic / clock-in tanpa lokasi & tanpa jadwal memerlukan pilihan property)
+	Properties []PropertyLite `json:"properties"`
+}
+
+type PropertyLite struct {
+	ID       uuid.UUID `json:"id"`
+	Name     string    `json:"name"`
+	Profile  string    `json:"profile"`
+	Timezone string    `json:"timezone"`
 }
 
 type PatrolBundle struct {
@@ -75,9 +104,12 @@ type AssetLite struct {
 type Master struct {
 	FindingCategories  []string `json:"finding_categories"`
 	IncidentCategories []string `json:"incident_categories"`
-	Priorities         []string `json:"priorities"`
-	Severities         []string `json:"severities"`
-	GPSStatuses        []string `json:"gps_statuses"`
+	// PRD P1 v2.1 GAP-P1-09: tipe incident valid + tipe default per kategori (klien mengirim incident_type & category terpisah)
+	IncidentTypes         []string          `json:"incident_types"`
+	IncidentCategoryTypes map[string]string `json:"incident_category_types"`
+	Priorities            []string          `json:"priorities"`
+	Severities            []string          `json:"severities"`
+	GPSStatuses           []string          `json:"gps_statuses"`
 }
 type ObjectRef struct {
 	ObjectType string    `json:"object_type"`
@@ -103,9 +135,10 @@ func (s *Service) WorkBundle(ctx context.Context, deviceID string, since string)
 	// Pekerjaan yang sedang berjalan/ditunda tetap ikut walau jadwalnya bukan hari ini (mis. dimulai kemarin,
 	// tempo minggu depan) — tanpa ini item hilang dari daftar worker setelah pull berikutnya.
 	activeMine := operations.ListFilter{Mine: true, Statuses: []string{string(workflow.InProgress), string(workflow.OnHold)}, Sort: "due_at"}
-	// WO/task ad-hoc tanpa tanggal (assigned/new) juga tidak pernah masuk filter ScheduledOn.
-	undated := true
-	undatedMine := operations.ListFilter{Mine: true, Undated: &undated, Statuses: []string{string(workflow.New), string(workflow.Assigned), string(workflow.Scheduled)}, Sort: "created_at"}
+	// WO/task ad-hoc tanpa jadwal mulai (assigned/new) tidak pernah masuk filter ScheduledOn — dan due_at turunan SLA
+	// dapat jatuh besok (ditugaskan malam hari), sehingga disertakan berapa pun tanggal tempo-nya.
+	unscheduled := true
+	undatedMine := operations.ListFilter{Mine: true, Unscheduled: &unscheduled, Statuses: []string{string(workflow.New), string(workflow.Assigned), string(workflow.Scheduled)}, Sort: "created_at"}
 	collect := func(ot string) ([]operations.WorkItem, error) {
 		seen := map[uuid.UUID]bool{}
 		var out []operations.WorkItem
@@ -206,12 +239,93 @@ func (s *Service) WorkBundle(ctx context.Context, deviceID string, since string)
 	if err != nil {
 		return nil, err
 	}
+	_ = s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		b.EmergencyContacts = s.Security.EmergencyContactsForBundle(ctx, tx)
+		return nil
+	})
+	if b.EmergencyContacts == nil {
+		b.EmergencyContacts = []security.EmergencyContact{}
+	}
+	b.MyRoster = []workforce.RosterEntry{}
+	if s.Workforce != nil {
+		if r, err := s.Workforce.MyRoster(ctx, now.AddDate(0, 0, -1).Format("2006-01-02"), now.AddDate(0, 0, 7).Format("2006-01-02")); err == nil {
+			b.MyRoster = r
+		}
+		if a, err := s.Workforce.MyAttendance(ctx); err == nil {
+			b.Attendance = a.Current
+		}
+	}
+	b.Properties = []PropertyLite{}
+	_ = s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT pr.location_id, l.name, pr.profile, pr.timezone FROM properties pr JOIN locations l ON l.id = pr.location_id
+			WHERE l.deleted_at IS NULL AND EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = $1 AND (ur.property_id IS NULL OR ur.property_id = pr.location_id))
+			ORDER BY l.name`, p.UserID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var x PropertyLite
+			if rows.Scan(&x.ID, &x.Name, &x.Profile, &x.Timezone) == nil {
+				b.Properties = append(b.Properties, x)
+			}
+		}
+		return rows.Err()
+	})
+	b.CleaningRouteRuns = []housekeeping.RouteRun{}
+	if s.Housekeeping != nil && p.Has("housekeeping.cleaning_routes.view") {
+		if runs, err := s.Housekeeping.ListRuns(ctx, housekeeping.RunFilter{Mine: true}); err == nil {
+			b.CleaningRouteRuns = runs
+		}
+	}
+	b.ConsumableItems = []inventory.ConsumableItem{}
+	if s.Inventory != nil && p.Has("inventory.consumable_usage.create") {
+		_ = s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+			pids, all := p.PropertyIDsFor("inventory.consumable_usage.create")
+			if all {
+				pids = nil
+				rows, err := tx.Query(ctx, `SELECT location_id FROM properties`)
+				if err != nil {
+					return err
+				}
+				for rows.Next() {
+					var id uuid.UUID
+					if rows.Scan(&id) == nil {
+						pids = append(pids, id)
+					}
+				}
+				rows.Close()
+			}
+			items, err := s.Inventory.ConsumableCatalogTx(ctx, tx, pids)
+			if err == nil {
+				b.ConsumableItems = items
+			}
+			return nil
+		})
+	}
+	b.Meters = []metering.BundleMeter{}
+	if s.Metering != nil && p.Has("billing.meter_readings.create") {
+		_ = s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+			if ms, err := s.Metering.BundleMetersTx(ctx, tx); err == nil {
+				b.Meters = ms
+			}
+			return nil
+		})
+	}
 	b.Master = Master{
 		FindingCategories:  []string{"water_leakage", "fire_exit_blocked", "odor", "damage", "dirty", "lighting", "safety_hazard", "other"},
 		IncidentCategories: operations.IncidentCategories,
-		Priorities:         []string{"low", "medium", "high", "critical"},
-		Severities:         []string{"low", "medium", "high", "critical"},
-		GPSStatuses:        []string{"captured", "unavailable", "denied"},
+		IncidentTypes:      []string{"security", "safety", "building"},
+		IncidentCategoryTypes: func() map[string]string {
+			m := map[string]string{}
+			for _, c := range operations.IncidentCategories {
+				m[c] = operations.IncidentTypeForCategory(c)
+			}
+			return m
+		}(),
+		Priorities:  []string{"low", "medium", "high", "critical"},
+		Severities:  []string{"low", "medium", "high", "critical"},
+		GPSStatuses: []string{"captured", "unavailable", "denied"},
 	}
 	b.Me = MeLite{UserID: p.UserID, FullName: p.FullName, Roles: p.RoleCodes, TeamIDs: p.TeamIDs, Permissions: p.AllPermissions()}
 	b.Cursor = now.UTC().Format(time.RFC3339Nano)
@@ -224,7 +338,7 @@ type Mutation struct {
 	ClientMutationID uuid.UUID       `json:"client_mutation_id"`
 	ObjectType       string          `json:"object_type"`
 	ObjectID         uuid.UUID       `json:"object_id"`
-	Action           string          `json:"action"` // start | hold | resume | checklist_item_result | checkpoint_scan | add_comment | attach_photo | add_finding | complete
+	Action           string          `json:"action"` // start | hold | resume | checklist_item_result | checkpoint_scan | add_comment | attach_photo | add_finding | complete | report_incident | raise_emergency | clock_in | clock_out | use_consumable | record_meter_reading
 	Payload          json.RawMessage `json:"payload"`
 	ClientTime       *time.Time      `json:"client_time"`
 	Seq              int64           `json:"seq"`
@@ -424,6 +538,9 @@ func (s *Service) applyOne(ctx context.Context, p *authctx.Principal, deviceID s
 		res.Status, res.ReasonCode = "rejected", ReasonNotFound
 	case ae.Status == 400:
 		res.Status, res.ReasonCode = "rejected", ReasonValidation
+	case ae.Status == 409 && ae.Code != "":
+		// aturan domain (mis. INSUFFICIENT_STOCK, ALREADY_ON_DUTY, NOT_ON_DUTY, STALE_VERSION): ditolak dengan kode & pesan asli
+		res.Status, res.ReasonCode = "rejected", ae.Code
 	default:
 		res.Status, res.ReasonCode = "rejected", ReasonValidation
 		res.Detail = "internal: " + ae.Detail
@@ -535,6 +652,7 @@ func (s *Service) preserveEvidence(ctx context.Context, tx pgx.Tx, m Mutation, r
 			p := authctx.Must(ctx)
 			_, _ = tx.Exec(ctx, `UPDATE checklist_run_items SET result_value = COALESCE($2, result_value), result_number = COALESCE($3, result_number), result_text = COALESCE($4, result_text), attachment_id = COALESCE($5, attachment_id), note = COALESCE($6, note), answered_by = $7, answered_at = now(), answered_source = 'sync' WHERE id = $1 AND answered_at IS NULL`,
 				in.ItemID, in.ResultValue, in.ResultNumber, in.ResultText, in.AttachmentID, in.Note, p.UserID)
+			_ = operations.RecomputeDeviationTx(ctx, tx, in.ItemID) // PRD P0 v2 §12.2
 		}
 	}
 	if m.Action == "attach_photo" {
@@ -625,11 +743,103 @@ func (s *Service) dispatch(ctx context.Context, tx pgx.Tx, m Mutation) (any, err
 			in.SourceType = strPtr(m.ObjectType)
 			in.SourceID = &m.ObjectID
 		}
+		if in.AttachmentID == nil {
+			var extra struct {
+				ClientAttachmentID string `json:"client_attachment_id"`
+			}
+			if json.Unmarshal(m.Payload, &extra) == nil && extra.ClientAttachmentID != "" {
+				var aid uuid.UUID
+				if tx.QueryRow(ctx, `SELECT id FROM attachments WHERE uploaded_by = $1 AND client_attachment_id = $2`, authctx.Must(ctx).UserID, extra.ClientAttachmentID).Scan(&aid) == nil {
+					in.AttachmentID = &aid
+				}
+			}
+		}
 		id, err := s.Ops.CreateFindingTx(ctx, tx, in)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"finding_id": id}, nil
+	case "clock_in", "clock_out":
+		// PRD P2 v2.1 P2-NFR-02: clock-in/out offline — object_type attendance, object_id = id sesi dari klien
+		if m.ObjectType != "attendance" || s.Workforce == nil {
+			return nil, apperr.Validation("object_type harus attendance")
+		}
+		var in workforce.ClockInput
+		if len(m.Payload) > 0 {
+			if err := json.Unmarshal(m.Payload, &in); err != nil {
+				return nil, apperr.Validation("payload tidak valid")
+			}
+		}
+		id := m.ObjectID
+		in.ID, in.FromSync, in.ClientTime = &id, true, m.ClientTime
+		var aid uuid.UUID
+		var err error
+		if m.Action == "clock_in" {
+			aid, err = s.Workforce.ClockInTx(ctx, tx, in)
+		} else {
+			aid, err = s.Workforce.ClockOutTx(ctx, tx, in)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"attendance_id": aid}, nil
+	case "use_consumable":
+		// PRD P2 v2.1 P2-CNS-02 / P2-MOB-05: consumable per cleaning task offline — object_type task; idempoten per client_mutation_id
+		if m.ObjectType != operations.ObjTask || s.Inventory == nil {
+			return nil, apperr.Validation("object_type harus task")
+		}
+		var in inventory.ConsumableUsageInput
+		if err := json.Unmarshal(m.Payload, &in); err != nil {
+			return nil, apperr.Validation("payload tidak valid")
+		}
+		ref := m.ClientMutationID.String()
+		in.ClientRef = &ref
+		u, err := s.Inventory.AddConsumableTx(ctx, tx, m.ObjectID, in)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"consumable_usage_id": u.ID}, nil
+	case "record_meter_reading":
+		// PRD P4 v2.1 P4-UTL-03: pembacaan meter offline — object_type meter; idempoten per client_mutation_id; foto offline
+		// (attach_photo ke object meter sebelumnya) dipindah ke pembacaan lewat client_attachment_id
+		if m.ObjectType != "meter" || s.Metering == nil {
+			return nil, apperr.Validation("object_type harus meter")
+		}
+		var in metering.ReadingInput
+		if err := json.Unmarshal(m.Payload, &in); err != nil {
+			return nil, apperr.Validation("payload tidak valid")
+		}
+		ref := m.ClientMutationID
+		in.ClientRef, in.Source = &ref, "staff_app"
+		if in.ReadAt == nil {
+			in.ReadAt = m.ClientTime
+		}
+		r, _, err := s.Metering.RecordTx(ctx, tx, m.ObjectID, in)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"meter_reading_id": r.ID, "status": r.Status, "usage": r.Usage, "anomaly": r.Anomaly}, nil
+	case "raise_emergency":
+		// PRD P2 v2.1 P2-EMG-08: Panic Button offline — object_id = id Emergency Alert dari klien (idempoten)
+		if m.ObjectType != "emergency_alert" {
+			return nil, apperr.Validation("object_type harus emergency_alert")
+		}
+		var in security.RaiseEmergencyInput
+		if len(m.Payload) > 0 {
+			if err := json.Unmarshal(m.Payload, &in); err != nil {
+				return nil, apperr.Validation("payload tidak valid")
+			}
+		}
+		id := m.ObjectID
+		in.ID, in.FromSync = &id, true
+		if in.ClientRaisedAt == nil {
+			in.ClientRaisedAt = m.ClientTime
+		}
+		aid, err := s.Security.RaiseEmergencyTx(ctx, tx, in)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"emergency_alert_id": aid}, nil
 	case "report_incident":
 		var in operations.CreateIncidentInput
 		if err := json.Unmarshal(m.Payload, &in); err != nil {

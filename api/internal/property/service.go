@@ -18,6 +18,7 @@ import (
 	"github.com/buildingvision/api/internal/platform/events"
 	"github.com/buildingvision/api/internal/platform/ids"
 	"github.com/buildingvision/api/internal/platform/jobs"
+	"github.com/buildingvision/api/internal/platform/phone"
 	"github.com/buildingvision/api/internal/profile"
 )
 
@@ -39,6 +40,10 @@ const (
 	LTSpace    LocationType = "space"
 	LTUnit     LocationType = "unit"
 )
+
+// UnitTypes & OccupancyStatuses (CHECK units; PRD P1 v2 §8: Vacant / Occupied / Inactive + Reserved untuk rental/sales).
+var UnitTypes = map[string]bool{"commercial": true, "residential": true, "hotel_room": true}
+var OccupancyStatuses = map[string]bool{"vacant": true, "occupied": true, "reserved": true, "inactive": true}
 
 // allowedParents: validasi parent-child di domain (OD-005) — Tower opsional: Floor boleh di bawah Building.
 var allowedParents = map[LocationType][]LocationType{
@@ -75,25 +80,31 @@ type Location struct {
 	Path         []PathItem     `json:"path"`      // LocationPath component
 	PathText     string         `json:"path_text"` // "Tower A / Floor 12 / Mechanical Room"
 	Details      map[string]any `json:"details"`
+	Metadata     map[string]any `json:"metadata"` // metadata bebas per level (PRD P0 v2 §7.3)
 	ChildCount   int            `json:"child_count"`
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
 	Version      int            `json:"version"`
+	ltreePath    string
 }
 
 type CreateLocationInput struct {
 	LocationType LocationType   `json:"location_type"`
 	ParentID     *uuid.UUID     `json:"parent_id"`
 	Name         string         `json:"name"`
+	Code         *string        `json:"code"` // opsional (PRD P0 v2 §7): kosong = otomatis PROP-/BLD-/...
 	SortOrder    int            `json:"sort_order"`
 	Details      map[string]any `json:"details"` // field spesifik per level (timezone, floor_number, area_type, unit_number, ...)
+	Metadata     map[string]any `json:"metadata"`
 }
 
 type UpdateLocationInput struct {
 	Name      *string        `json:"name"`
+	Code      *string        `json:"code"`
 	SortOrder *int           `json:"sort_order"`
 	IsActive  *bool          `json:"is_active"`
 	Details   map[string]any `json:"details"`
+	Metadata  map[string]any `json:"metadata"`
 }
 
 func pathLabel(id uuid.UUID) string { return strings.ReplaceAll(id.String(), "-", "_") }
@@ -145,13 +156,23 @@ func (s *Service) CreateLocationInTx(ctx context.Context, tx pgx.Tx, in CreateLo
 			return uuid.Nil, apperr.Validation(fmt.Sprintf("%s tidak boleh berada di bawah %s", in.LocationType, parentType))
 		}
 		depth++
-		if err := requirePropertyPerm(ctx, "property.locations.create", propertyID); err != nil {
+		if err := requireLocationPerm(ctx, "property.locations.create", propertyID, parentPath); err != nil {
 			return uuid.Nil, err
 		}
 	}
-	code, err := ids.NextPlain(ctx, tx, p.OrganizationID, prefix)
-	if err != nil {
-		return uuid.Nil, err
+	code := ""
+	if in.Code != nil {
+		code = strings.ToUpper(strings.TrimSpace(*in.Code))
+	}
+	if code == "" {
+		c, err := ids.NextPlain(ctx, tx, p.OrganizationID, prefix)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		code = c
+	}
+	if in.Metadata == nil {
+		in.Metadata = map[string]any{}
 	}
 	id := uuid.Must(uuid.NewV7())
 	label := pathLabel(id)
@@ -162,11 +183,14 @@ func (s *Service) CreateLocationInTx(ctx context.Context, tx pgx.Tx, in CreateLo
 	if in.LocationType == LTProperty {
 		propertyID = id
 	}
-	_, err = tx.Exec(ctx, `
-		INSERT INTO locations (id, organization_id, property_id, location_type, parent_id, name, code, path, depth, sort_order, created_by, updated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::ltree,$9,$10,$11,$11)`,
-		id, p.OrganizationID, propertyID, in.LocationType, in.ParentID, in.Name, code, path, depth, in.SortOrder, p.UserID)
+	_, err := tx.Exec(ctx, `
+		INSERT INTO locations (id, organization_id, property_id, location_type, parent_id, name, code, path, depth, sort_order, metadata, created_by, updated_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::ltree,$9,$10,$12,$11,$11)`,
+		id, p.OrganizationID, propertyID, in.LocationType, in.ParentID, in.Name, code, path, depth, in.SortOrder, p.UserID, in.Metadata)
 	if err != nil {
+		if db.IsUniqueViolation(err) {
+			return uuid.Nil, apperr.Conflict("DUPLICATE_CODE", "Kode lokasi sudah dipakai").WithField("code", "sudah dipakai")
+		}
 		return uuid.Nil, err
 	}
 	if err := s.upsertDetails(ctx, tx, id, p.OrganizationID, in.LocationType, in.Details, true); err != nil {
@@ -239,6 +263,9 @@ func (s *Service) upsertDetails(ctx context.Context, tx pgx.Tx, id, orgID uuid.U
 			_, err = tx.Exec(ctx, `INSERT INTO properties (location_id, organization_id, timezone, address, city, property_type, sla_calendar, profile) VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),$7,$8)`,
 				id, orgID, tz, str("address", ""), str("city", ""), str("property_type", ""), cal, prof)
 			if err == nil {
+				err = updatePropertyContact(ctx, tx, id, d)
+			}
+			if err == nil {
 				_, err = tx.Exec(ctx, `INSERT INTO property_profile_configs (property_id, organization_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, id, orgID)
 			}
 		} else {
@@ -252,12 +279,18 @@ func (s *Service) upsertDetails(ctx context.Context, tx pgx.Tx, id, orgID uuid.U
 			}
 			_, err = tx.Exec(ctx, `UPDATE properties SET timezone = COALESCE(NULLIF($2,''), timezone), address = COALESCE(NULLIF($3,''), address), city = COALESCE(NULLIF($4,''), city), property_type = COALESCE(NULLIF($5,''), property_type), sla_calendar = $6 WHERE location_id = $1`,
 				id, str("timezone", ""), str("address", ""), str("city", ""), str("property_type", ""), cal)
+			if err == nil {
+				err = updatePropertyContact(ctx, tx, id, d)
+			}
 		}
 	case LTBuilding:
 		if insert {
-			_, err = tx.Exec(ctx, `INSERT INTO buildings (location_id, organization_id, floors_count, year_built, gross_area_m2) VALUES ($1,$2,$3,$4,$5)`, id, orgID, intp("floors_count"), intp("year_built"), num("gross_area_m2"))
+			_, err = tx.Exec(ctx, `INSERT INTO buildings (location_id, organization_id, floors_count, year_built, gross_area_m2, building_type, address) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''))`,
+				id, orgID, intp("floors_count"), intp("year_built"), num("gross_area_m2"), str("building_type", ""), str("address", ""))
 		} else {
-			_, err = tx.Exec(ctx, `UPDATE buildings SET floors_count = COALESCE($2, floors_count), year_built = COALESCE($3, year_built), gross_area_m2 = COALESCE($4, gross_area_m2) WHERE location_id = $1`, id, intp("floors_count"), intp("year_built"), num("gross_area_m2"))
+			_, err = tx.Exec(ctx, `UPDATE buildings SET floors_count = COALESCE($2, floors_count), year_built = COALESCE($3, year_built), gross_area_m2 = COALESCE($4, gross_area_m2),
+				building_type = COALESCE(NULLIF($5,''), building_type), address = COALESCE(NULLIF($6,''), address) WHERE location_id = $1`,
+				id, intp("floors_count"), intp("year_built"), num("gross_area_m2"), str("building_type", ""), str("address", ""))
 		}
 	case LTTower:
 		if insert {
@@ -296,6 +329,37 @@ func (s *Service) upsertDetails(ctx context.Context, tx pgx.Tx, id, orgID uuid.U
 			}
 			tenantID = &tid
 		}
+		// PRD P1 v2 §8: validasi eksplisit (sebelumnya pelanggaran CHECK DB → 500)
+		if v := str("unit_type", ""); v != "" && !UnitTypes[v] {
+			return apperr.Validation("unit_type harus commercial|residential|hotel_room").WithField("details.unit_type", "tidak valid")
+		}
+		if v := str("occupancy_status", ""); v != "" && !OccupancyStatuses[v] {
+			return apperr.Validation("occupancy_status harus vacant|occupied|reserved|inactive").WithField("details.occupancy_status", "tidak valid")
+		}
+		// PRD P4 v2.1 P4-BRL-04: tanggal hunian (prorata tagihan periode) — kunci ada = set ("" / null = kosongkan)
+		occDate := func(key string) (any, bool, error) {
+			v, ok := d[key]
+			if !ok {
+				return nil, false, nil
+			}
+			sv, _ := v.(string)
+			if v == nil || sv == "" {
+				return nil, true, nil
+			}
+			t, e := time.Parse("2006-01-02", sv)
+			if e != nil {
+				return nil, true, apperr.Validation("details."+key+" harus YYYY-MM-DD").WithField("details."+key, "format tanggal")
+			}
+			return t, true, nil
+		}
+		occFrom, setFrom, err1 := occDate("occupied_from")
+		occUntil, setUntil, err2 := occDate("occupied_until")
+		if err1 != nil {
+			return err1
+		}
+		if err2 != nil {
+			return err2
+		}
 		if insert {
 			un := str("unit_number", "")
 			if un == "" {
@@ -312,6 +376,10 @@ func (s *Service) upsertDetails(ctx context.Context, tx pgx.Tx, id, orgID uuid.U
 				tenant_id = CASE WHEN $6::bool THEN $5 ELSE tenant_id END, occupancy_status = COALESCE(NULLIF($7,''), occupancy_status) WHERE location_id = $1`,
 				id, str("unit_number", ""), str("unit_type", ""), num("area_m2"), tenantID, d["tenant_id"] != nil, str("occupancy_status", ""))
 		}
+		if err == nil && (setFrom || setUntil) {
+			_, err = tx.Exec(ctx, `UPDATE units SET occupied_from = CASE WHEN $2::bool THEN $3::date ELSE occupied_from END, occupied_until = CASE WHEN $4::bool THEN $5::date ELSE occupied_until END WHERE location_id = $1`,
+				id, setFrom, occFrom, setUntil, occUntil)
+		}
 	}
 	return err
 }
@@ -324,15 +392,24 @@ func (s *Service) UpdateLocation(ctx context.Context, id uuid.UUID, in UpdateLoc
 		if err != nil {
 			return err
 		}
-		if err := requirePropertyPerm(ctx, "property.locations.update", before.PropertyID); err != nil {
+		if err := requireLocationPerm(ctx, "property.locations.update", before.PropertyID, before.ltreePath); err != nil {
 			return err
 		}
 		if ifVersion != nil && *ifVersion != before.Version {
 			return apperr.StaleVersion()
 		}
-		if _, err := tx.Exec(ctx, `UPDATE locations SET name = COALESCE(NULLIF($2,''), name), sort_order = COALESCE($3, sort_order), is_active = COALESCE($4, is_active), updated_by = $5 WHERE id = $1`,
-			id, deref(in.Name), in.SortOrder, in.IsActive, p.UserID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE locations SET name = COALESCE(NULLIF($2,''), name), sort_order = COALESCE($3, sort_order), is_active = COALESCE($4, is_active),
+			metadata = COALESCE($6, metadata), code = COALESCE(NULLIF(upper(trim($7)),''), code), updated_by = $5 WHERE id = $1`,
+			id, deref(in.Name), in.SortOrder, in.IsActive, p.UserID, jsonOrNil(in.Metadata), in.Code); err != nil {
+			if db.IsUniqueViolation(err) {
+				return apperr.Conflict("DUPLICATE_CODE", "Kode lokasi sudah dipakai").WithField("code", "sudah dipakai")
+			}
 			return err
+		}
+		if in.IsActive != nil && *in.IsActive != before.IsActive {
+			if err := syncActiveStatus(ctx, tx, before, *in.IsActive, ""); err != nil {
+				return err
+			}
 		}
 		if in.Details != nil {
 			if err := s.upsertDetails(ctx, tx, id, p.OrganizationID, before.LocationType, in.Details, false); err != nil {
@@ -357,7 +434,7 @@ func (s *Service) DeleteLocation(ctx context.Context, id uuid.UUID) error {
 		if err != nil {
 			return err
 		}
-		if err := requirePropertyPerm(ctx, "property.locations.delete", loc.PropertyID); err != nil {
+		if err := requireLocationPerm(ctx, "property.locations.delete", loc.PropertyID, loc.ltreePath); err != nil {
 			return err
 		}
 		if loc.LocationType == LTProperty {
@@ -379,7 +456,11 @@ func (s *Service) DeleteLocation(ctx context.Context, id uuid.UUID) error {
 		if _, err := tx.Exec(ctx, `UPDATE locations SET deleted_at = now(), is_active = false WHERE id = $1`, id); err != nil {
 			return err
 		}
-		return audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditDelete, EntityType: string(loc.LocationType), EntityID: &id, EntityLabel: loc.Code})
+		if s.Jobs != nil {
+			p := authctx.Must(ctx)
+			_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: events.LocationDeleted, OrganizationID: p.OrganizationID, PropertyID: &loc.PropertyID, ObjectType: "location", ObjectID: id, ObjectLabel: loc.Code, ActorUserID: &p.UserID})
+		}
+		return audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditDelete, EntityType: string(loc.LocationType), EntityID: &id, EntityLabel: loc.Code, Before: loc})
 	})
 }
 
@@ -391,13 +472,17 @@ func (s *Service) GetLocation(ctx context.Context, id uuid.UUID) (*Location, err
 		if err != nil {
 			return err
 		}
-		return requirePropertyPerm(ctx, "property.locations.view", out.PropertyID)
+		if !canViewLocation(authctx.Must(ctx), out.PropertyID, out.ltreePath) {
+			return apperr.Forbidden("Tidak memiliki property.locations.view pada lokasi ini")
+		}
+		return nil
 	})
 	return out, err
 }
 
 const locationSelect = `
 	SELECT l.id, l.property_id, l.location_type, l.parent_id, l.name, l.code, l.depth, l.sort_order, l.is_active, l.qr_code, l.created_at, l.updated_at, l.version,
+	  l.metadata, l.path::text,
 	  (SELECT count(*) FROM locations c WHERE c.parent_id = l.id AND c.deleted_at IS NULL),
 	  COALESCE((SELECT jsonb_agg(jsonb_build_object('id', a.id, 'type', a.location_type, 'name', a.name) ORDER BY a.depth)
 	            FROM locations a WHERE a.path @> l.path AND a.deleted_at IS NULL), '[]'::jsonb),
@@ -423,8 +508,11 @@ func scanLocation(row pgx.Row) (*Location, error) {
 	var l Location
 	var path []PathItem
 	var details map[string]any
-	if err := row.Scan(&l.ID, &l.PropertyID, &l.LocationType, &l.ParentID, &l.Name, &l.Code, &l.Depth, &l.SortOrder, &l.IsActive, &l.QRCode, &l.CreatedAt, &l.UpdatedAt, &l.Version, &l.ChildCount, &path, &details); err != nil {
+	if err := row.Scan(&l.ID, &l.PropertyID, &l.LocationType, &l.ParentID, &l.Name, &l.Code, &l.Depth, &l.SortOrder, &l.IsActive, &l.QRCode, &l.CreatedAt, &l.UpdatedAt, &l.Version, &l.Metadata, &l.ltreePath, &l.ChildCount, &path, &details); err != nil {
 		return nil, err
+	}
+	if l.Metadata == nil {
+		l.Metadata = map[string]any{}
 	}
 	l.Path = path
 	l.Details = details
@@ -457,6 +545,8 @@ func (s *Service) getLocationTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*
 type LocationFilter struct {
 	PropertyID      *uuid.UUID
 	ParentID        *uuid.UUID
+	AncestorID      *uuid.UUID // seluruh subtree (mis. semua floor di building, termasuk di bawah tower)
+	PortfolioID     *uuid.UUID // property dalam portfolio
 	LocationType    LocationType
 	Q               string
 	IncludeInactive bool
@@ -468,20 +558,24 @@ func (s *Service) ListLocations(ctx context.Context, f LocationFilter) ([]Locati
 	var out []Location
 	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		args := []any{}
+		add := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
 		where := " WHERE l.deleted_at IS NULL"
 		if f.PropertyID != nil {
-			args = append(args, *f.PropertyID)
-			where += fmt.Sprintf(" AND l.property_id = $%d", len(args))
-		} else {
-			// batasi ke property yang boleh dilihat user
-			if pids, all := p.PropertyIDsFor("property.locations.view"); !all {
-				args = append(args, pids)
-				where += fmt.Sprintf(" AND l.property_id = ANY($%d::uuid[])", len(args))
+			if !p.HasAnyOnProperty("property.locations.view", *f.PropertyID) {
+				return apperr.Forbidden("Tidak memiliki property.locations.view pada property ini")
 			}
+			where += " AND l.property_id = " + add(*f.PropertyID)
 		}
+		// batasi ke scope user: property-wide, subtree building/tower, dan leluhur scope (agar tree/picker utuh)
+		where += " AND " + locationScopeSQL(p, add)
 		if f.ParentID != nil {
-			args = append(args, *f.ParentID)
-			where += fmt.Sprintf(" AND l.parent_id = $%d", len(args))
+			where += " AND l.parent_id = " + add(*f.ParentID)
+		}
+		if f.AncestorID != nil {
+			where += " AND l.id <> " + add(*f.AncestorID) + " AND l.path <@ (SELECT a.path FROM locations a WHERE a.id = " + add(*f.AncestorID) + ")"
+		}
+		if f.PortfolioID != nil {
+			where += " AND l.location_type = 'property' AND EXISTS (SELECT 1 FROM properties pp WHERE pp.location_id = l.id AND pp.portfolio_id = " + add(*f.PortfolioID) + ")"
 		}
 		if f.LocationType != "" {
 			args = append(args, string(f.LocationType))
@@ -518,8 +612,8 @@ type TreeNode struct {
 
 // Tree: seluruh hierarchy satu property (LocationPicker).
 func (s *Service) Tree(ctx context.Context, propertyID uuid.UUID) (*TreeNode, error) {
-	if err := requirePropertyPerm(ctx, "property.locations.view", propertyID); err != nil {
-		return nil, err
+	if !authctx.Must(ctx).HasAnyOnProperty("property.locations.view", propertyID) {
+		return nil, apperr.Forbidden("Tidak memiliki property.locations.view pada property ini")
 	}
 	locs, err := s.ListLocations(ctx, LocationFilter{PropertyID: &propertyID})
 	if err != nil {
@@ -604,47 +698,6 @@ func LocationPathText(ctx context.Context, q db.Querier, locationID uuid.UUID) s
 	return txt
 }
 
-// ---------- Organization ----------
-
-type Organization struct {
-	ID       uuid.UUID      `json:"id"`
-	Code     string         `json:"code"`
-	Slug     string         `json:"slug"`
-	Name     string         `json:"name"`
-	Timezone string         `json:"timezone"`
-	IsActive bool           `json:"is_active"`
-	Settings map[string]any `json:"settings"`
-	Version  int            `json:"version"`
-}
-
-func (s *Service) GetOrganization(ctx context.Context) (*Organization, error) {
-	p := authctx.Must(ctx)
-	var o Organization
-	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT id, code, slug, name, timezone, is_active, settings, version FROM organizations WHERE id = $1`, p.OrganizationID).
-			Scan(&o.ID, &o.Code, &o.Slug, &o.Name, &o.Timezone, &o.IsActive, &o.Settings, &o.Version)
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &o, nil
-}
-
-func (s *Service) UpdateOrganization(ctx context.Context, name *string, settings map[string]any) (*Organization, error) {
-	p := authctx.Must(ctx)
-	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `UPDATE organizations SET name = COALESCE(NULLIF($2,''), name), settings = COALESCE($3, settings), updated_by = $4 WHERE id = $1`, p.OrganizationID, deref(name), settings, p.UserID)
-		if err != nil {
-			return err
-		}
-		return audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditUpdate, EntityType: "organization", EntityID: &p.OrganizationID, After: map[string]any{"name": name, "settings": settings}})
-	})
-	if err != nil {
-		return nil, err
-	}
-	return s.GetOrganization(ctx)
-}
-
 func requirePropertyPerm(ctx context.Context, perm string, propertyID uuid.UUID) error {
 	p := authctx.Must(ctx)
 	if !p.HasOnProperty(perm, propertyID) {
@@ -667,4 +720,165 @@ func deref(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// ---------- Scope Building/Tower (PRD P0 v2 §8.4) ----------
+
+// requireLocationPerm: perm pada property, atau grant ber-scope building/tower yang memuat path lokasi.
+func requireLocationPerm(ctx context.Context, perm string, propertyID uuid.UUID, path string) error {
+	p := authctx.Must(ctx)
+	if !p.HasOnLocation(perm, propertyID, path) {
+		return apperr.Forbidden("Tidak memiliki " + perm + " pada lokasi ini")
+	}
+	return nil
+}
+
+// canViewLocation: lokasi di dalam scope, atau leluhur dari scope building/tower user (property/induk tetap terlihat).
+func canViewLocation(p *authctx.Principal, propertyID uuid.UUID, path string) bool {
+	const perm = "property.locations.view"
+	if p.HasOnLocation(perm, propertyID, path) {
+		return true
+	}
+	for _, sc := range p.LocationScopesFor(perm) {
+		if sc.PropertyID == propertyID && strings.HasPrefix(sc.Path, path+".") {
+			return true
+		}
+	}
+	return false
+}
+
+func locationScopeSQL(p *authctx.Principal, add func(any) string) string {
+	const perm = "property.locations.view"
+	cond := p.ScopeSQL(perm, "l.property_id", "l.path", add)
+	scopes := p.LocationScopesFor(perm)
+	if cond == "TRUE" || len(scopes) == 0 {
+		return cond
+	}
+	paths := make([]string, 0, len(scopes))
+	for _, sc := range scopes {
+		paths = append(paths, sc.Path)
+	}
+	return "(" + cond + " OR l.path @> ANY(" + add(paths) + "::ltree[]))"
+}
+
+// syncActiveStatus: status property (draft|active|inactive) mengikuti is_active + audit status_change.
+func syncActiveStatus(ctx context.Context, tx pgx.Tx, loc *Location, active bool, reason string) error {
+	if loc.LocationType == LTProperty {
+		st := "inactive"
+		if active {
+			st = "active"
+		}
+		if _, err := tx.Exec(ctx, `UPDATE properties SET status = $2 WHERE location_id = $1`, loc.ID, st); err != nil {
+			return err
+		}
+	}
+	id := loc.ID
+	_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditStatusChange, EntityType: string(loc.LocationType), EntityID: &id, EntityLabel: loc.Code,
+		Before: map[string]any{"is_active": loc.IsActive}, After: map[string]any{"is_active": active, "reason": reason}})
+	return nil
+}
+
+// SetLocationActive: aktivasi/deaktivasi eksplisit Property/Building/Tower/Floor/Area/Unit (PRD P0 v2 §7, US-P0-002).
+func (s *Service) SetLocationActive(ctx context.Context, id uuid.UUID, active bool, reason string) (*Location, error) {
+	p := authctx.Must(ctx)
+	var out *Location
+	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		loc, err := s.getLocationTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		perm := "property.locations.update"
+		if loc.LocationType == LTProperty {
+			perm = "property.properties.update"
+		}
+		if err := requireLocationPerm(ctx, perm, loc.PropertyID, loc.ltreePath); err != nil {
+			return err
+		}
+		if loc.IsActive != active {
+			if _, err := tx.Exec(ctx, `UPDATE locations SET is_active = $2, updated_by = $3 WHERE id = $1`, id, active, p.UserID); err != nil {
+				return err
+			}
+			if err := syncActiveStatus(ctx, tx, loc, active, reason); err != nil {
+				return err
+			}
+			if s.Jobs != nil {
+				_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: events.LocationUpdated, OrganizationID: p.OrganizationID, PropertyID: &loc.PropertyID, ObjectType: "location", ObjectID: id, ObjectLabel: loc.Code, ActorUserID: &p.UserID})
+			}
+		}
+		out, err = s.getLocationTx(ctx, tx, id)
+		return err
+	})
+	return out, err
+}
+
+// updatePropertyContact: kontak & alamat lengkap property + portfolio (PRD P0 v2 §7.2).
+func updatePropertyContact(ctx context.Context, tx pgx.Tx, id uuid.UUID, d map[string]any) error {
+	str := func(k string) *string {
+		if v, ok := d[k].(string); ok {
+			v = strings.TrimSpace(v)
+			return &v
+		}
+		return nil
+	}
+	num := func(k string) *float64 {
+		if v, ok := d[k].(float64); ok {
+			return &v
+		}
+		return nil
+	}
+	if e := str("contact_email"); e != nil && *e != "" && !strings.Contains(*e, "@") {
+		return apperr.Validation("contact_email tidak valid").WithField("details.contact_email", "tidak valid")
+	}
+	// PRD P3 v2.1 P3-WAM-05: nomor WhatsApp pengelola (dinormalisasi 62…; string kosong = hapus)
+	waNumber, clearWA := str("whatsapp_number"), false
+	if waNumber != nil {
+		if strings.TrimSpace(*waNumber) == "" {
+			clearWA, waNumber = true, nil
+		} else {
+			n, ok := phone.Normalize(*waNumber)
+			if !ok {
+				return apperr.Validation("whatsapp_number tidak valid").WithField("details.whatsapp_number", "nomor WhatsApp tidak valid")
+			}
+			waNumber = &n
+		}
+	}
+	if c := str("country"); c != nil && len(*c) != 2 {
+		return apperr.Validation("country harus kode ISO 2 huruf").WithField("details.country", "2 huruf")
+	}
+	var portfolio *uuid.UUID
+	clearPortfolio := false
+	if v, ok := d["portfolio_id"]; ok {
+		if v == nil || v == "" {
+			clearPortfolio = true
+		} else if sv, ok := v.(string); ok {
+			pid, err := uuid.Parse(sv)
+			if err != nil {
+				return apperr.Validation("portfolio_id tidak valid")
+			}
+			var exists bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM portfolios WHERE id = $1 AND deleted_at IS NULL)`, pid).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				return apperr.Validation("portfolio_id tidak ditemukan").WithField("details.portfolio_id", "tidak ditemukan")
+			}
+			portfolio = &pid
+		}
+	}
+	_, err := tx.Exec(ctx, `UPDATE properties SET contact_name = COALESCE($2, contact_name), contact_phone = COALESCE($3, contact_phone),
+		contact_email = COALESCE($4, contact_email), province = COALESCE($5, province), postal_code = COALESCE($6, postal_code),
+		country = COALESCE(upper($7), country), latitude = COALESCE($8, latitude), longitude = COALESCE($9, longitude),
+		portfolio_id = CASE WHEN $11 THEN NULL ELSE COALESCE($10, portfolio_id) END,
+		whatsapp_number = CASE WHEN $13 THEN NULL ELSE COALESCE($12, whatsapp_number) END WHERE location_id = $1`,
+		id, str("contact_name"), str("contact_phone"), str("contact_email"), str("province"), str("postal_code"), str("country"),
+		num("latitude"), num("longitude"), portfolio, clearPortfolio, waNumber, clearWA)
+	return err
+}
+
+// jsonOrNil: map nil → SQL NULL (bukan jsonb 'null') agar COALESCE mempertahankan nilai lama.
+func jsonOrNil(m map[string]any) any {
+	if m == nil {
+		return nil
+	}
+	return m
 }

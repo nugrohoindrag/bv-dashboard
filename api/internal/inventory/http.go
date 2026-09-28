@@ -31,6 +31,67 @@ func (h *Handler) Mount(r chi.Router) {
 	r.With(req("operations.work_orders.view")).Get("/work-orders/{id}/parts", h.listParts)
 	r.With(req("inventory.parts_usage.create")).Post("/work-orders/{id}/parts", h.addPart)
 	r.With(req("inventory.parts_usage.create")).Delete("/work-orders/{id}/parts/{partId}", h.removePart)
+	// PRD P2 v2.1 §7.5: consumable per cleaning task (Web & Staff App)
+	r.With(h.IAM.RequireAny("inventory.consumable_usage.view", "housekeeping.cleaning.view")).Get("/tasks/{id}/consumables", h.listConsumables)
+	r.With(req("inventory.consumable_usage.create")).Post("/tasks/{id}/consumables", h.addConsumable)
+	r.With(req("inventory.consumable_usage.create")).Delete("/tasks/{id}/consumables/{usageId}", h.removeConsumable)
+}
+
+func (h *Handler) listConsumables(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	items, err := h.Svc.ListConsumables(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var total int64
+	for _, x := range items {
+		if x.TotalCost != nil {
+			total += *x.TotalCost
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": items, "total_cost": total})
+}
+
+func (h *Handler) addConsumable(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in ConsumableUsageInput
+	if err := httpx.Decode(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Svc.AddConsumable(r.Context(), id, in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, out)
+}
+
+func (h *Handler) removeConsumable(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	usageID, err := httpx.PathUUID(r, chi.URLParam, "usageId")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Svc.RemoveConsumable(r.Context(), id, usageID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) listItems(w http.ResponseWriter, r *http.Request) {

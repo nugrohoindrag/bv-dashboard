@@ -2,12 +2,15 @@
 package attachments
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"mime"
 	"path"
+	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -31,22 +34,30 @@ type Service struct {
 	// MaxImageBytes: batas foto (image/*). Klien wajib mengompres ke ≤ batas ini sebelum unggah;
 	// server tetap menolak di presign (size_bytes) dan confirm (ukuran nyata di storage). 0 = pakai MaxBytes.
 	MaxImageBytes int64
+	// MaxVideoBytes: batas video evidence (PRD P2 v2.1 P2-SIN-04, P2-NFR-03). 0 = pakai MaxBytes.
+	MaxVideoBytes int64
 	// ObjectAccess memvalidasi user boleh menyentuh object (object_type, object_id) → property_id.
 	ObjectAccess func(ctx context.Context, tx pgx.Tx, objectType string, objectID uuid.UUID, write bool) error
 }
 
-var allowedTypes = map[string]bool{"photo": true, "photo_before": true, "photo_after": true, "checklist_item_photo": true, "document": true, "signature": true}
+var allowedTypes = map[string]bool{"photo": true, "photo_before": true, "photo_during": true, "photo_after": true, "checklist_item_photo": true, "document": true, "signature": true, "video": true}
 
 // LimitFor: batas byte per content type — foto memakai MaxImageBytes (default 500 KB), lainnya MaxBytes.
 func (s *Service) LimitFor(contentType string) int64 {
 	if IsImage(contentType) && s.MaxImageBytes > 0 && s.MaxImageBytes < s.MaxBytes {
 		return s.MaxImageBytes
 	}
+	if IsVideo(contentType) && s.MaxVideoBytes > 0 {
+		return s.MaxVideoBytes
+	}
 	return s.MaxBytes
 }
 
 // IsImage: content type foto.
 func IsImage(contentType string) bool { return strings.HasPrefix(contentType, "image/") }
+
+// IsVideo: content type video evidence (mp4/mov/webm).
+func IsVideo(contentType string) bool { return strings.HasPrefix(contentType, "video/") }
 
 // AllowedType: nilai attachment_type yang diterima kolom.
 func AllowedType(t string) bool { return allowedTypes[t] }
@@ -59,6 +70,8 @@ func NormalizeType(t string) string {
 		return "photo"
 	case "before":
 		return "photo_before"
+	case "during":
+		return "photo_during" // PRD P1 v2 §19: Before / During / After
 	case "after":
 		return "photo_after"
 	case "checklist":
@@ -67,7 +80,48 @@ func NormalizeType(t string) string {
 	return t
 }
 
-var allowedContent = map[string]string{"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
+// allowedContent: foto + dokumen (PRD P0 v2 §13: Photo, Document, PDF, other supported file types).
+var allowedContent = map[string]string{
+	"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+	"application/pdf":    ".pdf",
+	"application/msword": ".doc",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+	"application/vnd.ms-excel": ".xls",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+	"text/csv":   ".csv",
+	"text/plain": ".txt",
+	// PRD P2 v2.1 P2-SIN-04: video evidence incident (dibatasi MaxVideoBytes)
+	"video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm",
+}
+
+// SupportedContentTypes: daftar content type yang diterima (untuk pesan error & dokumentasi).
+func SupportedContentTypes() []string {
+	out := make([]string, 0, len(allowedContent))
+	for k := range allowedContent {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ValidMagic: validasi signature file (magic bytes) dokumen non-gambar; gambar divalidasi lewat decode.
+func ValidMagic(contentType string, head []byte) bool {
+	switch contentType {
+	case "application/pdf":
+		return bytes.HasPrefix(head, []byte("%PDF"))
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		return bytes.HasPrefix(head, []byte("PK\x03\x04"))
+	case "application/msword", "application/vnd.ms-excel":
+		return bytes.HasPrefix(head, []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1})
+	case "text/csv", "text/plain":
+		return utf8.Valid(head) && !bytes.Contains(head, []byte{0})
+	case "video/mp4", "video/quicktime":
+		return len(head) >= 8 && bytes.Equal(head[4:8], []byte("ftyp"))
+	case "video/webm":
+		return bytes.HasPrefix(head, []byte{0x1A, 0x45, 0xDF, 0xA3})
+	}
+	return true
+}
 
 type PresignInput struct {
 	ObjectType         string    `json:"object_type"`
@@ -97,13 +151,23 @@ func (s *Service) Presign(ctx context.Context, in PresignInput) (*PresignOutput,
 	}
 	ext, ok := allowedContent[in.ContentType]
 	if !ok {
-		return nil, apperr.Validation("content_type harus image/jpeg|image/png|image/webp|application/pdf")
+		return nil, apperr.Validation("content_type tidak didukung; gunakan salah satu: "+strings.Join(SupportedContentTypes(), ", ")).WithField("content_type", "tidak didukung")
 	}
 	if limit := s.LimitFor(in.ContentType); in.SizeBytes <= 0 || in.SizeBytes > limit {
 		return nil, apperr.Validation(fmt.Sprintf("size_bytes harus 1..%d", limit)).WithField("size_bytes", fmt.Sprintf("maksimal %d KB", limit/1024))
 	}
 	if in.ObjectType == "" || in.ObjectID == uuid.Nil {
 		return nil, apperr.Validation("object_type dan object_id wajib")
+	}
+	// tanda tangan & foto harus berupa gambar; dokumen boleh PDF/Office/CSV/TXT; video hanya untuk attachment_type video
+	if in.AttachmentType == "video" {
+		if !IsVideo(in.ContentType) {
+			return nil, apperr.Validation("attachment_type video harus berupa video (mp4/mov/webm)").WithField("content_type", "harus video/*")
+		}
+	} else if IsVideo(in.ContentType) {
+		return nil, apperr.Validation("video diunggah dengan attachment_type video").WithField("attachment_type", "gunakan video")
+	} else if in.AttachmentType != "document" && !IsImage(in.ContentType) {
+		return nil, apperr.Validation("attachment_type "+in.AttachmentType+" harus berupa gambar").WithField("content_type", "harus image/*")
 	}
 	var out *PresignOutput
 	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
@@ -174,6 +238,15 @@ func (s *Service) Confirm(ctx context.Context, id uuid.UUID, in ConfirmInput) (*
 		a, err := getTx(ctx, tx, id)
 		if err != nil {
 			return err
+		}
+		// PRD P0 v2 §24.1 secure file access: hanya pengunggah yang dapat mengonfirmasi, dan object masih dapat diakses
+		if a.UploadedBy != p.UserID && !p.IsSystem {
+			return apperr.Forbidden("Hanya pengunggah yang dapat mengonfirmasi attachment ini")
+		}
+		if s.ObjectAccess != nil {
+			if err := s.ObjectAccess(ctx, tx, a.ObjectType, a.ObjectID, true); err != nil {
+				return err
+			}
 		}
 		if a.Status == "ready" {
 			out = a // idempotent
@@ -370,12 +443,23 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 		if err != nil {
 			return err
 		}
-		if a.UploadedBy != p.UserID && !p.Has("operations.attachments.delete") {
-			return apperr.Forbidden("")
-		}
 		if s.ObjectAccess != nil {
 			if err := s.ObjectAccess(ctx, tx, a.ObjectType, a.ObjectID, true); err != nil {
 				return err
+			}
+		}
+		// selain pengunggah, hapus memerlukan permission pada property object (bukan sekadar di org)
+		if a.UploadedBy != p.UserID {
+			var pid uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT property_id FROM (
+				SELECT property_id FROM tasks WHERE id = $1 UNION ALL SELECT property_id FROM work_orders WHERE id = $1
+				UNION ALL SELECT property_id FROM incidents WHERE id = $1 UNION ALL SELECT property_id FROM findings WHERE id = $1
+				UNION ALL SELECT property_id FROM service_requests WHERE id = $1 UNION ALL SELECT property_id FROM assets WHERE id = $1) x LIMIT 1`, a.ObjectID).Scan(&pid); err != nil {
+				if !p.Has("operations.attachments.delete") {
+					return apperr.Forbidden("")
+				}
+			} else if !p.HasOnProperty("operations.attachments.delete", pid) {
+				return apperr.Forbidden("Memerlukan operations.attachments.delete pada property ini")
 			}
 		}
 		if _, err := tx.Exec(ctx, `UPDATE attachments SET deleted_at = now() WHERE id = $1`, id); err != nil {
@@ -398,7 +482,7 @@ func CountByType(ctx context.Context, q db.Querier, objectType string, objectID 
 }
 
 // PhotoTypes: semua tipe foto (evidence Task menerima tipe apa pun; WO menuntut photo_after).
-var PhotoTypes = []string{"photo", "photo_before", "photo_after", "checklist_item_photo"}
+var PhotoTypes = []string{"photo", "photo_before", "photo_during", "photo_after", "checklist_item_photo"}
 
 // CountPhotos: jumlah attachment bertipe foto apa pun (lihat PhotoTypes).
 func CountPhotos(ctx context.Context, q db.Querier, objectType string, objectID uuid.UUID, includePending bool) (int, error) {
@@ -420,4 +504,9 @@ func ExtFor(contentType string) string {
 		return exts[0]
 	}
 	return path.Ext(strings.ToLower(contentType))
+}
+
+// GetForMessageTx: metadata lampiran tanpa cek akses (dipakai setelah akses object pesan divalidasi pemanggil).
+func GetForMessageTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*Attachment, error) {
+	return getTx(ctx, tx, id)
 }

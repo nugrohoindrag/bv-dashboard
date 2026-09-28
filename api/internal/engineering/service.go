@@ -63,7 +63,9 @@ type MaintenancePlan struct {
 	Description         *string    `json:"description"`
 	NextDue             *time.Time `json:"next_due"`
 	ScheduleCount       int        `json:"schedule_count"`
-	Version             int        `json:"version"`
+	// PRD P2 v2.1 P2-INS-02: work_order (PM) | inspection (inspeksi engineering terjadwal berulang)
+	OutputType string `json:"output_type"`
+	Version    int    `json:"version"`
 }
 
 type PlanInput struct {
@@ -79,7 +81,10 @@ type PlanInput struct {
 	LeadTimeDays        *int       `json:"lead_time_days"`
 	DurationMinutes     *int       `json:"duration_minutes"`
 	Description         *string    `json:"description"`
+	OutputType          *string    `json:"output_type"` // work_order (default) | inspection
 }
+
+var outputTypes = map[string]bool{"work_order": true, "inspection": true}
 
 var frequencies = map[string]int{"daily": 1, "weekly": 7, "biweekly": 14, "monthly": 0, "quarterly": 0, "semiannual": 0, "annual": 0, "custom_days": -1}
 
@@ -127,6 +132,13 @@ func (s *Service) CreatePlanTx(ctx context.Context, tx pgx.Tx, in PlanInput) (uu
 	if !operations.Priorities[prio] {
 		return uuid.Nil, apperr.Validation("default_priority tidak valid")
 	}
+	outputType := "work_order"
+	if in.OutputType != nil {
+		outputType = *in.OutputType
+	}
+	if !outputTypes[outputType] {
+		return uuid.Nil, apperr.Validation("output_type harus work_order|inspection").WithField("output_type", "tidak valid")
+	}
 	{
 		var propertyID uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT property_id FROM assets WHERE id = $1 AND deleted_at IS NULL`, *in.AssetID).Scan(&propertyID); err != nil {
@@ -151,9 +163,9 @@ func (s *Service) CreatePlanTx(ctx context.Context, tx pgx.Tx, in PlanInput) (uu
 			lead = *in.LeadTimeDays
 		}
 		var id uuid.UUID
-		if err := tx.QueryRow(ctx, `INSERT INTO maintenance_plans (organization_id, property_id, plan_code, name, asset_id, frequency, interval_days, start_date, end_date, checklist_template_id, default_priority, responsible_team_id, lead_time_days, duration_minutes, description, created_by, updated_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16) RETURNING id`,
-			p.OrganizationID, propertyID, code, strings.TrimSpace(*in.Name), *in.AssetID, *in.Frequency, in.IntervalDays, start, end, in.ChecklistTemplateID, prio, in.ResponsibleTeamID, lead, in.DurationMinutes, in.Description, p.UserID).Scan(&id); err != nil {
+		if err := tx.QueryRow(ctx, `INSERT INTO maintenance_plans (organization_id, property_id, plan_code, name, asset_id, frequency, interval_days, start_date, end_date, checklist_template_id, default_priority, responsible_team_id, lead_time_days, duration_minutes, description, created_by, updated_by, output_type)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17) RETURNING id`,
+			p.OrganizationID, propertyID, code, strings.TrimSpace(*in.Name), *in.AssetID, *in.Frequency, in.IntervalDays, start, end, in.ChecklistTemplateID, prio, in.ResponsibleTeamID, lead, in.DurationMinutes, in.Description, p.UserID, outputType).Scan(&id); err != nil {
 			return uuid.Nil, err
 		}
 		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "maintenance_plan", EntityID: &id, EntityLabel: code, After: in})
@@ -181,6 +193,9 @@ func (s *Service) UpdatePlan(ctx context.Context, id uuid.UUID, in PlanInput) (*
 				return apperr.Validation("frequency tidak valid")
 			}
 		}
+		if in.OutputType != nil && !outputTypes[*in.OutputType] {
+			return apperr.Validation("output_type harus work_order|inspection").WithField("output_type", "tidak valid")
+		}
 		var start, end *time.Time
 		if in.StartDate != nil {
 			t, err := time.Parse("2006-01-02", *in.StartDate)
@@ -204,8 +219,9 @@ func (s *Service) UpdatePlan(ctx context.Context, id uuid.UUID, in PlanInput) (*
 		if _, err := tx.Exec(ctx, `UPDATE maintenance_plans SET name = COALESCE(NULLIF($2,''), name), frequency = COALESCE(NULLIF($3,''), frequency), interval_days = COALESCE($4, interval_days),
 			start_date = COALESCE($5, start_date), end_date = CASE WHEN $6::timestamptz IS NULL THEN end_date WHEN $6 = '0001-01-01'::timestamptz THEN NULL ELSE $6::date END,
 			checklist_template_id = COALESCE($7, checklist_template_id), default_priority = COALESCE(NULLIF($8,''), default_priority), responsible_team_id = COALESCE($9, responsible_team_id),
-			lead_time_days = COALESCE($10, lead_time_days), duration_minutes = COALESCE($11, duration_minutes), description = COALESCE($12, description), updated_by = $13 WHERE id = $1`,
-			id, deref(in.Name), deref(in.Frequency), in.IntervalDays, start, end, in.ChecklistTemplateID, deref(in.DefaultPriority), in.ResponsibleTeamID, in.LeadTimeDays, in.DurationMinutes, in.Description, p.UserID); err != nil {
+			lead_time_days = COALESCE($10, lead_time_days), duration_minutes = COALESCE($11, duration_minutes), description = COALESCE($12, description), updated_by = $13,
+			output_type = COALESCE($14, output_type) WHERE id = $1`,
+			id, deref(in.Name), deref(in.Frequency), in.IntervalDays, start, end, in.ChecklistTemplateID, deref(in.DefaultPriority), in.ResponsibleTeamID, in.LeadTimeDays, in.DurationMinutes, in.Description, p.UserID, in.OutputType); err != nil {
 			return err
 		}
 		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditUpdate, EntityType: "maintenance_plan", EntityID: &id, EntityLabel: before.PlanCode, Before: before, After: in})
@@ -263,13 +279,13 @@ func (s *Service) SetPlanStatus(ctx context.Context, id uuid.UUID, status string
 const planSelect = `SELECT mp.id, mp.property_id, mp.plan_code, mp.name, mp.asset_id, a.asset_code, a.name, mp.frequency, mp.interval_days, mp.start_date, mp.end_date, mp.checklist_template_id,
 	mp.default_priority, mp.responsible_team_id, t.name, mp.lead_time_days, mp.duration_minutes, mp.status, mp.description, mp.version,
 	(SELECT min(ms.due_at) FROM maintenance_schedules ms WHERE ms.plan_id = mp.id AND ms.status IN ('scheduled','due','overdue')),
-	(SELECT count(*) FROM maintenance_schedules ms WHERE ms.plan_id = mp.id)
+	(SELECT count(*) FROM maintenance_schedules ms WHERE ms.plan_id = mp.id), mp.output_type
 	FROM maintenance_plans mp JOIN assets a ON a.id = mp.asset_id LEFT JOIN teams t ON t.id = mp.responsible_team_id`
 
 func scanPlan(row pgx.Row) (*MaintenancePlan, error) {
 	var m MaintenancePlan
 	if err := row.Scan(&m.ID, &m.PropertyID, &m.PlanCode, &m.Name, &m.AssetID, &m.AssetCode, &m.AssetName, &m.Frequency, &m.IntervalDays, &m.StartDate, &m.EndDate, &m.ChecklistTemplateID,
-		&m.DefaultPriority, &m.ResponsibleTeamID, &m.ResponsibleTeamName, &m.LeadTimeDays, &m.DurationMinutes, &m.Status, &m.Description, &m.Version, &m.NextDue, &m.ScheduleCount); err != nil {
+		&m.DefaultPriority, &m.ResponsibleTeamID, &m.ResponsibleTeamName, &m.LeadTimeDays, &m.DurationMinutes, &m.Status, &m.Description, &m.Version, &m.NextDue, &m.ScheduleCount, &m.OutputType); err != nil {
 		return nil, err
 	}
 	return &m, nil
@@ -457,9 +473,9 @@ func (s *Service) CreateDueWorkOrders(ctx context.Context, orgID uuid.UUID) (int
 	created := 0
 	err := s.DB.WithOrgTx(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT ms.id, ms.plan_id, ms.property_id, ms.asset_id, ms.due_at, mp.name, mp.checklist_template_id, mp.default_priority, mp.responsible_team_id, mp.plan_code, mp.duration_minutes, a.location_id, a.name
+			SELECT ms.id, ms.plan_id, ms.property_id, ms.asset_id, ms.due_at, mp.name, mp.checklist_template_id, mp.default_priority, mp.responsible_team_id, mp.plan_code, mp.duration_minutes, a.location_id, a.name, mp.output_type
 			FROM maintenance_schedules ms JOIN maintenance_plans mp ON mp.id = ms.plan_id JOIN assets a ON a.id = ms.asset_id JOIN properties pr ON pr.location_id = ms.property_id
-			WHERE ms.status IN ('scheduled','due','overdue') AND ms.work_order_id IS NULL AND mp.status = 'published'
+			WHERE ms.status IN ('scheduled','due','overdue') AND ms.work_order_id IS NULL AND ms.task_id IS NULL AND mp.status = 'published'
 			  AND ms.due_date <= ((now() AT TIME ZONE pr.timezone)::date + mp.lead_time_days)
 			ORDER BY ms.due_at`)
 		if err != nil {
@@ -476,11 +492,12 @@ func (s *Service) CreateDueWorkOrders(ctx context.Context, orgID uuid.UUID) (int
 			duration                    *int
 			locID                       uuid.UUID
 			assetName                   string
+			outputType                  string
 		}
 		var rs []row
 		for rows.Next() {
 			var r row
-			if err := rows.Scan(&r.id, &r.planID, &r.propID, &r.assetID, &r.dueAt, &r.name, &r.tplID, &r.prio, &r.teamID, &r.planCode, &r.duration, &r.locID, &r.assetName); err != nil {
+			if err := rows.Scan(&r.id, &r.planID, &r.propID, &r.assetID, &r.dueAt, &r.name, &r.tplID, &r.prio, &r.teamID, &r.planCode, &r.duration, &r.locID, &r.assetName, &r.outputType); err != nil {
 				rows.Close()
 				return err
 			}
@@ -489,6 +506,33 @@ func (s *Service) CreateDueWorkOrders(ctx context.Context, orgID uuid.UUID) (int
 		rows.Close()
 		for _, r := range rs {
 			loc := property.PropertyTimezone(ctx, tx, r.propID)
+			if r.outputType == "inspection" {
+				// PRD P2 v2.1 P2-INS-02: plan menghasilkan inspeksi engineering (task inspection + INS-) alih-alih WO
+				title := fmt.Sprintf("Inspeksi %s — %s (%s)", r.name, r.assetName, r.dueAt.In(loc).Format("02 Jan 2006"))
+				desc := fmt.Sprintf("Inspeksi terjadwal dari %s", r.planCode)
+				taskID, err := s.Ops.CreateTaskTx(ctx, tx, operations.CreateTaskInput{PropertyID: &r.propID, TaskType: "inspection", Title: title, Description: &desc, LocationID: &r.locID, AssetID: &r.assetID,
+					Priority: r.prio, DueAt: &r.dueAt, ChecklistTemplateID: r.tplID, AssigneeTeamID: r.teamID, SourceType: strPtr(operations.ObjMaintenanceSchedule), SourceID: &r.id})
+				if err != nil {
+					return fmt.Errorf("create inspection for schedule %s: %w", r.id, err)
+				}
+				number, err := ids.NextYearly(ctx, tx, orgID, ids.PrefixInspection, time.Now(), loc)
+				if err != nil {
+					return err
+				}
+				if _, err := tx.Exec(ctx, `INSERT INTO inspections (task_id, organization_id, inspection_number, inspection_type) VALUES ($1,$2,$3,'engineering')`, taskID, orgID, number); err != nil {
+					return err
+				}
+				newStatus := "due"
+				if r.dueAt.Before(time.Now()) {
+					newStatus = "overdue"
+				}
+				if _, err := tx.Exec(ctx, `UPDATE maintenance_schedules SET task_id = $2, status = $3 WHERE id = $1`, r.id, taskID, newStatus); err != nil {
+					return err
+				}
+				_ = audit.Record(ctx, tx, audit.Entry{ObjectType: "asset", ObjectID: r.assetID, Action: "inspection_scheduled", Payload: map[string]any{"task_id": taskID, "schedule_id": r.id, "plan_code": r.planCode, "inspection_number": number}})
+				created++
+				continue
+			}
 			title := fmt.Sprintf("PM %s — %s (%s)", r.name, r.assetName, r.dueAt.In(loc).Format("02 Jan 2006"))
 			desc := fmt.Sprintf("Preventive Maintenance dari %s", r.planCode)
 			woID, err := s.Ops.CreateWorkOrderTx(ctx, tx, operations.CreateWorkOrderInput{
@@ -543,10 +587,15 @@ type Schedule struct {
 	WorkOrderID     *uuid.UUID `json:"work_order_id"`
 	WorkOrderNumber *string    `json:"work_order_number"`
 	WorkOrderStatus *string    `json:"work_order_status"`
-	CompletedAt     *time.Time `json:"completed_at"`
-	SkippedReason   *string    `json:"skipped_reason"`
-	Priority        string     `json:"priority"`
-	TeamName        *string    `json:"team_name"`
+	// PRD P2 v2.1 P2-INS-02: plan output_type=inspection → task inspeksi
+	OutputType    string     `json:"output_type"`
+	TaskID        *uuid.UUID `json:"task_id"`
+	TaskNumber    *string    `json:"task_number"`
+	TaskStatus    *string    `json:"task_status"`
+	CompletedAt   *time.Time `json:"completed_at"`
+	SkippedReason *string    `json:"skipped_reason"`
+	Priority      string     `json:"priority"`
+	TeamName      *string    `json:"team_name"`
 }
 
 type ScheduleFilter struct {
@@ -567,10 +616,14 @@ func (s *Service) ListSchedules(ctx context.Context, f ScheduleFilter, page http
 		add := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
 		where := " WHERE 1=1"
 		if f.PropertyID != nil {
+			// property_id eksplisit tetap wajib dalam scope user (PRD P0 v2 §24.1)
+			if !p.HasAnyOnProperty("engineering.maintenance_schedules.view", *f.PropertyID) {
+				return apperr.Forbidden("")
+			}
 			where += " AND ms.property_id = " + add(*f.PropertyID)
-		} else if pids, all := p.PropertyIDsFor("engineering.maintenance_schedules.view"); !all {
-			where += " AND ms.property_id = ANY(" + add(pids) + "::uuid[])"
 		}
+		// scope Building/Tower: lokasi PM = lokasi asset (PRD P1 v2.1 P1-DSH-09 — PM due di Overview)
+		where += " AND " + p.ScopeSQL("engineering.maintenance_schedules.view", "ms.property_id", "(SELECT sl.path FROM locations sl WHERE sl.id = a.location_id)", add)
 		if f.PlanID != nil {
 			where += " AND ms.plan_id = " + add(*f.PlanID)
 		}
@@ -592,8 +645,10 @@ func (s *Service) ListSchedules(ctx context.Context, f ScheduleFilter, page http
 		if page.Cursor != nil {
 			where += " AND (ms.due_at, ms.id) > (" + add(page.Cursor.Value) + "::timestamptz, " + add(page.Cursor.ID) + ")"
 		}
-		rows, err := tx.Query(ctx, `SELECT ms.id, ms.property_id, ms.plan_id, mp.plan_code, mp.name, ms.asset_id, a.asset_code, a.name, a.location_id, ms.due_date::text, ms.due_at, ms.status, ms.work_order_id, w.work_order_number, w.status, ms.completed_at, ms.skipped_reason, mp.default_priority, t.name
-			FROM maintenance_schedules ms JOIN maintenance_plans mp ON mp.id = ms.plan_id JOIN assets a ON a.id = ms.asset_id LEFT JOIN work_orders w ON w.id = ms.work_order_id LEFT JOIN teams t ON t.id = mp.responsible_team_id`+
+		rows, err := tx.Query(ctx, `SELECT ms.id, ms.property_id, ms.plan_id, mp.plan_code, mp.name, ms.asset_id, a.asset_code, a.name, a.location_id, ms.due_date::text, ms.due_at, ms.status, ms.work_order_id, w.work_order_number, w.status, ms.completed_at, ms.skipped_reason, mp.default_priority, t.name,
+			mp.output_type, ms.task_id, tk.task_number, tk.status
+			FROM maintenance_schedules ms JOIN maintenance_plans mp ON mp.id = ms.plan_id JOIN assets a ON a.id = ms.asset_id LEFT JOIN work_orders w ON w.id = ms.work_order_id LEFT JOIN teams t ON t.id = mp.responsible_team_id
+			LEFT JOIN tasks tk ON tk.id = ms.task_id`+
 			where+` ORDER BY ms.due_at, ms.id LIMIT `+add(page.Limit+1), args...)
 		if err != nil {
 			return err
@@ -603,7 +658,8 @@ func (s *Service) ListSchedules(ctx context.Context, f ScheduleFilter, page http
 		for rows.Next() {
 			var sc Schedule
 			var locID uuid.UUID
-			if err := rows.Scan(&sc.ID, &sc.PropertyID, &sc.PlanID, &sc.PlanCode, &sc.PlanName, &sc.AssetID, &sc.AssetCode, &sc.AssetName, &locID, &sc.DueDate, &sc.DueAt, &sc.Status, &sc.WorkOrderID, &sc.WorkOrderNumber, &sc.WorkOrderStatus, &sc.CompletedAt, &sc.SkippedReason, &sc.Priority, &sc.TeamName); err != nil {
+			if err := rows.Scan(&sc.ID, &sc.PropertyID, &sc.PlanID, &sc.PlanCode, &sc.PlanName, &sc.AssetID, &sc.AssetCode, &sc.AssetName, &locID, &sc.DueDate, &sc.DueAt, &sc.Status, &sc.WorkOrderID, &sc.WorkOrderNumber, &sc.WorkOrderStatus, &sc.CompletedAt, &sc.SkippedReason, &sc.Priority, &sc.TeamName,
+				&sc.OutputType, &sc.TaskID, &sc.TaskNumber, &sc.TaskStatus); err != nil {
 				return err
 			}
 			locIDs = append(locIDs, locID)
@@ -638,8 +694,8 @@ func (s *Service) SkipSchedule(ctx context.Context, id uuid.UUID, reason string)
 	return s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		var pid uuid.UUID
 		var status string
-		var woID *uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT property_id, status, work_order_id FROM maintenance_schedules WHERE id = $1`, id).Scan(&pid, &status, &woID); err != nil {
+		var woID, taskID *uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT property_id, status, work_order_id, task_id FROM maintenance_schedules WHERE id = $1`, id).Scan(&pid, &status, &woID, &taskID); err != nil {
 			return apperr.NotFound("Maintenance Schedule")
 		}
 		if !p.HasOnProperty("engineering.maintenance_schedules.skip", pid) {
@@ -650,6 +706,11 @@ func (s *Service) SkipSchedule(ctx context.Context, id uuid.UUID, reason string)
 		}
 		if woID != nil {
 			if _, err := s.Ops.TransitionTx(ctx, tx, operations.ObjWorkOrder, *woID, workflow.ActCancel, operations.TransitionInput{Reason: "PM skipped: " + reason}); err != nil && !apperr.Is(err, "WORKFLOW_INVALID_TRANSITION") && !apperr.Is(err, "OBJECT_TERMINAL") {
+				return err
+			}
+		}
+		if taskID != nil {
+			if _, err := s.Ops.TransitionTx(ctx, tx, operations.ObjTask, *taskID, workflow.ActCancel, operations.TransitionInput{Reason: "Inspeksi terjadwal di-skip: " + reason}); err != nil && !apperr.Is(err, "WORKFLOW_INVALID_TRANSITION") && !apperr.Is(err, "OBJECT_TERMINAL") {
 				return err
 			}
 		}
@@ -737,6 +798,25 @@ func (s *Service) CreateInspection(ctx context.Context, in CreateInspectionInput
 	return out, err
 }
 
+// InspectionScore (PRD P2 v2.1 P2-HKI-03): % item checklist yang OK dari item bernilai (OK/Not OK, numerik dalam/luar batas;
+// N/A, teks, foto tidak dihitung). Tanpa item bernilai: 100 dikurangi 20 per finding (minimum 0).
+func InspectionScore(ctx context.Context, tx pgx.Tx, taskID uuid.UUID, findings int) int {
+	var ok, notOK int
+	_ = tx.QueryRow(ctx, `SELECT
+		count(*) FILTER (WHERE (i.item_type = 'ok_notok_na' AND i.result_value = 'ok') OR (i.item_type = 'numeric' AND i.result_number IS NOT NULL
+		  AND (i.numeric_min IS NULL OR i.result_number >= i.numeric_min) AND (i.numeric_max IS NULL OR i.result_number <= i.numeric_max))),
+		count(*) FILTER (WHERE (i.item_type = 'ok_notok_na' AND i.result_value = 'not_ok') OR (i.item_type = 'numeric' AND i.result_number IS NOT NULL
+		  AND ((i.numeric_min IS NOT NULL AND i.result_number < i.numeric_min) OR (i.numeric_max IS NOT NULL AND i.result_number > i.numeric_max))))
+		FROM checklist_run_items i JOIN checklist_runs r ON r.id = i.run_id WHERE r.object_type = 'task' AND r.object_id = $1`, taskID).Scan(&ok, &notOK)
+	if ok+notOK > 0 {
+		return (ok*100 + (ok+notOK)/2) / (ok + notOK)
+	}
+	if s := 100 - 20*findings; s > 0 {
+		return s
+	}
+	return 0
+}
+
 // inspectionHook: saat inspection complete → result pass/fail dari checklist (Not OK → fail).
 type inspectionHook struct{ s *Service }
 
@@ -744,6 +824,15 @@ func (h inspectionHook) BeforeComplete(context.Context, pgx.Tx, *operations.Work
 	return nil
 }
 func (h inspectionHook) AfterTransition(ctx context.Context, tx pgx.Tx, item *operations.WorkItem, action string, from, to workflow.Status) error {
+	// PRD P2 v2.1 P2-INS-02: status jadwal inspeksi terjadwal mengikuti task inspeksi
+	switch action {
+	case workflow.ActStart:
+		_, _ = tx.Exec(ctx, `UPDATE maintenance_schedules SET status = 'in_progress' WHERE task_id = $1 AND status IN ('scheduled','due','overdue')`, item.ID)
+	case workflow.ActComplete:
+		_, _ = tx.Exec(ctx, `UPDATE maintenance_schedules SET status = 'completed', completed_at = now() WHERE task_id = $1 AND status <> 'completed'`, item.ID)
+	case workflow.ActCancel:
+		_, _ = tx.Exec(ctx, `UPDATE maintenance_schedules SET status = 'cancelled' WHERE task_id = $1 AND status NOT IN ('completed','skipped')`, item.ID)
+	}
 	if action != workflow.ActComplete {
 		return nil
 	}
@@ -758,9 +847,10 @@ func (h inspectionHook) AfterTransition(ctx context.Context, tx pgx.Tx, item *op
 			result = "partial"
 		}
 	}
-	_, _ = tx.Exec(ctx, `UPDATE inspections SET result = $2, result_notes = $3 WHERE task_id = $1`, item.ID, result, item.CompletionNotes)
-	// housekeeping inspection: propagate ke cleaning task
-	_, _ = tx.Exec(ctx, `UPDATE housekeeping_inspections SET result = $2, result_notes = $3 WHERE task_id = $1`, item.ID, result, item.CompletionNotes)
+	score := InspectionScore(ctx, tx, item.ID, findings)
+	_, _ = tx.Exec(ctx, `UPDATE inspections SET result = $2, result_notes = $3, score = $4 WHERE task_id = $1`, item.ID, result, item.CompletionNotes, score)
+	// housekeeping inspection: propagate ke cleaning task; skor 0–100 disimpan (PRD P2 v2.1 P2-HKI-03)
+	_, _ = tx.Exec(ctx, `UPDATE housekeeping_inspections SET result = $2, result_notes = $3, score = $4 WHERE task_id = $1`, item.ID, result, item.CompletionNotes, score)
 	_, _ = tx.Exec(ctx, `UPDATE cleaning_tasks ct SET inspection_status = CASE WHEN $2 = 'pass' THEN 'passed' WHEN $3 > 0 THEN 'rework_required' ELSE 'failed' END
 		FROM housekeeping_inspections hi WHERE hi.task_id = $1 AND ct.task_id = hi.cleaning_task_id`, item.ID, result, findings)
 	if item.Asset.ID != nil {

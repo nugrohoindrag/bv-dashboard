@@ -79,7 +79,11 @@ func (s *Service) seedCommon(ctx context.Context, env *Env, logf func(string, ..
 			env.Items[it.key] = id
 			continue
 		}
-		out, err := s.Inventory.CreateItem(vctx, inventory.ItemInput{Name: ptr(it.name), Category: ptr(it.cat), Unit: ptr(it.unit), MinStock: ptr(it.min), UnitCost: ptr(it.cost), Barcode: ptr("DEMO-" + it.key)})
+		in := inventory.ItemInput{Name: ptr(it.name), Category: ptr(it.cat), Unit: ptr(it.unit), MinStock: ptr(it.min), UnitCost: ptr(it.cost), Barcode: ptr("DEMO-" + it.key)}
+		if it.eqCat != "" {
+			in.EquipmentCategoryCode = ptr(it.eqCat)
+		}
+		out, err := s.Inventory.CreateItem(vctx, in)
 		if err != nil {
 			return fmt.Errorf("item %s: %w", it.name, err)
 		}
@@ -110,18 +114,21 @@ var inventoryItems = []struct {
 	key, name, cat, unit string
 	min                  float64
 	cost                 int64
+	eqCat                string // consumable teknis → low stock ke Engineering (PRD P2 v2.1 P2-CNS-03)
 }{
-	{"ac_filter", "AC Filter", "spare_part", "pcs", 10, 85000},
-	{"refrigerant", "Refrigerant R32", "consumable", "kg", 5, 320000},
-	{"led_lamp", "LED Lamp 12W", "spare_part", "pcs", 20, 45000},
-	{"cable", "Electrical Cable NYM 2x1.5", "consumable", "m", 50, 9500},
-	{"water_valve", "Water Valve 1/2\"", "spare_part", "pcs", 5, 65000},
-	{"pipe", "PVC Pipe 1/2\"", "consumable", "m", 20, 18000},
-	{"pipe_connector", "Pipe Connector 1/2\"", "spare_part", "pcs", 10, 7500},
-	{"chemical", "Cleaning Chemical (Floor)", "consumable", "L", 10, 42000},
-	{"cleaning_tools", "Cleaning Tools Set", "tool", "set", 3, 150000},
-	{"door_lock", "Door Lock Cylinder", "spare_part", "pcs", 4, 210000},
-	{"battery", "Battery AA (Alkaline)", "consumable", "pcs", 24, 6000},
+	{"ac_filter", "AC Filter", "spare_part", "pcs", 10, 85000, "HVAC"},
+	{"refrigerant", "Refrigerant R32", "consumable", "kg", 5, 320000, "HVAC"},
+	{"led_lamp", "LED Lamp 12W", "spare_part", "pcs", 20, 45000, "ELEC"},
+	{"cable", "Electrical Cable NYM 2x1.5", "consumable", "m", 50, 9500, "ELEC"},
+	{"water_valve", "Water Valve 1/2\"", "spare_part", "pcs", 5, 65000, "PLMB"},
+	{"pipe", "PVC Pipe 1/2\"", "consumable", "m", 20, 18000, "PLMB"},
+	{"pipe_connector", "Pipe Connector 1/2\"", "spare_part", "pcs", 10, 7500, "PLMB"},
+	{"chemical", "Cleaning Chemical (Floor)", "consumable", "L", 10, 42000, ""},
+	{"cleaning_tools", "Cleaning Tools Set", "tool", "set", 3, 150000, ""},
+	{"door_lock", "Door Lock Cylinder", "spare_part", "pcs", 4, 210000, ""},
+	{"battery", "Battery AA (Alkaline)", "consumable", "pcs", 24, 6000, ""},
+	{"tissue", "Tisu Toilet Jumbo Roll", "consumable", "roll", 40, 28000, ""},
+	{"hand_soap", "Sabun Cuci Tangan 5L", "consumable", "L", 15, 36000, ""},
 }
 
 var checklistTemplates = []struct {
@@ -593,7 +600,7 @@ func (s *Service) answerChecklist(ctx context.Context, objectType string, object
 
 func (s *Service) announce(ctx context.Context, env *Env, propertyID uuid.UUID, title, excerpt, body, importance string, expiresIn time.Duration) error {
 	trCtx := s.asEmail(ctx, env, "tenantrelation.demo@buildingvision.local")
-	exp := time.Now().Add(expiresIn)
+	exp := time.Now().Add(expiresIn).UTC().Format(time.RFC3339)
 	a, err := s.TR.CreateAnnouncement(trCtx, tenantrelation.AnnouncementInput{PropertyID: &propertyID, Title: &title, Excerpt: &excerpt, Body: &body, Audience: ptr("all"), Importance: &importance, ExpiresAt: &exp})
 	if err != nil {
 		return fmt.Errorf("announcement %q: %w", title, err)

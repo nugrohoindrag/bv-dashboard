@@ -18,37 +18,44 @@ import (
 	"github.com/buildingvision/api/internal/platform/httpx"
 	"github.com/buildingvision/api/internal/platform/ids"
 	"github.com/buildingvision/api/internal/property"
+	"github.com/buildingvision/api/internal/searchindex"
 )
 
 // ---------- Finding (PRD §12.4, §13.2, §15.2; Naming Convention §8) ----------
 
 type Finding struct {
-	ID              uuid.UUID       `json:"id"`
-	PropertyID      uuid.UUID       `json:"property_id"`
-	FindingNumber   string          `json:"finding_number"`
-	FindingType     string          `json:"finding_type"`
-	Category        *string         `json:"category"`
-	Title           string          `json:"title"`
-	Description     *string         `json:"description"`
-	Location        LocationRef     `json:"location"`
-	Asset           AssetRef        `json:"asset"`
-	Severity        string          `json:"severity"`
-	Status          workflow.Status `json:"status"`
-	SourceType      *string         `json:"source_type"`
-	SourceID        *uuid.UUID      `json:"source_id"`
-	SourceLabel     string          `json:"source_label"`
-	ReportedBy      *uuid.UUID      `json:"reported_by"`
-	ReportedByName  *string         `json:"reported_by_name"`
-	ReportedAt      time.Time       `json:"reported_at"`
-	Resolution      *string         `json:"resolution"`
-	ResolvedAt      *time.Time      `json:"resolved_at"`
-	ClosedAt        *time.Time      `json:"closed_at"`
-	EscalatedAt     *time.Time      `json:"escalated_at"`
-	Links           []ObjectLink    `json:"links"`
-	AttachmentCount int             `json:"attachment_count"`
-	AllowedActions  []string        `json:"allowed_actions"`
-	CreatedAt       time.Time       `json:"created_at"`
-	Version         int             `json:"version"`
+	ID             uuid.UUID       `json:"id"`
+	PropertyID     uuid.UUID       `json:"property_id"`
+	FindingNumber  string          `json:"finding_number"`
+	FindingType    string          `json:"finding_type"`
+	Category       *string         `json:"category"`
+	Title          string          `json:"title"`
+	Description    *string         `json:"description"`
+	Location       LocationRef     `json:"location"`
+	Asset          AssetRef        `json:"asset"`
+	Severity       string          `json:"severity"`
+	Status         workflow.Status `json:"status"`
+	SourceType     *string         `json:"source_type"`
+	SourceID       *uuid.UUID      `json:"source_id"`
+	SourceLabel    string          `json:"source_label"`
+	ReportedBy     *uuid.UUID      `json:"reported_by"`
+	ReportedByName *string         `json:"reported_by_name"`
+	ReportedAt     time.Time       `json:"reported_at"`
+	Resolution     *string         `json:"resolution"`
+	ResolvedAt     *time.Time      `json:"resolved_at"`
+	ClosedAt       *time.Time      `json:"closed_at"`
+	EscalatedAt    *time.Time      `json:"escalated_at"`
+	// PRD P1 v2.1 P1-XMW-01: SR asal rantai (bila finding lahir dari pekerjaan permintaan tenant)
+	OriginServiceRequestID     *uuid.UUID `json:"origin_service_request_id"`
+	OriginServiceRequestNumber *string    `json:"origin_service_request_number"`
+	// PRD P2 v2.1 P2-PAT-08: temuan patroli terhubung ke checkpoint
+	CheckpointID    *uuid.UUID   `json:"checkpoint_id"`
+	CheckpointName  *string      `json:"checkpoint_name"`
+	Links           []ObjectLink `json:"links"`
+	AttachmentCount int          `json:"attachment_count"`
+	AllowedActions  []string     `json:"allowed_actions"`
+	CreatedAt       time.Time    `json:"created_at"`
+	Version         int          `json:"version"`
 }
 
 type CreateFindingInput struct {
@@ -63,6 +70,7 @@ type CreateFindingInput struct {
 	SourceType       *string    `json:"source_type"`
 	SourceID         *uuid.UUID `json:"source_id"`
 	AttachmentID     *uuid.UUID `json:"attachment_id"` // foto yang sudah di-presign untuk object sumber → di-relink ke finding
+	CheckpointID     *uuid.UUID `json:"checkpoint_id"` // PRD P2 v2.1 P2-PAT-08: temuan patroli di checkpoint
 	ClientRecordedAt *time.Time `json:"client_recorded_at"`
 	FromSync         bool       `json:"-"`
 }
@@ -120,16 +128,29 @@ func (s *Service) CreateFindingTx(ctx context.Context, tx pgx.Tx, in CreateFindi
 	if err := s.validateRefs(ctx, tx, propertyID, in.LocationID, in.AssetID, nil, nil, nil); err != nil {
 		return uuid.Nil, err
 	}
+	if in.CheckpointID != nil {
+		// checkpoint harus milik property yang sama; lokasi temuan default = lokasi checkpoint
+		var cpLoc uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT location_id FROM checkpoints WHERE id = $1 AND property_id = $2`, *in.CheckpointID, propertyID).Scan(&cpLoc); err != nil {
+			return uuid.Nil, apperr.Validation("checkpoint_id tidak valid untuk property ini").WithField("checkpoint_id", "tidak valid")
+		}
+		if in.LocationID == nil {
+			in.LocationID = &cpLoc
+		}
+	}
 	loc := property.PropertyTimezone(ctx, tx, propertyID)
 	number, err := ids.NextYearly(ctx, tx, p.OrganizationID, ids.PrefixFinding, time.Now(), loc)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	var id uuid.UUID
-	err = tx.QueryRow(ctx, `INSERT INTO findings (organization_id, property_id, finding_number, finding_type, category, title, description, location_id, asset_id, severity, source_type, source_id, reported_by, created_by, updated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,$13) RETURNING id`,
-		p.OrganizationID, propertyID, number, in.FindingType, in.Category, in.Title, in.Description, in.LocationID, in.AssetID, in.Severity, in.SourceType, in.SourceID, actorOrNil(p)).Scan(&id)
+	err = tx.QueryRow(ctx, `INSERT INTO findings (organization_id, property_id, finding_number, finding_type, category, title, description, location_id, asset_id, severity, source_type, source_id, reported_by, created_by, updated_by, checkpoint_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,$13,$14) RETURNING id`,
+		p.OrganizationID, propertyID, number, in.FindingType, in.Category, in.Title, in.Description, in.LocationID, in.AssetID, in.Severity, in.SourceType, in.SourceID, actorOrNil(p), in.CheckpointID).Scan(&id)
 	if err != nil {
+		return uuid.Nil, err
+	}
+	if err := setOriginTx(ctx, tx, ObjFinding, id, in.SourceType, in.SourceID); err != nil {
 		return uuid.Nil, err
 	}
 	if in.AttachmentID != nil {
@@ -148,6 +169,7 @@ func (s *Service) CreateFindingTx(ctx context.Context, tx pgx.Tx, in CreateFindi
 	}
 	_ = audit.Record(ctxAct, tx, audit.Entry{ObjectType: ObjFinding, ObjectID: id, Action: audit.ActCreated, Payload: map[string]any{"number": number, "severity": in.Severity}, ClientRecordedAt: in.ClientRecordedAt})
 	_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: ObjFinding, EntityID: &id, EntityLabel: number})
+	_ = searchindex.IndexTx(ctx, tx, p.OrganizationID, ObjFinding, id) // PRD P0 v2 §17.1
 	if s.Jobs != nil {
 		_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: events.FindingCreated, OrganizationID: p.OrganizationID, PropertyID: &propertyID, ObjectType: ObjFinding, ObjectID: id, ObjectLabel: number, ActorUserID: actorOrNil(p),
 			Payload: map[string]any{"severity": in.Severity, "finding_type": in.FindingType, "source_type": in.SourceType, "source_id": in.SourceID}})
@@ -163,10 +185,13 @@ func (s *Service) getFindingTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*F
 	var f Finding
 	err := tx.QueryRow(ctx, `SELECT f.id, f.property_id, f.finding_number, f.finding_type, f.category, f.title, f.description, f.location_id, l.name, f.asset_id, a.asset_code, a.name, a.status,
 		f.severity, f.status, f.source_type, f.source_id, f.reported_by, u.full_name, f.reported_at, f.resolution, f.resolved_at, f.closed_at, f.escalated_at, f.created_at, f.version,
-		(SELECT count(*) FROM attachments x WHERE x.object_type = 'finding' AND x.object_id = f.id AND x.deleted_at IS NULL)
+		(SELECT count(*) FROM attachments x WHERE x.object_type = 'finding' AND x.object_id = f.id AND x.deleted_at IS NULL),
+		f.origin_service_request_id, (SELECT osr.request_number FROM service_requests osr WHERE osr.id = f.origin_service_request_id),
+		f.checkpoint_id, (SELECT cp.name FROM checkpoints cp WHERE cp.id = f.checkpoint_id)
 		FROM findings f LEFT JOIN locations l ON l.id = f.location_id LEFT JOIN assets a ON a.id = f.asset_id LEFT JOIN users u ON u.id = f.reported_by WHERE f.id = $1`, id).
 		Scan(&f.ID, &f.PropertyID, &f.FindingNumber, &f.FindingType, &f.Category, &f.Title, &f.Description, &f.Location.ID, &f.Location.Name, &f.Asset.ID, &f.Asset.AssetCode, &f.Asset.Name, &f.Asset.Status,
-			&f.Severity, &f.Status, &f.SourceType, &f.SourceID, &f.ReportedBy, &f.ReportedByName, &f.ReportedAt, &f.Resolution, &f.ResolvedAt, &f.ClosedAt, &f.EscalatedAt, &f.CreatedAt, &f.Version, &f.AttachmentCount)
+			&f.Severity, &f.Status, &f.SourceType, &f.SourceID, &f.ReportedBy, &f.ReportedByName, &f.ReportedAt, &f.Resolution, &f.ResolvedAt, &f.ClosedAt, &f.EscalatedAt, &f.CreatedAt, &f.Version, &f.AttachmentCount,
+			&f.OriginServiceRequestID, &f.OriginServiceRequestNumber, &f.CheckpointID, &f.CheckpointName)
 	if err != nil {
 		if db.IsNoRows(err) {
 			return nil, apperr.NotFound("Finding")
@@ -223,6 +248,13 @@ type FindingFilter struct {
 	SourceID   *uuid.UUID
 	Unresolved bool
 	Q          string
+	// PRD P2 v2.1 P2-PAT-08: temuan per checkpoint; drill-down health asset & dashboard (asset, periode)
+	CheckpointID *uuid.UUID
+	AssetID      *uuid.UUID
+	CreatedFrom  *time.Time
+	CreatedTo    *time.Time
+	SortCol      SortCol // PRD P0 v2 §17.3
+	SortDesc     bool
 }
 
 func (s *Service) ListFindings(ctx context.Context, f FindingFilter, page httpx.Page) ([]Finding, *string, error) {
@@ -234,10 +266,13 @@ func (s *Service) ListFindings(ctx context.Context, f FindingFilter, page httpx.
 		add := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
 		where := " WHERE 1=1"
 		if f.PropertyID != nil {
+			// PRD P0 v2 §24.1: property_id eksplisit tetap wajib dalam scope user
+			if !p.HasAnyOnProperty("operations.findings.view", *f.PropertyID) {
+				return apperr.Forbidden("")
+			}
 			where += " AND f.property_id = " + add(*f.PropertyID)
-		} else if pids, all := p.PropertyIDsFor("operations.findings.view"); !all {
-			where += " AND f.property_id = ANY(" + add(pids) + "::uuid[])"
 		}
+		where += " AND " + locationScopeSQL(p, "operations.findings.view", "f", add)
 		if len(f.Statuses) > 0 {
 			where += " AND f.status = ANY(" + add(f.Statuses) + ")"
 		}
@@ -256,6 +291,18 @@ func (s *Service) ListFindings(ctx context.Context, f FindingFilter, page httpx.
 		if f.SourceID != nil {
 			where += " AND f.source_id = " + add(*f.SourceID)
 		}
+		if f.CheckpointID != nil {
+			where += " AND f.checkpoint_id = " + add(*f.CheckpointID)
+		}
+		if f.AssetID != nil {
+			where += " AND f.asset_id = " + add(*f.AssetID)
+		}
+		if f.CreatedFrom != nil {
+			where += " AND f.created_at >= " + add(*f.CreatedFrom)
+		}
+		if f.CreatedTo != nil {
+			where += " AND f.created_at <= " + add(*f.CreatedTo)
+		}
 		if f.Unresolved {
 			where += " AND f.status IN ('open','in_progress')"
 		}
@@ -263,38 +310,21 @@ func (s *Service) ListFindings(ctx context.Context, f FindingFilter, page httpx.
 			q := add("%" + f.Q + "%")
 			where += " AND (f.finding_number ILIKE " + q + " OR f.title ILIKE " + q + ")"
 		}
-		if page.Cursor != nil {
-			where += " AND (f.reported_at, f.id) < (" + add(page.Cursor.Value) + "::timestamptz, " + add(page.Cursor.ID) + ")"
+		col := f.SortCol
+		if col.Expr == "" {
+			col, f.SortDesc = FindingSortCols["created_at"], true
 		}
-		rows, err := tx.Query(ctx, `SELECT f.id FROM findings f`+where+` ORDER BY f.reported_at DESC, f.id DESC LIMIT `+add(page.Limit+1), args...)
+		idList, nx, err := KeysetIDs(ctx, tx, KeysetQuery{From: "FROM findings f", Where: where, IDCol: "f.id", Args: args}, col, f.SortDesc, page)
 		if err != nil {
 			return err
 		}
-		var idList []uuid.UUID
-		for rows.Next() {
-			var id uuid.UUID
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			idList = append(idList, id)
-		}
-		rows.Close()
-		hasMore := len(idList) > page.Limit
-		if hasMore {
-			idList = idList[:page.Limit]
-		}
+		next = nx
 		for _, id := range idList {
-			fd, err := s.getFindingTx(ctx, tx, id)
+			it, err := s.getFindingTx(ctx, tx, id)
 			if err != nil {
 				return err
 			}
-			out = append(out, *fd)
-		}
-		if hasMore && len(out) > 0 {
-			last := out[len(out)-1]
-			c := httpx.EncodeCursor(last.ReportedAt.UTC().Format(time.RFC3339Nano), last.ID)
-			next = &c
+			out = append(out, *it)
 		}
 		return nil
 	})
@@ -331,6 +361,12 @@ func (s *Service) TransitionFinding(ctx context.Context, id uuid.UUID, action st
 		if tr.RequireReason && reason == "" {
 			return apperr.Validation("reason/resolution wajib").WithField("reason", "wajib")
 		}
+		if action == workflow.ActClose {
+			// P2-XTW-02: finding asal baru ditutup setelah pekerjaan turunannya (WO, verifikasi) selesai
+			if err := guardChainClose(ctx, tx, ObjFinding, id); err != nil {
+				return err
+			}
+		}
 		sets := "status = $2, updated_by = $3"
 		args := []any{id, tr.To, p.UserID}
 		switch action {
@@ -354,8 +390,14 @@ func (s *Service) TransitionFinding(ctx context.Context, id uuid.UUID, action st
 			}
 		}
 		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditStatusChange, EntityType: ObjFinding, EntityID: &id, EntityLabel: f.FindingNumber, Before: map[string]any{"status": f.Status}, After: map[string]any{"status": tr.To}})
+		_ = searchindex.IndexTx(ctx, tx, p.OrganizationID, ObjFinding, id)
 		if s.Jobs != nil {
 			_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: "finding." + eventVerb(action), OrganizationID: p.OrganizationID, PropertyID: &f.PropertyID, ObjectType: ObjFinding, ObjectID: id, ObjectLabel: f.FindingNumber, ActorUserID: &p.UserID, Payload: map[string]any{"from": f.Status, "to": tr.To}})
+		}
+		if action == workflow.ActResolve || action == workflow.ActClose {
+			if err := s.chainProgressTx(ctx, tx, ObjFinding, id, f.FindingNumber, &reason); err != nil {
+				return err
+			}
 		}
 		out, err = s.getFindingTx(ctx, tx, id)
 		return err
@@ -474,6 +516,10 @@ func (h findingHook) AfterTransition(ctx context.Context, tx pgx.Tx, item *WorkI
 		return nil
 	}
 	if status == "open" || status == "in_progress" {
+		// P2-XTW-02: tunggu tindak lanjut (mis. verifikasi security / inspeksi akhir) yang masih terbuka
+		if open, err := openDescendants(ctx, tx, ObjFinding, *item.SourceID); err == nil && len(open) > 0 {
+			return nil
+		}
 		res := "Diselesaikan melalui " + item.Number
 		_, _ = tx.Exec(ctx, `UPDATE findings SET status = 'resolved', resolution = $2, resolved_at = now() WHERE id = $1`, *item.SourceID, res)
 		_ = audit.Record(ctx, tx, audit.Entry{ObjectType: ObjFinding, ObjectID: *item.SourceID, Action: audit.ActResolved, Payload: map[string]any{"via": item.Number}})

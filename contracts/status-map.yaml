@@ -2,28 +2,42 @@
 # Sumber: Design System §2.2 · Naming Convention §25–29, §50
 # Sumber tunggal untuk web/src/lib/status-map.ts dan mobile/packages/bv_core/lib/status_map.dart
 # semantic: success | warning | critical | info | neutral ; variant: solid | soft | outline
+# `critical` == token `error` (DS palette); brand != status (PRD §25.1).
 version: 1
+# Status System umum (PRD P0 §20.2): delapan kategori yang konsisten lintas modul. Status object tetap kanonik per
+# object type di bawah; `web/src/lib/status-category.ts` memetakan status object -> kategori ini (new/in_progress/
+# pending/completed/closed/cancelled). overdue & critical bukan status lifecycle — dipakai juga sebagai flag.
+common:
+  new:         { label_id: "Baru",              label_en: "New",         semantic: neutral,  variant: soft,    icon: circle }
+  in_progress: { label_id: "Sedang Dikerjakan", label_en: "In Progress", semantic: info,     variant: solid,   icon: play }
+  pending:     { label_id: "Pending",           label_en: "Pending",     semantic: warning,  variant: soft,    icon: pause }
+  completed:   { label_id: "Selesai",           label_en: "Completed",   semantic: success,  variant: soft,    icon: check }
+  closed:      { label_id: "Ditutup",           label_en: "Closed",      semantic: success,  variant: solid,   icon: check-check }
+  cancelled:   { label_id: "Dibatalkan",        label_en: "Cancelled",   semantic: neutral,  variant: outline, icon: x-circle }
+  overdue:     { label_id: "Overdue",           label_en: "Overdue",     semantic: critical, variant: solid,   icon: alarm-clock }
+  critical:    { label_id: "Kritis",            label_en: "Critical",    semantic: critical, variant: solid,   icon: alert-triangle }
 task:
   new:         { label_id: "Baru",              label_en: "New",         semantic: neutral, variant: soft }
   scheduled:   { label_id: "Terjadwal",         label_en: "Scheduled",   semantic: info,    variant: soft }
   assigned:    { label_id: "Ditugaskan",        label_en: "Assigned",    semantic: info,    variant: soft }
   in_progress: { label_id: "Sedang Dikerjakan", label_en: "In Progress", semantic: info,    variant: solid }
-  on_hold:     { label_id: "Ditunda",           label_en: "On Hold",     semantic: warning, variant: soft }
+  on_hold:     { label_id: "Pending",           label_en: "Pending",     semantic: warning, variant: soft }  # on_hold = status "Pending" PRD P0 §10.4 (kode tetap on_hold)
   completed:   { label_id: "Selesai",           label_en: "Completed",   semantic: success, variant: soft }
   closed:      { label_id: "Ditutup",           label_en: "Closed",      semantic: success, variant: solid }
   cancelled:   { label_id: "Dibatalkan",        label_en: "Cancelled",   semantic: neutral, variant: outline }
 work_order:
-  new:         { label_id: "Baru",              label_en: "New",         semantic: neutral, variant: soft }
+  draft:       { label_id: "Draft",             label_en: "Draft",       semantic: neutral, variant: outline }  # PRD P1 v2 §23: Draft → Open (submit)
+  new:         { label_id: "Terbuka",           label_en: "Open",        semantic: neutral, variant: soft }     # PRD P1 v2 §23: status Open = kode new
   scheduled:   { label_id: "Terjadwal",         label_en: "Scheduled",   semantic: info,    variant: soft }
   assigned:    { label_id: "Ditugaskan",        label_en: "Assigned",    semantic: info,    variant: soft }
   in_progress: { label_id: "Sedang Dikerjakan", label_en: "In Progress", semantic: info,    variant: solid }
-  on_hold:     { label_id: "Ditunda",           label_en: "On Hold",     semantic: warning, variant: soft }
+  on_hold:     { label_id: "Pending",           label_en: "Pending",     semantic: warning, variant: soft }  # on_hold = status "Pending" PRD P0 §10.4 (kode tetap on_hold)
   completed:   { label_id: "Selesai",           label_en: "Completed",   semantic: success, variant: soft }
   closed:      { label_id: "Ditutup",           label_en: "Closed",      semantic: success, variant: solid }
   cancelled:   { label_id: "Dibatalkan",        label_en: "Cancelled",   semantic: neutral, variant: outline }
 service_request:
   new:                { label_id: "Baru",              label_en: "New",                semantic: neutral, variant: soft }
-  acknowledged:       { label_id: "Diterima",          label_en: "Acknowledged",       semantic: info,    variant: soft }
+  acknowledged:       { label_id: "Ditriase",          label_en: "Triaged",            semantic: info,    variant: soft }  # PRD P1 v2 §28: Triaged = kode acknowledged
   assigned:           { label_id: "Ditugaskan",        label_en: "Assigned",           semantic: info,    variant: soft }
   in_progress:        { label_id: "Sedang Dikerjakan", label_en: "In Progress",        semantic: info,    variant: solid }
   waiting_for_tenant: { label_id: "Menunggu Tenant",   label_en: "Waiting for Tenant", semantic: warning, variant: soft }
@@ -137,6 +151,27 @@ flags:
   sla_risk:            { label_id: "SLA Risk",               label_en: "SLA Risk",            semantic: warning,  variant: soft,  icon: timer }
   sla_breach:          { label_id: "SLA Breach",             label_en: "SLA Breach",          semantic: critical, variant: solid, icon: timer-off }
   evidence_incomplete: { label_id: "Evidence belum lengkap", label_en: "Evidence incomplete", semantic: warning,  variant: soft,  icon: image-off }
+  reopened:            { label_id: "Dibuka Kembali",         label_en: "Reopened",            semantic: warning,  variant: soft,  icon: rotate-ccw }  # PRD P0 §10.4: flags.reopened / reopen_count > 0
+  critical:            { label_id: "Kritis",                 label_en: "Critical",            semantic: critical, variant: solid, icon: alert-triangle }  # priority/severity critical
+  escalated:           { label_id: "Dieskalasi",             label_en: "Escalated",           semantic: warning,  variant: solid, icon: arrow-up }     # PRD P1 v2 §52: escalation_level > 0
+# SLA status (PRD P1 v2 §21.3) — diturunkan server dari sla_risk_at / sla_breached_at / status
+sla_status:
+  on_track:  { label_id: "Sesuai SLA",   label_en: "On Track",  semantic: success,  variant: soft,  icon: timer }
+  at_risk:   { label_id: "Berisiko",     label_en: "At Risk",   semantic: warning,  variant: soft,  icon: timer }
+  breached:  { label_id: "Melewati SLA", label_en: "Breached",  semantic: critical, variant: solid, icon: timer-off }
+  completed: { label_id: "Selesai",      label_en: "Completed", semantic: neutral,  variant: soft,  icon: check }
+# Facility operasional (PRD P1 v2 §6.3)
+facility:
+  operational:       { label_id: "Beroperasi",      label_en: "Operational",       semantic: success, variant: soft }
+  under_maintenance: { label_id: "Dalam Perawatan", label_en: "Under Maintenance", semantic: warning, variant: soft }
+  closed:            { label_id: "Ditutup",         label_en: "Closed",            semantic: neutral, variant: soft }
+  inactive:          { label_id: "Tidak Aktif",     label_en: "Inactive",          semantic: neutral, variant: outline }
+# Occupancy unit (PRD P1 v2 §8)
+occupancy:
+  vacant:   { label_id: "Kosong",      label_en: "Vacant",   semantic: info,    variant: soft }
+  occupied: { label_id: "Terisi",      label_en: "Occupied", semantic: success, variant: soft }
+  reserved: { label_id: "Dipesan",     label_en: "Reserved", semantic: warning, variant: soft }
+  inactive: { label_id: "Tidak Aktif", label_en: "Inactive", semantic: neutral, variant: outline }
 priority:
   low:       { label_id: "Rendah",  label_en: "Low",      semantic: neutral,  variant: soft,  icon: arrow-down }
   medium:    { label_id: "Sedang",  label_en: "Medium",   semantic: info,     variant: soft,  icon: minus }
@@ -152,3 +187,220 @@ sync_state:
   synced:    { label_id: "Synced",        label_en: "Synced",        semantic: success,  variant: soft, icon: cloud-check }
   failed:    { label_id: "Sync Failed",   label_en: "Sync Failed",   semantic: critical, variant: soft, icon: cloud-off }
   conflict:  { label_id: "Sync Conflict", label_en: "Sync Conflict", semantic: warning,  variant: soft, icon: git-merge }
+# Tenant User (Tenant Relation; PRD P1 v1.3 §3.2)
+tenant_user:
+  pending_validation: { label_id: "Menunggu Validasi", label_en: "Pending Validation", semantic: warning,  variant: soft }
+  active:             { label_id: "Aktif",             label_en: "Active",             semantic: success,  variant: soft }
+  rejected:           { label_id: "Ditolak",           label_en: "Rejected",           semantic: critical, variant: soft }
+  suspended:          { label_id: "Ditangguhkan",      label_en: "Suspended",          semantic: neutral,  variant: outline }
+# Hotel Booking Management (PRD P1 v1.3 §3.9; NC/PRD §16 Hotel Reservation & Hotel Room)
+hotel_reservation:
+  new:         { label_id: "Baru",          label_en: "New",         semantic: neutral,  variant: soft }
+  confirmed:   { label_id: "Dikonfirmasi",  label_en: "Confirmed",   semantic: info,     variant: soft }
+  checked_in:  { label_id: "Check-in",      label_en: "Checked In",  semantic: info,     variant: solid }
+  checked_out: { label_id: "Check-out",     label_en: "Checked Out", semantic: success,  variant: soft }
+  cancelled:   { label_id: "Dibatalkan",    label_en: "Cancelled",   semantic: neutral,  variant: outline }
+  no_show:     { label_id: "Tidak Hadir",   label_en: "No Show",     semantic: critical, variant: soft }
+hotel_room:
+  available:      { label_id: "Tersedia",        label_en: "Available",      semantic: success,  variant: soft }
+  occupied:       { label_id: "Terisi",          label_en: "Occupied",       semantic: info,     variant: solid }
+  dirty:          { label_id: "Kotor",           label_en: "Dirty",          semantic: warning,  variant: soft }
+  clean:          { label_id: "Bersih",          label_en: "Clean",          semantic: info,     variant: soft }
+  inspected:      { label_id: "Terinspeksi",     label_en: "Inspected",      semantic: success,  variant: solid }
+  out_of_order:   { label_id: "Out of Order",    label_en: "Out of Order",   semantic: critical, variant: soft }
+  out_of_service: { label_id: "Out of Service",  label_en: "Out of Service", semantic: neutral,  variant: outline }
+# Apartment Unit Sales & Rental (NC §71; Onboarding Brief §16)
+unit_listing:
+  draft:     { label_id: "Draft",       label_en: "Draft",     semantic: neutral, variant: outline }
+  published: { label_id: "Tersedia",    label_en: "Available", semantic: success, variant: soft }
+  reserved:  { label_id: "Direservasi", label_en: "Reserved",  semantic: warning, variant: soft }
+  sold:      { label_id: "Terjual",     label_en: "Sold",      semantic: info,    variant: solid }
+  archived:  { label_id: "Diarsipkan",  label_en: "Archived",  semantic: neutral, variant: outline }
+rental_listing:
+  draft:     { label_id: "Draft",          label_en: "Draft",     semantic: neutral, variant: outline }
+  published: { label_id: "Dipublikasikan", label_en: "Published", semantic: success, variant: soft }
+  archived:  { label_id: "Diarsipkan",     label_en: "Archived",  semantic: neutral, variant: outline }
+# Pipeline Unit Sale: New -> Contacted -> Qualified -> Reserved -> Sold; Lost/Cancelled
+sales_lead:
+  new:       { label_id: "Baru",          label_en: "New",       semantic: neutral,  variant: soft }
+  contacted: { label_id: "Dihubungi",     label_en: "Contacted", semantic: info,     variant: soft }
+  qualified: { label_id: "Qualified",     label_en: "Qualified", semantic: info,     variant: solid }
+  reserved:  { label_id: "Direservasi",   label_en: "Reserved",  semantic: warning,  variant: soft }
+  sold:      { label_id: "Terjual",       label_en: "Sold",      semantic: success,  variant: solid }
+  lost:      { label_id: "Lost",          label_en: "Lost",      semantic: critical, variant: soft }
+  cancelled: { label_id: "Dibatalkan",    label_en: "Cancelled", semantic: neutral,  variant: outline }
+sale_reservation:
+  reserved:        { label_id: "Direservasi",            label_en: "Reserved",        semantic: warning, variant: soft }
+  contract_signed: { label_id: "Kontrak Ditandatangani", label_en: "Contract Signed", semantic: info,    variant: soft }
+  sold:            { label_id: "Terjual",                label_en: "Sold",            semantic: info,    variant: solid }
+  handed_over:     { label_id: "Serah Terima",           label_en: "Handed Over",     semantic: success, variant: solid }
+  cancelled:       { label_id: "Dibatalkan",             label_en: "Cancelled",       semantic: neutral, variant: outline }
+# Unit Rental: New -> Reserved -> Active -> Completed | Cancelled
+rental_reservation:
+  new:       { label_id: "Baru (inquiry)", label_en: "New (inquiry)", semantic: neutral, variant: soft }
+  reserved:  { label_id: "Direservasi",    label_en: "Reserved",      semantic: warning, variant: soft }
+  active:    { label_id: "Aktif",          label_en: "Active",        semantic: info,    variant: solid }
+  completed: { label_id: "Selesai",        label_en: "Completed",     semantic: success, variant: soft }
+  cancelled: { label_id: "Dibatalkan",     label_en: "Cancelled",     semantic: neutral, variant: outline }
+# Organization (PRD P0 v2 §6: registry Platform Admin)
+organization:
+  active:    { label_id: "Aktif",        label_en: "Active",    semantic: success,  variant: soft }
+  inactive:  { label_id: "Nonaktif",     label_en: "Inactive",  semantic: neutral,  variant: outline }
+  suspended: { label_id: "Ditangguhkan", label_en: "Suspended", semantic: critical, variant: soft }
+# Status property / lokasi (PRD P0 v2 §7.2: draft → active → inactive)
+location_status:
+  draft:    { label_id: "Draft",    label_en: "Draft",    semantic: neutral, variant: outline }
+  active:   { label_id: "Aktif",    label_en: "Active",   semantic: success, variant: soft }
+  inactive: { label_id: "Nonaktif", label_en: "Inactive", semantic: neutral, variant: soft }
+# Export (PRD P0 §18)
+export:
+  pending:    { label_id: "Menunggu", label_en: "Pending",    semantic: neutral,  variant: soft }
+  processing: { label_id: "Diproses", label_en: "Processing", semantic: info,     variant: soft }
+  ready:      { label_id: "Siap",     label_en: "Ready",      semantic: success,  variant: soft }
+  failed:     { label_id: "Gagal",    label_en: "Failed",     semantic: critical, variant: soft }
+  expired:    { label_id: "Kedaluwarsa", label_en: "Expired", semantic: neutral,  variant: outline }
+# ---- PRD P2 v2.1 (Roadmap v2.1) — Workforce Operations ----
+# Emergency Alert (§6.4; NC §16): raised → acknowledged → responding → resolved | cancelled (alarm palsu)
+emergency_alert:
+  raised:       { label_id: "Dilaporkan", label_en: "Raised",       semantic: critical, variant: solid }
+  acknowledged: { label_id: "Diterima",   label_en: "Acknowledged", semantic: warning,  variant: solid }
+  responding:   { label_id: "Ditangani",  label_en: "Responding",   semantic: info,     variant: solid }
+  resolved:     { label_id: "Selesai",    label_en: "Resolved",     semantic: success,  variant: soft }
+  cancelled:    { label_id: "Dibatalkan", label_en: "Cancelled",    semantic: neutral,  variant: outline }
+# Parking Violation (§6.6): escalated = dijadikan Incident
+parking_violation:
+  open:      { label_id: "Terbuka",       label_en: "Open",      semantic: warning, variant: soft }
+  escalated: { label_id: "Jadi Incident", label_en: "Escalated", semantic: info,    variant: soft }
+  resolved:  { label_id: "Selesai",       label_en: "Resolved",  semantic: success, variant: soft }
+vehicle:
+  active:      { label_id: "Aktif",     label_en: "Active",      semantic: success,  variant: soft }
+  inactive:    { label_id: "Nonaktif",  label_en: "Inactive",    semantic: neutral,  variant: outline }
+  blacklisted: { label_id: "Blacklist", label_en: "Blacklisted", semantic: critical, variant: solid }
+# Lost & Found (§6.7)
+lost_found_item:
+  stored:   { label_id: "Disimpan",     label_en: "Stored",   semantic: info,    variant: soft }
+  returned: { label_id: "Dikembalikan", label_en: "Returned", semantic: success, variant: soft }
+  disposed: { label_id: "Disposal",     label_en: "Disposed", semantic: neutral, variant: outline }
+lost_report:
+  open:      { label_id: "Terbuka",    label_en: "Open",      semantic: warning, variant: soft }
+  matched:   { label_id: "Cocok",      label_en: "Matched",   semantic: info,    variant: soft }
+  closed:    { label_id: "Selesai",    label_en: "Closed",    semantic: success, variant: soft }
+  cancelled: { label_id: "Dibatalkan", label_en: "Cancelled", semantic: neutral, variant: outline }
+# Investigasi incident (§6.3 P2-SIN-06)
+investigation:
+  not_started: { label_id: "Belum dimulai", label_en: "Not started", semantic: neutral, variant: soft }
+  in_progress: { label_id: "Berjalan",      label_en: "In progress", semantic: info,    variant: soft }
+  completed:   { label_id: "Selesai",       label_en: "Completed",   semantic: success, variant: soft }
+# Kehadiran per roster (§8.2): upcoming | on_duty | late | completed | absent
+roster_attendance:
+  upcoming:  { label_id: "Akan datang", label_en: "Upcoming",  semantic: neutral,  variant: soft }
+  on_duty:   { label_id: "On duty",     label_en: "On duty",   semantic: success,  variant: solid }
+  late:      { label_id: "Terlambat",   label_en: "Late",      semantic: warning,  variant: soft }
+  completed: { label_id: "Selesai",     label_en: "Completed", semantic: success,  variant: soft }
+  absent:    { label_id: "Tidak hadir", label_en: "Absent",    semantic: critical, variant: soft }
+# Sesi clock-in (§8.2): auto_closed = ditutup otomatis setelah shift berakhir
+attendance:
+  on_duty:     { label_id: "On duty",               label_en: "On duty",     semantic: success, variant: solid }
+  completed:   { label_id: "Selesai",               label_en: "Completed",   semantic: neutral, variant: soft }
+  auto_closed: { label_id: "Ditutup otomatis",      label_en: "Auto closed", semantic: warning, variant: soft }
+shift_handover:
+  submitted:    { label_id: "Menunggu diterima", label_en: "Submitted",    semantic: warning, variant: soft }
+  acknowledged: { label_id: "Diterima",          label_en: "Acknowledged", semantic: success, variant: soft }
+# Equipment health (§5.6; NC §14): Healthy 90–100 · Warning 70–89 · Critical < 70
+asset_health:
+  healthy:  { label_id: "Sehat",    label_en: "Healthy",  semantic: success,  variant: soft }
+  warning:  { label_id: "Waspada",  label_en: "Warning",  semantic: warning,  variant: soft }
+  critical: { label_id: "Kritis",   label_en: "Critical", semantic: critical, variant: solid }
+  offline:  { label_id: "Offline",  label_en: "Offline",  semantic: neutral,  variant: outline }
+  unknown:  { label_id: "Belum ada data", label_en: "Unknown", semantic: neutral, variant: soft }
+# Masa berlaku dokumen equipment, warranty & sertifikat staf (§5.6, §8.4): expiring = ≤ 30 hari
+validity:
+  valid:     { label_id: "Berlaku",           label_en: "Valid",     semantic: success,  variant: soft }
+  expiring:  { label_id: "Segera kedaluwarsa", label_en: "Expiring", semantic: warning,  variant: soft }
+  expired:   { label_id: "Kedaluwarsa",        label_en: "Expired",  semantic: critical, variant: solid }
+  no_expiry: { label_id: "Tanpa masa berlaku", label_en: "No expiry", semantic: neutral, variant: outline }
+# Cleaning Route Run (§7.3): progres x dari y area
+cleaning_route_run:
+  scheduled:   { label_id: "Terjadwal",         label_en: "Scheduled",   semantic: info,    variant: soft }
+  in_progress: { label_id: "Sedang Dikerjakan", label_en: "In Progress", semantic: info,    variant: solid }
+  completed:   { label_id: "Selesai",           label_en: "Completed",   semantic: success, variant: soft }
+  cancelled:   { label_id: "Dibatalkan",        label_en: "Cancelled",   semantic: neutral, variant: outline }
+# ---- PRD P3 v2.1 (Roadmap v2.1 §11 Tenant Experience) ----
+# Pengumuman (§5.10): scheduled = terbit otomatis pada publish_at
+announcement:
+  draft:     { label_id: "Draft",       label_en: "Draft",     semantic: neutral, variant: outline }
+  scheduled: { label_id: "Terjadwal",   label_en: "Scheduled", semantic: info,    variant: soft }
+  published: { label_id: "Terbit",      label_en: "Published", semantic: success, variant: soft }
+  archived:  { label_id: "Diarsipkan",  label_en: "Archived",  semantic: neutral, variant: outline }
+# Package (§5.9): received → notified → picked_up | returned
+package:
+  received:  { label_id: "Diterima",         label_en: "Received",       semantic: info,    variant: soft }
+  notified:  { label_id: "Menunggu Diambil", label_en: "Awaiting Pickup", semantic: warning, variant: soft }
+  picked_up: { label_id: "Sudah Diambil",    label_en: "Picked Up",      semantic: success, variant: soft }
+  returned:  { label_id: "Dikembalikan",     label_en: "Returned",       semantic: neutral, variant: outline }
+# Izin parkir tenant (§5.8)
+parking_permit:
+  requested: { label_id: "Diajukan",   label_en: "Requested", semantic: warning,  variant: soft }
+  approved:  { label_id: "Disetujui",  label_en: "Approved",  semantic: success,  variant: soft }
+  rejected:  { label_id: "Ditolak",    label_en: "Rejected",  semantic: critical, variant: soft }
+  cancelled: { label_id: "Dibatalkan", label_en: "Cancelled", semantic: neutral,  variant: outline }
+  expired:   { label_id: "Berakhir",   label_en: "Expired",   semantic: neutral,  variant: soft }
+  revoked:   { label_id: "Dicabut",    label_en: "Revoked",   semantic: critical, variant: outline }
+# Feedback umum tenant (§5.12)
+tenant_feedback:
+  new:       { label_id: "Baru",       label_en: "New",       semantic: info,    variant: soft }
+  in_review: { label_id: "Ditinjau",   label_en: "In Review", semantic: warning, variant: soft }
+  responded: { label_id: "Ditanggapi", label_en: "Responded", semantic: success, variant: soft }
+  closed:    { label_id: "Ditutup",    label_en: "Closed",    semantic: success, variant: solid }
+# Recurring Issue Detection (§7.1 P3-TSH-07)
+recurring_issue:
+  open:         { label_id: "Terbuka",   label_en: "Open",         semantic: critical, variant: soft }
+  acknowledged: { label_id: "Ditangani", label_en: "Acknowledged", semantic: warning,  variant: soft }
+  resolved:     { label_id: "Selesai",   label_en: "Resolved",     semantic: success,  variant: soft }
+# ---- PRD P4 v2.1 (Roadmap v2.1 §12 Financial Operations) ----
+# Generate tagihan periode (§5.1): preview → generated (draft invoice) → issued
+billing_run:
+  preview:   { label_id: "Pratinjau",   label_en: "Preview",   semantic: info,    variant: outline }
+  generated: { label_id: "Draft Dibuat", label_en: "Generated", semantic: info,    variant: soft }
+  issued:    { label_id: "Diterbitkan", label_en: "Issued",    semantic: success, variant: soft }
+  cancelled: { label_id: "Dibatalkan",  label_en: "Cancelled", semantic: neutral, variant: outline }
+# Pembacaan meter (§5.3): flagged = angka mundur / lonjakan (perlu review)
+meter_reading:
+  recorded: { label_id: "Tercatat",    label_en: "Recorded", semantic: info,     variant: soft }
+  flagged:  { label_id: "Perlu Dicek", label_en: "Flagged",  semantic: warning,  variant: solid }
+  approved: { label_id: "Disetujui",   label_en: "Approved", semantic: success,  variant: soft }
+  rejected: { label_id: "Ditolak",     label_en: "Rejected", semantic: critical, variant: soft }
+# Credit note (§5.2 P4-INV-07): persetujuan Finance Manager
+credit_note:
+  pending:   { label_id: "Menunggu Persetujuan", label_en: "Pending Approval", semantic: warning,  variant: soft }
+  approved:  { label_id: "Disetujui",            label_en: "Approved",         semantic: success,  variant: soft }
+  rejected:  { label_id: "Ditolak",              label_en: "Rejected",         semantic: critical, variant: soft }
+  cancelled: { label_id: "Dibatalkan",           label_en: "Cancelled",        semantic: neutral,  variant: outline }
+# Denda keterlambatan per invoice (§5.5)
+invoice_penalty:
+  accruing: { label_id: "Berjalan",   label_en: "Accruing", semantic: warning, variant: soft }
+  final:    { label_id: "Final",      label_en: "Final",    semantic: info,    variant: soft }
+  billed:   { label_id: "Ditagihkan", label_en: "Billed",   semantic: success, variant: soft }
+  waived:   { label_id: "Dihapuskan", label_en: "Waived",   semantic: neutral, variant: outline }
+# Janji bayar pada log penagihan (§7.3)
+collection_promise:
+  open:      { label_id: "Menunggu",   label_en: "Open",      semantic: warning,  variant: soft }
+  kept:      { label_id: "Ditepati",   label_en: "Kept",      semantic: success,  variant: soft }
+  broken:    { label_id: "Ingkar",     label_en: "Broken",    semantic: critical, variant: soft }
+  cancelled: { label_id: "Dibatalkan", label_en: "Cancelled", semantic: neutral,  variant: outline }
+# Baris mutasi rekening (§6.4 rekonsiliasi)
+bank_statement_line:
+  unmatched: { label_id: "Belum Cocok", label_en: "Unmatched", semantic: warning, variant: soft }
+  suggested: { label_id: "Ada Saran",   label_en: "Suggested", semantic: info,    variant: soft }
+  matched:   { label_id: "Cocok",       label_en: "Matched",   semantic: success, variant: soft }
+  ignored:   { label_id: "Diabaikan",   label_en: "Ignored",   semantic: neutral, variant: outline }
+# Budget (§8.1): revisi → superseded
+budget:
+  draft:      { label_id: "Draft",      label_en: "Draft",      semantic: neutral, variant: outline }
+  approved:   { label_id: "Disetujui",  label_en: "Approved",   semantic: success, variant: soft }
+  superseded: { label_id: "Digantikan", label_en: "Superseded", semantic: neutral, variant: soft }
+# Webhook keluar (§9 P4-INT-04)
+webhook_delivery:
+  pending:   { label_id: "Menunggu", label_en: "Pending",   semantic: info,     variant: soft }
+  delivered: { label_id: "Terkirim", label_en: "Delivered", semantic: success,  variant: soft }
+  failed:    { label_id: "Gagal",    label_en: "Failed",    semantic: critical, variant: soft }

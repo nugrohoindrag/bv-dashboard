@@ -223,7 +223,14 @@ func TestServiceRequestAndNotifications(t *testing.T) {
 	}
 	st, body = e.do(ops, http.MethodGet, "/api/v1/search?q=AC+unit", nil)
 	e.mustJSON(st, body, 200, &res)
-	if len(res.Data) == 0 || res.Data[0].ObjectType != "service_request" {
+	// SR dan WO turunannya berjudul sama — keduanya valid; SR harus ada di hasil
+	srFound := false
+	for _, r := range res.Data {
+		if r.ObjectType == "service_request" {
+			srFound = true
+		}
+	}
+	if !srFound {
 		t.Fatalf("search judul SR: %+v", res.Data)
 	}
 	// technician tidak boleh melihat SR di search (tanpa permission tenant.service_requests.view)

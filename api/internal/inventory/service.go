@@ -27,6 +27,16 @@ import (
 
 const EventLowStock = "inventory.low_stock"
 
+// ItemDomain: domain supervisor penerima low stock (PRD P2 v2.1 P2-CNS-03): consumable umum (sabun, tisu, cairan
+// pembersih — tanpa kategori equipment) → Housekeeping Supervisor; consumable teknis yang terikat kategori equipment
+// (refrigerant HVAC, kabel ELEC, pipa PLMB), spare part, tool, lainnya → Engineering Supervisor.
+func ItemDomain(category string, equipmentCategory *string) string {
+	if category == "consumable" && (equipmentCategory == nil || *equipmentCategory == "") {
+		return "housekeeping"
+	}
+	return "engineering"
+}
+
 type Service struct {
 	DB   *db.DB
 	Jobs jobs.Enqueuer
@@ -423,8 +433,9 @@ func (s *Service) applyTx(ctx context.Context, tx pgx.Tx, in TransactionInput, p
 		return uuid.Nil, 0, apperr.Validation("transaction_type harus in|out|adjustment")
 	}
 	var balance float64
-	err := tx.QueryRow(ctx, `INSERT INTO stock_levels (organization_id, item_id, stock_location_id, quantity) VALUES ($1,$2,$3,GREATEST($4,0))
-		ON CONFLICT (item_id, stock_location_id) DO UPDATE SET quantity = stock_levels.quantity + $4, updated_at = now() RETURNING quantity`, p.OrganizationID, in.ItemID, in.StockLocationID, delta).Scan(&balance)
+	// $4::numeric — tanpa cast, GREATEST($4,0) membuat parameter bertipe integer sehingga kuantitas pecahan (1,5 liter) terpotong
+	err := tx.QueryRow(ctx, `INSERT INTO stock_levels (organization_id, item_id, stock_location_id, quantity) VALUES ($1,$2,$3,GREATEST($4::numeric,0))
+		ON CONFLICT (item_id, stock_location_id) DO UPDATE SET quantity = stock_levels.quantity + $4::numeric, updated_at = now() RETURNING quantity::float8`, p.OrganizationID, in.ItemID, in.StockLocationID, delta).Scan(&balance)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23514" {
@@ -445,12 +456,14 @@ func (s *Service) applyTx(ctx context.Context, tx pgx.Tx, in TransactionInput, p
 		p.OrganizationID, propertyID, number, in.ItemID, in.StockLocationID, in.TransactionType, delta, balance, in.UnitCost, in.ReferenceType, in.ReferenceID, in.Note, actorOrNil(p)).Scan(&id); err != nil {
 		return uuid.Nil, 0, err
 	}
-	// low stock alert (PRD §25 Minimum Stock) → supervisor engineering
+	// low stock alert (PRD §25 Minimum Stock) → supervisor domain pemakai item (PRD P2 v2.1 P2-CNS-03:
+	// consumable → Housekeeping Supervisor; spare part/tool/lainnya → Engineering Supervisor)
 	var minStock, total float64
-	var itemName, itemCode string
-	_ = tx.QueryRow(ctx, `SELECT i.min_stock, i.name, i.item_code, COALESCE((SELECT sum(quantity) FROM stock_levels WHERE item_id = i.id),0) FROM inventory_items i WHERE i.id = $1`, in.ItemID).Scan(&minStock, &itemName, &itemCode, &total)
+	var itemName, itemCode, category string
+	var eqCat *string
+	_ = tx.QueryRow(ctx, `SELECT i.min_stock, i.name, i.item_code, i.category, i.equipment_category_code, COALESCE((SELECT sum(quantity) FROM stock_levels WHERE item_id = i.id),0) FROM inventory_items i WHERE i.id = $1`, in.ItemID).Scan(&minStock, &itemName, &itemCode, &category, &eqCat, &total)
 	if delta < 0 && minStock > 0 && total < minStock && s.Jobs != nil {
-		_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: EventLowStock, OrganizationID: p.OrganizationID, PropertyID: &propertyID, ObjectType: "inventory_item", ObjectID: in.ItemID, ObjectLabel: itemCode + " " + itemName, ActorUserID: actorOrNil(p), Payload: map[string]any{"total": total, "min_stock": minStock, "domain": "engineering"}})
+		_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: EventLowStock, OrganizationID: p.OrganizationID, PropertyID: &propertyID, ObjectType: "inventory_item", ObjectID: in.ItemID, ObjectLabel: itemCode + " " + itemName, ActorUserID: actorOrNil(p), Payload: map[string]any{"total": total, "min_stock": minStock, "domain": ItemDomain(category, eqCat), "category": category}})
 	}
 	return id, balance, nil
 }
@@ -697,7 +710,7 @@ func (s *Service) AddPart(ctx context.Context, woID uuid.UUID, in PartUsageInput
 			return err
 		}
 		// ringkasan ke WO (parts_usage teks legacy + biaya aktual internal)
-		_, _ = tx.Exec(ctx, `UPDATE work_orders SET actual_cost_amount = COALESCE(actual_cost_amount,0) + $2,
+		_, _ = tx.Exec(ctx, `UPDATE work_orders SET actual_cost_amount = COALESCE(actual_cost_amount,0) + $2, parts_cost_amount = COALESCE(parts_cost_amount,0) + $2,
 			parts_usage = COALESCE((SELECT string_agg(i.name || ' × ' || wp.quantity::text || ' ' || i.unit, ', ' ORDER BY wp.recorded_at) FROM work_order_parts wp JOIN inventory_items i ON i.id = wp.item_id WHERE wp.work_order_id = $1), parts_usage), updated_by = $3 WHERE id = $1`, woID, total, p.UserID)
 		_ = audit.Record(ctx, tx, audit.Entry{ObjectType: "work_order", ObjectID: woID, Action: "parts_used", Payload: map[string]any{"item": it.Name, "quantity": in.Quantity, "unit": it.Unit}})
 		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "work_order_part", EntityID: &id, EntityLabel: number + " · " + it.Name})
@@ -736,7 +749,7 @@ func (s *Service) RemovePart(ctx context.Context, woID, partID uuid.UUID) error 
 		if _, err := tx.Exec(ctx, `DELETE FROM work_order_parts WHERE id = $1`, partID); err != nil {
 			return err
 		}
-		_, _ = tx.Exec(ctx, `UPDATE work_orders SET actual_cost_amount = GREATEST(0, COALESCE(actual_cost_amount,0) - $2), updated_by = $3 WHERE id = $1`, woID, total, p.UserID)
+		_, _ = tx.Exec(ctx, `UPDATE work_orders SET actual_cost_amount = GREATEST(0, COALESCE(actual_cost_amount,0) - $2), parts_cost_amount = GREATEST(0, COALESCE(parts_cost_amount,0) - $2), updated_by = $3 WHERE id = $1`, woID, total, p.UserID)
 		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditDelete, EntityType: "work_order_part", EntityID: &partID})
 		return nil
 	})

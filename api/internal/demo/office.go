@@ -171,6 +171,13 @@ func (s *Service) seedOffice(ctx context.Context, env *Env, logf func(string, ..
 	if err := s.seedBilling(ctx, env, p, tenants, "service_charge", 18500000, logf); err != nil {
 		return uuid.Nil, err
 	}
+	// PRD P3 v2.1 & P4 v2.1: data demo Tenant Experience & Financial Operations
+	if err := s.seedP3(ctx, env, p, tenants, logf); err != nil {
+		return uuid.Nil, err
+	}
+	if err := s.seedP4(ctx, env, p, tenants, logf); err != nil {
+		return uuid.Nil, err
+	}
 	for _, a := range []struct{ title, excerpt, body, imp string }{
 		{"Maintenance Notice: Pemadaman listrik terjadwal", "Sabtu 22:00–02:00 untuk perawatan LVMDP", "Genset akan menopang beban penting. Mohon matikan perangkat sensitif.", "important"},
 		{"Facility Closure: Conference Room", "Renovasi audio-visual 3 hari", "Conference Room ditutup; gunakan Training Room sebagai alternatif.", "normal"},

@@ -5,23 +5,30 @@ version: 1
 modules:
   platform:
     organizations: [view, update]
+    org_registry: [view, create, update, activate]   # PRD P0 v2 §6: Platform Admin — kelola seluruh organization (hanya role internal pada org is_internal)
+    notifications: [broadcast]                       # PRD P0 v2 §14.2: system notification ke user organization
     audit_logs: [view]
     exports: [create]
     app_downloads: [view, manage]       # Website PRD §16–§19: hanya role admin_internal pada organization internal (dicek server-side)
     demo_data: [view, manage]           # Demo Seed Database §29: Admin Internal → Demo Data (seed / reset / verify)
   iam:
-    users: [view, create, update, deactivate, reset_password]
+    users: [view, create, update, activate, deactivate, reset_password]
+    sessions: [view, revoke]                         # PRD P0 v2 §24.1: session management (admin)
     roles: [view, create, update, delete]
     teams: [view, create, update, delete, manage_members]
   property:
+    portfolios: [view, create, update, delete]       # PRD P0 v2 §4.1: Portfolio → Property
     properties: [view, create, update, change_profile]
     locations: [view, create, update, delete]
     tenants: [view, create, update]
     occupants: [view, create, update]
+    facilities: [view, create, update, delete]       # PRD P1 v2 §6.3: facility operasional (lobby, lift, toilet, …) — booking tetap booking.facilities.*
+    floor_plans: [view, create, update, delete]      # PRD P1 v2 §7: Building Map / Floor Plan + marker
+    occupancy: [view]                                # PRD P1 v2 §8: ringkasan occupancy unit
   operations:
-    tasks: [view, create, update, assign, start, complete, close, cancel, manage]
-    work_orders: [view, create, update, assign, start, complete, close, reopen, cancel, manage]
-    incidents: [view, create, update, assign, resolve, close, manage]
+    tasks: [view, create, update, assign, start, complete, close, reopen, cancel, delete, escalate, manage]
+    work_orders: [view, create, update, assign, start, complete, close, reopen, cancel, delete, escalate, manage]
+    incidents: [view, create, update, assign, resolve, close, escalate, manage]   # escalate: PRD P2 v2.1 P2-SIN-05
     findings: [view, create, update, resolve, close, manage]
     checklists: [view, create, update, publish, archive]
     sla_policies: [view, create, update]
@@ -33,41 +40,75 @@ modules:
     maintenance_plans: [view, create, update, publish, archive]
     maintenance_schedules: [view, skip]
     inspections: [view, create, update, complete, close]
+    asset_documents: [view, create, update, delete]              # PRD P2 v2.1 §5.6 dokumen equipment + kedaluwarsa
   security:
     patrol: [view, manage, start, complete]
     patrol_routes: [view, create, update, delete]
     checkpoints: [view, create, update, delete]
     incidents: [view, create, manage]
     visitors: [view, create, update, verify, manage]
+    # ---- PRD P2 v2.1 (Roadmap v2.1 §9) ----
+    emergency_alerts: [view, raise, respond, resolve, manage]   # Panic Button → Emergency Alert → Security Response
+    emergency_contacts: [view, manage]
+    incident_people: [view, manage]                              # data pribadi orang terlibat (P2-NFR-04)
+    parking: [view, record, manage]                              # record: log keluar-masuk & pelanggaran; manage: area & kendaraan
+    lost_found: [view, create, manage]                           # manage: serah terima, pencocokan, disposal
+    shifts: [view, manage]                                       # Security Shift Management (D-P2-05: per domain)
+    # ---- PRD P3 v2.1 (Roadmap v2.1 §11) ----
+    packages: [view, record, handover, manage]                   # Package: catat paket masuk, serah terima, retur (P3-PKG-*)
+    parking_permits: [view, approve]                             # izin parkir tenant di atas entitas P2 (P3-PRK-02, D-P2-06)
   housekeeping:
     cleaning: [view, assign, start, complete, manage]
     cleaning_schedules: [view, create, update, delete]
     inspections: [view, create, complete, close]
+    shifts: [view, manage]                                       # Housekeeping Shift (PRD P2 v2.1 §8.1, D-P2-05)
+    cleaning_routes: [view, create, update, delete]              # Cleaning Route (PRD P2 v2.1 §7.3 P2-RTE-01..03)
   tenant:
     service_requests: [view, create, update, acknowledge, assign, resolve, close, cancel, manage]
   # ---- P1 (PRD v1.3) ----
   tenant_relation:                      # modul Tenant Relation di Dashboard (PRD §3.2, brief §6)
-    tenant_users: [view, validate, update, suspend]
+    tenant_users: [view, validate, update, suspend, reset_password]   # reset_password: PRD P3 v2.1 P3-ACC-05
     messages: [view, create]
-    feedback: [view]
-    announcements: [view, create, update, publish]
+    feedback: [view, respond]                                         # respond: feedback umum (P3-FDB-03)
+    announcements: [view, create, update, publish, broadcast]         # broadcast darurat/operasional (P3-BRC-01)
+    recurring_issues: [view, manage]                                  # Recurring Issue Detection (P3-TSH-07)
   tenant_app:                           # Mobile Tenant (consumer); tidak pernah diberikan ke staf
     profile: [view, update]
     requests: [view, create, cancel, confirm, reopen]
     messages: [view, create]
-    feedback: [create]
+    feedback: [view, create]              # view: feedback umum milik sendiri (P3-FDB-02)
     facilities: [view]
     bookings: [view, create, cancel]
     visitors: [view, create, cancel]
-    invoices: [view]
-    payments: [view, create]
+    invoices: [view]                      # + PDF invoice, statement of account (P4-TNT-03)
+    payments: [view, create]              # + unggah bukti transfer (P4-VRF-02)
     inbox: [view]
+    # ---- PRD P3 v2.1 ----
+    units: [view]                         # My Unit (P3-UNT-*)
+    packages: [view]                      # paket menunggu diambil (P3-PKG-02)
+    parking: [view, create, cancel]       # kendaraan & izin parkir (P3-PRK-01..02)
+    members: [view, manage]               # Tenant Admin kelola anggota tenant (P3-ACC-08; dicek role tenant_admin)
   booking:                              # Facility Booking (generic Booking, NC §72 #11)
     facilities: [view, create, update, delete]
     bookings: [view, create, update, approve, reject, cancel, check_in]
   billing:
-    invoices: [view, create, update, issue, cancel, import]
-    payments: [view, create, verify, refund]
+    invoices: [view, create, update, issue, cancel, import, void]   # void: batalkan invoice terbit belum dibayar (P4-INV-07)
+    payments: [view, create, verify, refund, allocate]             # allocate: satu penerimaan → banyak invoice, saldo kredit (P4-PAY-05)
+    # ---- PRD P4 v2.1 (Roadmap v2.1 §12; D-P4-08: wewenang per aksi via ACL) ----
+    credit_notes: [view, create, approve]
+    rules: [view, manage]                  # billing rule & tarif (P4-BRL-01)
+    runs: [view, generate, issue]          # generate tagihan massal + preview, terbitkan massal (P4-BRL-02)
+    meters: [view, manage]                 # meter & tarif listrik/air (P4-UTL-01, 04)
+    meter_readings: [view, create, review] # pencatatan meter (Web/Staff App) & review anomali (P4-UTL-02..03)
+    penalties: [view, manage, waive]       # aturan denda, waive dengan alasan (P4-PND-01..02)
+    deposits: [view, manage]               # ledger deposit (P4-PND-03..04)
+    sinking_fund: [view, manage]           # saldo & penggunaan sinking fund (P4-SCF-02..04)
+    collections: [view, manage]            # aging, log penagihan, janji bayar (P4-AGE-01, P4-COL-03..04)
+    reconciliation: [view, manage]         # impor mutasi & pencocokan (P4-REC-*)
+    budgets: [view, manage, approve]       # budget vs actual (P4-BGT-*)
+    costs: [view, manage]                  # entri biaya operasional manual (P4-CST-03)
+    settings: [view, manage]               # pajak, rekening, provider pembayaran, pengingat (P4-INV-03, P4-VRF-04)
+    accounting: [view, export, manage]     # ekspor siap-jurnal; manage = pemetaan akun & webhook keluar (P4-INT-02, 04)
   vendor:
     vendors: [view, create, update, deactivate]
     assignments: [view, create, update]
@@ -77,6 +118,7 @@ modules:
     stock: [view, adjust]
     transactions: [view, create]
     parts_usage: [view, create]
+    consumable_usage: [view, create]                             # consumable per cleaning task (PRD P2 v2.1 §7.5 P2-CNS-02)
   hotel:                                # Hotel Booking Management (profile hotel)
     room_types: [view, create, update, archive]
     rooms: [view, create, update, set_status]
@@ -88,6 +130,8 @@ modules:
     sale_reservations: [view, create, update, cancel, complete]
     rental_listings: [view, create, update, publish, archive]
     rental_reservations: [view, create, update, confirm, activate, complete, cancel]
+  workforce:                            # PRD P2 v2.1 §8: on-duty lintas domain (tanpa payroll/cuti)
+    attendance: [clock, view]
   reports:
     reports: [view, export]
   bvrooms:                              # BVRooms customer booking channel (white-label per org; Requirements v0.2 §5.6)
@@ -118,56 +162,76 @@ roles:
     permissions: ["*"]
   property_manager:
     label: Property Manager
-    permissions: ["platform.*", "iam.*.view", "property.*", "operations.*", "engineering.*", "security.*", "housekeeping.*", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "tenant_relation.*", "booking.*", "billing.*", "vendor.*", "inventory.*", "hotel.*", "commercial.*", "reports.*", "bvrooms.*"]
+    permissions: ["platform.*", "iam.*.view", "property.*", "operations.*", "engineering.*", "security.*", "housekeeping.*", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "tenant_relation.*", "booking.*", "billing.*", "vendor.*", "inventory.*", "hotel.*", "commercial.*", "reports.*", "bvrooms.*", "workforce.*"]
   building_manager:
     label: Building Manager
-    permissions: ["iam.*.view", "property.*.view", "operations.*", "engineering.*.view", "security.*.view", "housekeeping.*.view", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "tenant_relation.*", "booking.*", "billing.*.view", "vendor.*", "inventory.*", "hotel.*", "commercial.*", "reports.*", "bvrooms.*"]
+    permissions: ["iam.*.view", "property.*.view", "property.facilities.*", "property.floor_plans.*", "operations.*", "engineering.*.view", "security.*.view", "housekeeping.*.view", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "tenant_relation.*", "booking.*", "billing.*.view", "vendor.*", "inventory.*", "hotel.*", "commercial.*", "reports.*", "bvrooms.*", "security.emergency_alerts.*", "security.emergency_contacts.*", "security.incident_people.view", "security.shifts.view", "housekeeping.shifts.view", "workforce.*"]
   operations_manager:
     label: Operations Manager
-    permissions: ["property.*.view", "operations.*", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "tenant_relation.*", "booking.*", "security.visitors.*", "vendor.*.view", "inventory.*.view", "hotel.*.view", "commercial.*.view", "reports.*", "bvrooms.bookings.view"]
+    permissions: ["property.*.view", "operations.*", "tenant.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "tenant_relation.*", "booking.*", "security.visitors.*", "vendor.*.view", "inventory.*.view", "hotel.*.view", "commercial.*.view", "reports.*", "bvrooms.bookings.view", "security.emergency_alerts.*", "security.emergency_contacts.view", "security.incident_people.view", "security.parking.view", "security.lost_found.view", "security.shifts.view", "housekeeping.shifts.view", "workforce.attendance.view", "engineering.asset_documents.view", "security.packages.view", "security.parking_permits.view"]
   engineering_manager:
     label: Engineering Manager
-    permissions: ["property.*.view", "operations.tasks.*", "operations.work_orders.*", "operations.findings.*", "operations.checklists.*", "operations.comments.*", "operations.attachments.*", "engineering.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "vendor.*", "inventory.*", "reports.reports.view"]
+    permissions: ["property.*.view", "operations.tasks.*", "operations.work_orders.*", "operations.findings.*", "operations.checklists.*", "operations.comments.*", "operations.attachments.*", "engineering.*", "billing.meters.view", "billing.meter_readings.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "vendor.*", "inventory.*", "reports.reports.view", "security.emergency_alerts.raise", "security.emergency_contacts.view", "workforce.*"]
   engineering_supervisor:
     label: Engineering Supervisor
-    permissions: ["property.*.view", "operations.tasks.*", "operations.work_orders.*", "operations.findings.*", "operations.checklists.view", "operations.comments.*", "operations.attachments.*", "engineering.*.view", "engineering.inspections.*", "engineering.maintenance_schedules.*", "notification.*", "overview.*", "search.*", "sync.*", "platform.exports.create", "vendor.*.view", "vendor.assignments.*", "inventory.*.view", "inventory.parts_usage.*", "inventory.transactions.*"]
+    permissions: ["property.*.view", "operations.tasks.*", "operations.work_orders.*", "operations.findings.*", "operations.checklists.view", "operations.comments.*", "operations.attachments.*", "engineering.*.view", "engineering.inspections.*", "engineering.maintenance_schedules.*", "billing.meters.view", "billing.meter_readings.*", "notification.*", "overview.*", "search.*", "sync.*", "platform.exports.create", "vendor.*.view", "vendor.assignments.*", "inventory.*.view", "inventory.parts_usage.*", "inventory.transactions.*", "security.emergency_alerts.raise", "security.emergency_contacts.view", "workforce.attendance.clock", "workforce.attendance.view", "engineering.asset_documents.*"]
   technician:
     label: Technician
-    permissions: ["property.*.view", "operations.tasks.view", "operations.tasks.start", "operations.tasks.complete", "operations.work_orders.view", "operations.work_orders.create", "operations.work_orders.start", "operations.work_orders.complete", "operations.findings.view", "operations.findings.create", "operations.comments.create", "operations.attachments.create", "engineering.assets.view", "engineering.equipment.view", "engineering.inspections.view", "engineering.inspections.complete", "notification.inbox.view", "search.global.view", "sync.work_bundle.view", "sync.mutations.create", "inventory.items.view", "inventory.stock.view", "inventory.parts_usage.view", "inventory.parts_usage.create"]
+    permissions: ["billing.meters.view", "billing.meter_readings.view", "billing.meter_readings.create", "property.*.view", "operations.tasks.view", "operations.tasks.start", "operations.tasks.complete", "operations.work_orders.view", "operations.work_orders.create", "operations.work_orders.start", "operations.work_orders.complete", "operations.findings.view", "operations.findings.create", "operations.comments.create", "operations.attachments.create", "engineering.assets.view", "engineering.equipment.view", "engineering.inspections.view", "engineering.inspections.complete", "notification.inbox.view", "search.global.view", "sync.work_bundle.view", "sync.mutations.create", "inventory.items.view", "inventory.stock.view", "inventory.parts_usage.view", "inventory.parts_usage.create", "security.emergency_alerts.raise", "security.emergency_contacts.view", "workforce.attendance.clock", "engineering.asset_documents.view"]
   security_manager:
     label: Security Manager
-    permissions: ["property.*.view", "operations.tasks.*", "operations.incidents.*", "operations.findings.*", "operations.checklists.*", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "security.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "reports.reports.view"]
+    permissions: ["property.*.view", "operations.tasks.*", "operations.incidents.*", "operations.findings.*", "operations.checklists.*", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "security.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "reports.reports.view", "workforce.*"]
   security_supervisor:
     label: Security Supervisor
-    permissions: ["property.*.view", "operations.tasks.*", "operations.incidents.*", "operations.findings.*", "operations.checklists.view", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "security.*", "notification.*", "overview.*", "search.*", "sync.*", "platform.exports.create", "vendor.*.view", "vendor.assignments.*"]
+    permissions: ["property.*.view", "operations.tasks.*", "operations.incidents.*", "operations.findings.*", "operations.checklists.view", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "security.*", "notification.*", "overview.*", "search.*", "sync.*", "platform.exports.create", "vendor.*.view", "vendor.assignments.*", "workforce.attendance.clock", "workforce.attendance.view"]
   security_officer:
     label: Security Officer
-    permissions: ["property.*.view", "operations.tasks.view", "operations.tasks.start", "operations.tasks.complete", "operations.incidents.view", "operations.incidents.create", "operations.findings.view", "operations.findings.create", "operations.comments.create", "operations.attachments.create", "security.patrol.view", "security.patrol.start", "security.patrol.complete", "security.incidents.view", "security.incidents.create", "notification.inbox.view", "search.global.view", "sync.work_bundle.view", "sync.mutations.create", "security.visitors.view", "security.visitors.verify"]
+    permissions: ["property.*.view", "operations.tasks.view", "operations.tasks.start", "operations.tasks.complete", "operations.incidents.view", "operations.incidents.create", "operations.findings.view", "operations.findings.create", "operations.comments.create", "operations.attachments.create", "security.patrol.view", "security.patrol.start", "security.patrol.complete", "security.incidents.view", "security.incidents.create", "notification.inbox.view", "search.global.view", "sync.work_bundle.view", "sync.mutations.create", "security.visitors.view", "security.visitors.verify", "security.emergency_alerts.view", "security.emergency_alerts.raise", "security.emergency_alerts.respond", "security.emergency_contacts.view", "security.parking.view", "security.parking.record", "security.lost_found.view", "security.lost_found.create", "security.visitors.create", "security.shifts.view", "workforce.attendance.clock", "security.packages.view", "security.packages.record", "security.packages.handover", "security.parking_permits.view"]
   housekeeping_manager:
     label: Housekeeping Manager
-    permissions: ["property.*.view", "operations.tasks.*", "operations.findings.*", "operations.checklists.*", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "housekeeping.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "hotel.rooms.view", "hotel.rooms.set_status", "hotel.reservations.view", "reports.reports.view"]
+    permissions: ["property.*.view", "operations.tasks.*", "operations.findings.*", "operations.checklists.*", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "housekeeping.*", "notification.*", "overview.*", "search.*", "sync.conflicts.*", "platform.exports.create", "hotel.rooms.view", "hotel.rooms.set_status", "hotel.reservations.view", "reports.reports.view", "security.emergency_alerts.raise", "security.emergency_contacts.view", "security.lost_found.view", "security.lost_found.create", "workforce.*", "inventory.consumable_usage.*", "inventory.items.view", "inventory.stock.view"]
   housekeeping_supervisor:
     label: Housekeeping Supervisor
-    permissions: ["property.*.view", "operations.tasks.*", "operations.findings.*", "operations.checklists.view", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "housekeeping.*", "notification.*", "overview.*", "search.*", "sync.*", "platform.exports.create", "hotel.rooms.view", "hotel.rooms.set_status", "hotel.reservations.view", "vendor.*.view", "vendor.assignments.*", "inventory.items.view", "inventory.stock.view", "inventory.transactions.*"]
+    permissions: ["property.*.view", "operations.tasks.*", "operations.findings.*", "operations.checklists.view", "operations.work_orders.view", "operations.work_orders.create", "operations.comments.*", "operations.attachments.*", "housekeeping.*", "notification.*", "overview.*", "search.*", "sync.*", "platform.exports.create", "hotel.rooms.view", "hotel.rooms.set_status", "hotel.reservations.view", "vendor.*.view", "vendor.assignments.*", "inventory.items.view", "inventory.stock.view", "inventory.transactions.*", "security.emergency_alerts.raise", "security.emergency_contacts.view", "security.lost_found.view", "security.lost_found.create", "workforce.attendance.clock", "workforce.attendance.view", "inventory.consumable_usage.*"]
   housekeeping_staff:
     label: Housekeeping Staff
-    permissions: ["property.*.view", "operations.tasks.view", "operations.tasks.start", "operations.tasks.complete", "operations.findings.view", "operations.findings.create", "operations.comments.create", "operations.attachments.create", "housekeeping.cleaning.view", "housekeeping.cleaning.start", "housekeeping.cleaning.complete", "notification.inbox.view", "search.global.view", "sync.work_bundle.view", "sync.mutations.create", "hotel.rooms.view", "hotel.rooms.set_status"]
+    permissions: ["property.*.view", "operations.tasks.view", "operations.tasks.start", "operations.tasks.complete", "operations.findings.view", "operations.findings.create", "operations.comments.create", "operations.attachments.create", "housekeeping.cleaning.view", "housekeeping.cleaning.start", "housekeeping.cleaning.complete", "notification.inbox.view", "search.global.view", "sync.work_bundle.view", "sync.mutations.create", "hotel.rooms.view", "hotel.rooms.set_status", "security.emergency_alerts.raise", "security.emergency_contacts.view", "security.lost_found.create", "housekeeping.shifts.view", "workforce.attendance.clock", "housekeeping.cleaning_routes.view", "inventory.consumable_usage.view", "inventory.consumable_usage.create", "inventory.items.view"]
   # ---- P1 roles (NC §32; PRD §6 persona Tenant Relation, Receptionist, Finance, Tenant) ----
   tenant_relation_manager:
     label: Tenant Relation Manager
-    permissions: ["property.*.view", "tenant.*", "tenant_relation.*", "operations.tasks.view", "operations.tasks.create", "operations.work_orders.view", "operations.work_orders.create", "operations.incidents.view", "operations.incidents.create", "operations.findings.view", "operations.comments.*", "operations.attachments.*", "booking.*", "security.visitors.view", "billing.*.view", "hotel.reservations.view", "commercial.*.view", "notification.*", "overview.*", "search.*", "platform.exports.create", "reports.reports.view", "bvrooms.bookings.*", "bvrooms.listing.view", "bvrooms.customers.view"]
+    permissions: ["property.*.view", "tenant.*", "tenant_relation.*", "operations.tasks.view", "operations.tasks.create", "operations.work_orders.view", "operations.work_orders.create", "operations.incidents.view", "operations.incidents.create", "operations.findings.view", "operations.comments.*", "operations.attachments.*", "booking.*", "security.visitors.view", "billing.*.view", "hotel.reservations.view", "commercial.*.view", "notification.*", "overview.*", "search.*", "platform.exports.create", "reports.reports.view", "bvrooms.bookings.*", "bvrooms.listing.view", "bvrooms.customers.view", "security.emergency_alerts.raise", "security.emergency_contacts.view", "security.lost_found.view", "security.lost_found.create", "security.packages.*", "security.parking_permits.*", "security.parking.view"]
   tenant_relation_officer:
     label: Tenant Relation Officer
-    permissions: ["property.*.view", "tenant.*", "tenant_relation.*", "operations.tasks.view", "operations.tasks.create", "operations.work_orders.view", "operations.work_orders.create", "operations.incidents.view", "operations.incidents.create", "operations.comments.*", "operations.attachments.*", "booking.*.view", "booking.bookings.create", "booking.bookings.approve", "booking.bookings.reject", "booking.bookings.cancel", "security.visitors.view", "billing.*.view", "notification.*", "overview.dashboard.view", "search.*"]
+    permissions: ["property.*.view", "tenant.*", "tenant_relation.*", "operations.tasks.view", "operations.tasks.create", "operations.work_orders.view", "operations.work_orders.create", "operations.incidents.view", "operations.incidents.create", "operations.comments.*", "operations.attachments.*", "booking.*.view", "booking.bookings.create", "booking.bookings.approve", "booking.bookings.reject", "booking.bookings.cancel", "security.visitors.view", "billing.*.view", "notification.*", "overview.dashboard.view", "search.*", "security.emergency_alerts.raise", "security.emergency_contacts.view", "security.lost_found.view", "security.lost_found.create", "security.packages.view", "security.packages.record", "security.packages.handover", "security.parking_permits.view"]
   receptionist:
     label: Receptionist
-    permissions: ["property.*.view", "tenant.service_requests.view", "tenant.service_requests.create", "tenant.service_requests.acknowledge", "tenant_relation.messages.*", "tenant_relation.tenant_users.view", "hotel.*.view", "hotel.reservations.*", "hotel.rooms.set_status", "booking.*", "security.visitors.view", "security.visitors.create", "security.visitors.verify", "billing.invoices.view", "billing.payments.view", "billing.payments.create", "operations.tasks.view", "operations.tasks.create", "operations.comments.create", "operations.attachments.create", "notification.*", "search.*", "overview.dashboard.view", "bvrooms.bookings.*", "bvrooms.listing.view", "bvrooms.customers.view"]
+    permissions: ["property.*.view", "tenant.service_requests.view", "tenant.service_requests.create", "tenant.service_requests.acknowledge", "tenant_relation.messages.*", "tenant_relation.tenant_users.view", "hotel.*.view", "hotel.reservations.*", "hotel.rooms.set_status", "booking.*", "security.visitors.view", "security.visitors.create", "security.visitors.verify", "billing.invoices.view", "billing.payments.view", "billing.payments.create", "operations.tasks.view", "operations.tasks.create", "operations.comments.create", "operations.attachments.create", "notification.*", "search.*", "overview.dashboard.view", "bvrooms.bookings.*", "bvrooms.listing.view", "bvrooms.customers.view", "security.emergency_alerts.raise", "security.emergency_contacts.view", "security.lost_found.view", "security.lost_found.create", "security.packages.view", "security.packages.record", "security.packages.handover"]
   finance_manager:
     label: Finance Manager
-    permissions: ["property.*.view", "billing.*", "vendor.*.view", "commercial.*.view", "hotel.reservations.view", "reports.*", "notification.*", "overview.*", "search.*", "platform.exports.create", "bvrooms.bookings.view", "bvrooms.payments.verify"]
+    permissions: ["property.*.view", "billing.*", "operations.work_orders.view", "operations.attachments.create", "tenant.service_requests.view", "vendor.*.view", "commercial.*.view", "hotel.reservations.view", "reports.*", "notification.*", "overview.*", "search.*", "platform.exports.create", "bvrooms.bookings.view", "bvrooms.payments.verify", "security.emergency_alerts.raise", "security.emergency_contacts.view"]
   finance_staff:
     label: Finance Staff
-    permissions: ["property.*.view", "billing.*", "notification.*", "overview.dashboard.view", "search.*", "platform.exports.create", "bvrooms.bookings.view", "bvrooms.payments.verify"]
+    # PRD P4 v2.1 D-P4-08: operasional + laporan; void/refund/approve credit note/waive/billing rule/budget/pengaturan = Finance Manager
+    # (organisasi tanpa manager dapat memberi seluruh billing.* ke satu role lewat ACL)
+    permissions: ["property.*.view", "billing.*.view", "billing.invoices.create", "billing.invoices.update", "billing.invoices.issue", "billing.invoices.cancel", "billing.invoices.import",
+      "billing.payments.create", "billing.payments.verify", "billing.payments.allocate", "billing.credit_notes.create", "billing.runs.generate", "billing.runs.issue",
+      "billing.meters.manage", "billing.meter_readings.create", "billing.meter_readings.review", "billing.penalties.manage", "billing.deposits.manage", "billing.collections.manage",
+      "billing.reconciliation.manage", "billing.costs.manage", "billing.accounting.export", "reports.*", "notification.*", "overview.dashboard.view", "search.*", "platform.exports.create",
+      "bvrooms.bookings.view", "bvrooms.payments.verify", "security.emergency_alerts.raise", "security.emergency_contacts.view", "operations.work_orders.view",
+      "operations.attachments.create"]   # bukti biaya / bukti bayar — akses per object tetap lewat registry ObjectAccess
+  # ---- PRD P0 v2 §8.2: role foundation generik ----
+  supervisor:
+    label: Supervisor
+    permissions: ["property.*.view", "operations.tasks.*", "operations.work_orders.*", "operations.incidents.*", "operations.findings.*", "operations.checklists.view", "operations.comments.*", "operations.attachments.*", "engineering.*.view", "security.*.view", "housekeeping.*.view", "notification.*", "overview.*", "search.*", "sync.*", "platform.exports.create", "security.emergency_alerts.raise", "security.emergency_contacts.view", "workforce.attendance.clock", "workforce.attendance.view"]
+  staff:
+    label: Staff
+    permissions: ["property.*.view", "operations.tasks.view", "operations.tasks.start", "operations.tasks.complete", "operations.findings.view", "operations.findings.create", "operations.comments.create", "operations.attachments.create", "notification.inbox.view", "search.global.view", "sync.work_bundle.view", "sync.mutations.create", "security.emergency_alerts.raise", "security.emergency_contacts.view", "workforce.attendance.clock"]
+  vendor:
+    label: Vendor
+    permissions: ["operations.work_orders.view", "operations.work_orders.start", "operations.work_orders.complete", "operations.comments.create", "operations.attachments.create", "notification.inbox.view", "sync.work_bundle.view", "sync.mutations.create"]
+  platform_admin:
+    label: Platform Admin
+    permissions: ["platform.*", "iam.*.view", "notification.inbox.view", "search.global.view"]
   # ---- Internal BuildingVision (Website PRD §18): di-seed HANYA ke organization is_internal (bvctl seed --internal) ----
   admin_internal:
     label: Admin Internal

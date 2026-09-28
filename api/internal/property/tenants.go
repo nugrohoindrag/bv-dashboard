@@ -214,6 +214,10 @@ func (s *Service) ListTenants(ctx context.Context, f TenantFilter, page httpx.Pa
 		args := []any{}
 		where := "WHERE t.deleted_at IS NULL"
 		if f.PropertyID != nil {
+			// PRD P0 v2 §24.1: property_id eksplisit tetap wajib dalam scope user
+			if !p.HasAnyOnProperty("property.tenants.view", *f.PropertyID) {
+				return apperr.Forbidden("")
+			}
 			args = append(args, *f.PropertyID)
 			where += fmt.Sprintf(" AND t.property_id = $%d", len(args))
 		} else if pids, all := p.PropertyIDsFor("property.tenants.view"); !all {

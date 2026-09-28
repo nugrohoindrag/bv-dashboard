@@ -71,7 +71,8 @@ func TestBillingAndPayment(t *testing.T) {
 	st, body = e.do(fin, http.MethodPost, "/api/v1/invoices", map[string]any{"property_id": e.refs.PropertyID, "tenant_id": tenantID, "unit_location_id": e.refs.UnitA1201, "invoice_type": "service_charge", "period_start": "2026-09-01", "period_end": "2026-09-30", "due_at": due, "tax_amount": 250000,
 		"items": []map[string]any{{"description": "Service charge September", "quantity": 180, "unit": "m²", "unit_price": 12500}, {"description": "Parkir", "quantity": 1, "unit_price": 250000}}})
 	e.mustJSON(st, body, 201, &inv)
-	if !strings.HasPrefix(inv.InvoiceNumber, "INV-") || inv.Status != "draft" || inv.TotalAmount != 180*12500+250000+250000 || len(inv.Items) != 2 || !has(inv.AllowedActions, "issue") {
+	// PRD P4 v2.1 D-P4-01: nomor invoice diberikan saat issue (draft tanpa nomor)
+	if inv.InvoiceNumber != "" || inv.Status != "draft" || inv.TotalAmount != 180*12500+250000+250000 || len(inv.Items) != 2 || !has(inv.AllowedActions, "issue") {
 		t.Fatalf("invoice draft: %+v", inv)
 	}
 	// technician tidak boleh melihat invoice; tenant belum melihat draft
@@ -88,7 +89,7 @@ func TestBillingAndPayment(t *testing.T) {
 	}
 	st, body = e.do(fin, http.MethodPost, "/api/v1/invoices/"+inv.ID.String()+"/issue", nil)
 	e.mustJSON(st, body, 200, &inv)
-	if inv.Status != "issued" || !has(inv.AllowedActions, "record_payment") {
+	if inv.Status != "issued" || !strings.HasPrefix(inv.InvoiceNumber, "INV-") || !has(inv.AllowedActions, "record_payment") {
 		t.Fatalf("issue: %+v", inv)
 	}
 	e.dispatch(t)

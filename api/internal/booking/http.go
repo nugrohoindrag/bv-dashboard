@@ -20,11 +20,15 @@ type Handler struct {
 // Mount: staf (dashboard) + tenant (`/tenant/facilities`, `/tenant/bookings`).
 func (h *Handler) Mount(r chi.Router) {
 	req := h.IAM.Require
-	r.With(req("booking.facilities.view")).Get("/facilities", h.listFacilities)
-	r.With(req("booking.facilities.create")).Post("/facilities", h.createFacility)
-	r.With(req("booking.facilities.view")).Get("/facilities/{id}", h.getFacility)
-	r.With(req("booking.facilities.update")).Patch("/facilities/{id}", h.updateFacility)
-	r.With(req("booking.facilities.delete")).Delete("/facilities/{id}", h.deleteFacility)
+	// PRD P1 v2 §6.3: facility dikelola Building Management (property.facilities.*) maupun Booking (booking.facilities.*)
+	fac := func(a string) func(http.Handler) http.Handler {
+		return h.IAM.RequireAny("property.facilities."+a, "booking.facilities."+a)
+	}
+	r.With(fac("view")).Get("/facilities", h.listFacilities)
+	r.With(fac("create")).Post("/facilities", h.createFacility)
+	r.With(fac("view")).Get("/facilities/{id}", h.getFacility)
+	r.With(fac("update")).Patch("/facilities/{id}", h.updateFacility)
+	r.With(fac("delete")).Delete("/facilities/{id}", h.deleteFacility)
 	r.With(req("booking.facilities.view")).Get("/facilities/{id}/schedules", h.listSchedules)
 	r.With(req("booking.facilities.update")).Post("/facilities/{id}/schedules", h.addSchedule)
 	r.With(req("booking.facilities.update")).Delete("/facilities/{id}/schedules/{sid}", h.deleteSchedule)
@@ -59,8 +63,21 @@ func dateParam(r *http.Request) (time.Time, error) {
 }
 
 func (h *Handler) listFacilities(w http.ResponseWriter, r *http.Request) {
-	pid, _ := httpx.QueryUUID(r, "property_id")
-	items, err := h.Svc.ListFacilities(r.Context(), pid, r.URL.Query().Get("active") == "true")
+	pid, err := httpx.QueryUUID(r, "property_id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	ff := FacilityFilter{PropertyID: pid, ActiveOnly: r.URL.Query().Get("active") == "true", Types: httpx.QueryCSV(r, "type"), Statuses: httpx.QueryCSV(r, "status"), Q: r.URL.Query().Get("q")}
+	if v := r.URL.Query().Get("bookable"); v != "" {
+		b := v == "true"
+		ff.Bookable = &b
+	}
+	if ff.LocationID, err = httpx.QueryLocation(r); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	items, err := h.Svc.ListFacilitiesFiltered(r.Context(), ff)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

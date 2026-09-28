@@ -188,6 +188,7 @@ func TestHotelBooking(t *testing.T) {
 		t.Fatalf("guest login: %d %v", stL, resp)
 	}
 	guestTok := resp["access_token"].(string)
+	e.changeTempPassword(t, guestTok, act.TemporaryPassword)
 	st, body = e.do(guestTok, http.MethodGet, "/api/v1/tenant/me", nil)
 	if st != 200 || !strings.Contains(string(body), `"profile":"hotel"`) || !strings.Contains(string(body), `"Tamu"`) || !strings.Contains(string(body), "501") {
 		t.Fatalf("guest /tenant/me: %d %s", st, body)

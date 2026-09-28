@@ -45,6 +45,157 @@ func (h *Handler) Mount(r chi.Router) {
 	r.With(req("tenant_app.requests.create")).Post("/tenant/attachments/{id}/confirm", h.confirmAttachment)
 	r.With(req("tenant_app.inbox.view")).Get("/tenant/announcements", h.announcements)
 	r.With(req("tenant_app.inbox.view")).Get("/tenant/announcements/{id}", h.announcement)
+	// ---- PRD P3 v2.1 ----
+	r.With(req("tenant_app.inbox.view")).Post("/tenant/announcements/{id}/acknowledge", h.ackAnnouncement)         // P3-ANN-05
+	r.With(req("tenant_app.units.view")).Get("/tenant/units", h.units)                                             // P3-UNT-01..04
+	r.With(req("tenant_app.units.view")).Get("/tenant/units/{id}", h.unit)                                         //
+	r.With(req("tenant_app.feedback.create")).Post("/tenant/feedback", h.createFeedback)                           // P3-FDB-02
+	r.With(req("tenant_app.feedback.view")).Get("/tenant/feedback", h.listFeedback)                                //
+	r.With(req("tenant_app.feedback.view")).Get("/tenant/feedback/{id}", h.getFeedback)                            //
+	r.With(req("tenant_app.members.view")).Get("/tenant/members", h.members)                                       // P3-ACC-08 (tenant_admin)
+	r.With(req("tenant_app.members.manage")).Post("/tenant/members", h.createMember)                               //
+	r.With(req("tenant_app.members.manage")).Post("/tenant/members/{id}/deactivate", h.memberAction("deactivate")) //
+	r.With(req("tenant_app.members.manage")).Post("/tenant/members/{id}/reactivate", h.memberAction("reactivate")) //
+	r.With(req("tenant_app.members.manage")).Put("/tenant/members/{id}/units", h.memberUnits)                      //
+}
+
+func (h *Handler) ackAnnouncement(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Svc.AcknowledgeAnnouncement(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) units(w http.ResponseWriter, r *http.Request) {
+	items, err := h.Svc.MyUnits(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, httpx.NewList(items, nil))
+}
+
+func (h *Handler) unit(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Svc.MyUnit(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) createFeedback(w http.ResponseWriter, r *http.Request) {
+	var in GeneralFeedbackInput
+	if err := httpx.Decode(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Svc.CreateGeneralFeedback(r.Context(), in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, out)
+}
+
+func (h *Handler) listFeedback(w http.ResponseWriter, r *http.Request) {
+	page, err := httpx.ParsePage(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	items, next, err := h.Svc.ListGeneralFeedback(r.Context(), page)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, httpx.NewList(items, next))
+}
+
+func (h *Handler) getFeedback(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Svc.GetGeneralFeedback(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) members(w http.ResponseWriter, r *http.Request) {
+	items, err := h.Svc.Members(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, httpx.NewList(items, nil))
+}
+
+func (h *Handler) createMember(w http.ResponseWriter, r *http.Request) {
+	var in MemberInput
+	if err := httpx.Decode(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Svc.CreateMember(r.Context(), in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, out)
+}
+
+func (h *Handler) memberAction(action string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := httpx.PathUUID(r, chi.URLParam, "id")
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		out, err := h.Svc.MemberAction(r.Context(), id, action)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, out)
+	}
+}
+
+func (h *Handler) memberUnits(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in struct {
+		UnitIDs []uuid.UUID `json:"unit_ids"`
+	}
+	if err := httpx.Decode(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Svc.SetMemberUnits(r.Context(), id, in.UnitIDs)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) regProperties(w http.ResponseWriter, r *http.Request) {
@@ -250,7 +401,17 @@ func (h *Handler) postMessage(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, out)
 }
 
-// presign: lampiran tenant — hanya object_type service_request milik tenant (ObjectAccess cabang tenant), tipe photo/document.
+// tenantUploadPolicy: object yang boleh diberi lampiran oleh akun tenant (kepemilikan divalidasi ObjectAccess tiap object):
+// permintaan (foto/dokumen/video; juga lampiran pesan), feedback umum (foto), bukti transfer pembayaran (foto/PDF, PRD P4
+// v2.1 P4-VRF-02), kendaraan (foto/STNK, P3-PRK-01).
+var tenantUploadPolicy = map[string]map[string]bool{
+	"service_request": {"photo": true, "document": true, "video": true},
+	"tenant_feedback": {"photo": true},
+	"payment":         {"photo": true, "document": true},
+	"vehicle":         {"photo": true, "document": true},
+}
+
+// presign: lampiran tenant — object milik tenant (ObjectAccess cabang tenant) sesuai tenantUploadPolicy.
 func (h *Handler) presign(w http.ResponseWriter, r *http.Request) {
 	var in attachments.PresignInput
 	if err := httpx.Decode(r, &in); err != nil {
@@ -261,12 +422,17 @@ func (h *Handler) presign(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, apperr.Forbidden(""))
 		return
 	}
-	if in.ObjectType != "service_request" {
-		httpx.WriteError(w, r, apperr.Validation("object_type harus service_request"))
+	allowed, ok := tenantUploadPolicy[in.ObjectType]
+	if !ok {
+		httpx.WriteError(w, r, apperr.Validation("object_type harus service_request|tenant_feedback|payment|vehicle"))
 		return
 	}
-	if in.AttachmentType != "photo" && in.AttachmentType != "document" {
+	if !allowed[in.AttachmentType] {
 		in.AttachmentType = "photo"
+		if !allowed["photo"] {
+			httpx.WriteError(w, r, apperr.Validation("attachment_type tidak diizinkan untuk object ini"))
+			return
+		}
 	}
 	out, err := h.Svc.Attachments.Presign(r.Context(), in)
 	if err != nil {
@@ -328,7 +494,7 @@ func (h *Handler) announcements(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	items, next, err := h.Svc.Announcements(r.Context(), page)
+	items, next, err := h.Svc.Announcements(r.Context(), r.URL.Query().Get("category"), page)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

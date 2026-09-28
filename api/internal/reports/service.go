@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/buildingvision/api/internal/iam"
 	"github.com/buildingvision/api/internal/platform/apperr"
 	"github.com/buildingvision/api/internal/platform/authctx"
 	"github.com/buildingvision/api/internal/platform/db"
@@ -59,6 +58,15 @@ var Catalog = []struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 }{
+	// PRD P1 v2 §41 Operational Reporting + §51 Success Metrics
+	{"operations-kpi", "Operations KPI", "Target MVP: WO dalam SLA, task completion rate, overdue rate, request dalam SLA, mobile completion, kelengkapan data"},
+	{"tasks", "Task Completion", "Task dibuat/selesai/tepat waktu, completion & overdue rate, per kategori/tipe/team/assignee"},
+	{"sla", "SLA Report", "Kepatuhan SLA resolusi & respons untuk Task, Work Order, Request, Incident; at risk & breached"},
+	{"incidents", "Incident Report", "Volume insiden per severity/kategori, waktu penyelesaian, SLA breach"},
+	{"backlog", "Operational Backlog", "Pekerjaan terbuka per umur, prioritas, team, status; arus masuk vs selesai"},
+	// PRD P2 v2.1 P2-WKL-04
+	{"team-performance", "Team Performance", "Per team & staf: selesai, tepat waktu, overdue, rework, SLA breach, durasi, skor inspeksi, checkpoint terlewat"},
+	{"security", "Security Report", "Patrol & checkpoint compliance, checkpoint terlewat, incident & waktu respons, visitor, emergency, pelanggaran parkir"},
 	{"service-requests", "Service Request", "Volume, SLA compliance, waktu respons/penyelesaian, reopen rate, kepuasan tenant (CSAT)"},
 	{"work-orders", "Work Order Performance", "Volume, penyelesaian tepat waktu, durasi, biaya, per tipe/prioritas"},
 	{"maintenance", "PM Compliance", "Jadwal preventive maintenance: selesai tepat waktu vs overdue/skipped"},
@@ -66,6 +74,14 @@ var Catalog = []struct {
 	{"facilities", "Facility Utilization", "Booking per fasilitas, jam terpakai, utilisasi, no-show"},
 	{"visitors", "Visitor Volume", "Volume tamu per hari & status"},
 	{"billing", "Billing & Payment", "Invoice diterbitkan/lunas/overdue, collection rate, pembayaran per provider"},
+	// PRD P4 v2.1 P4-FIN-03
+	{"aging", "Aging Piutang", "Umur piutang: belum jatuh tempo, 1–30, 31–60, 61–90, > 90 hari per tenant/unit/property"},
+	{"collection", "Collection", "Collection rate kanonis, kas diterima, pengingat, log penagihan & janji bayar"},
+	{"revenue", "Revenue", "Pendapatan per jenis tagihan (tanpa pajak & deposit), credit note, pajak"},
+	{"ipl", "IPL (Apartment)", "Tagihan, penerimaan, dan tunggakan IPL/service charge per unit"},
+	{"sinking-fund", "Sinking Fund", "Saldo awal, penerimaan, penggunaan, dan saldo akhir sinking fund per property"},
+	{"budget-actual", "Budget vs Actual", "Budget vs realisasi pendapatan & biaya per kategori dalam periode"},
+	{"operating-cost", "Operating Cost", "Biaya operasional per kategori: work order, consumable, biaya manual"},
 	{"vendors", "Vendor Performance", "Work Order per vendor: selesai, tepat waktu, durasi, reopen"},
 	{"inventory", "Inventory Movement", "Pergerakan stok per jenis, pemakaian part, item stok rendah"},
 }
@@ -74,26 +90,34 @@ func newReport(name string, p Params) *Report {
 	return &Report{Name: name, PropertyID: p.PropertyID, From: p.From, To: p.To, Summary: map[string]float64{}, Series: []Point{}, Breakdowns: map[string][]Point{}}
 }
 
-// scope: klausa property + args (server-side authz: hanya property yang diizinkan).
-func (s *Service) scope(ctx context.Context, p Params, col string) (string, []any, error) {
+// scope: klausa property + scope Building/Tower + args (server-side authz: hanya property/lokasi yang diizinkan).
+// locExpr (opsional) = ekspresi uuid lokasi object; bila ada, grant ber-scope Building/Tower ikut berlaku (PRD P1 v2.1
+// P1-RPT-05). Tanpa locExpr (laporan billing/inventory/facility) hanya grant property-wide yang dihitung.
+func (s *Service) scope(ctx context.Context, p Params, col string, locExpr ...string) (string, []any, error) {
 	pr := authctx.Must(ctx)
 	// batas rentang: maksimal 366 hari
 	if p.To.Before(p.From) || p.To.Sub(p.From) > 366*24*time.Hour {
 		return "", nil, apperr.Validation("rentang tanggal tidak valid (maks 366 hari)")
 	}
 	args := []any{p.From, p.To.Add(24 * time.Hour)} // $1 from, $2 to (eksklusif)
+	add := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
+	path := ""
+	if len(locExpr) > 0 && locExpr[0] != "" {
+		path = "(SELECT sl.path FROM locations sl WHERE sl.id = " + locExpr[0] + ")"
+	}
+	clause := ""
 	if p.PropertyID != nil {
-		if err := iam.CanOnProperty(ctx, "reports.reports.view", *p.PropertyID); err != nil {
-			return "", nil, err
+		if !pr.HasOnProperty("reports.reports.view", *p.PropertyID) && (path == "" || !pr.HasAnyOnProperty("reports.reports.view", *p.PropertyID)) {
+			return "", nil, apperr.Forbidden("Tidak memiliki reports.reports.view pada property ini")
 		}
-		args = append(args, *p.PropertyID)
-		return col + " = $3", args, nil
+		clause = col + " = " + add(*p.PropertyID) + " AND "
 	}
-	if ids, all := pr.PropertyIDsFor("reports.reports.view"); !all {
-		args = append(args, ids)
-		return col + " = ANY($3)", args, nil
-	}
-	return "true", args, nil
+	return "(" + clause + pr.ScopeSQL("reports.reports.view", col, path, add) + ")", args, nil
+}
+
+// swapAlias: klausa scope untuk alias tabel lain (kolom property_id & location_id ikut berganti).
+func swapAlias(clause, from, to string) string {
+	return replaceCol(replaceCol(clause, from+".property_id", to+".property_id"), from+".location_id", to+".location_id")
 }
 
 func (s *Service) Run(ctx context.Context, name string, p Params) (*Report, error) {
@@ -144,6 +168,34 @@ func (s *Service) Run(ctx context.Context, name string, p Params) (*Report, erro
 			out, err = s.vendors(ctx, tx, p)
 		case "inventory":
 			out, err = s.inventory(ctx, tx, p)
+		case "tasks":
+			out, err = s.tasks(ctx, tx, p)
+		case "sla":
+			out, err = s.sla(ctx, tx, p)
+		case "incidents":
+			out, err = s.incidents(ctx, tx, p)
+		case "backlog":
+			out, err = s.backlog(ctx, tx, p)
+		case "operations-kpi":
+			out, err = s.operationsKPI(ctx, tx, p)
+		case "team-performance":
+			out, err = s.teamPerformance(ctx, tx, p)
+		case "security":
+			out, err = s.security(ctx, tx, p)
+		case "aging":
+			out, err = s.aging(ctx, tx, p)
+		case "collection":
+			out, err = s.collection(ctx, tx, p)
+		case "revenue":
+			out, err = s.revenue(ctx, tx, p)
+		case "ipl":
+			out, err = s.ipl(ctx, tx, p)
+		case "sinking-fund":
+			out, err = s.sinkingFund(ctx, tx, p)
+		case "budget-actual":
+			out, err = s.budgetActual(ctx, tx, p)
+		case "operating-cost":
+			out, err = s.operatingCost(ctx, tx, p)
 		default:
 			return apperr.NotFound("Report")
 		}
@@ -244,7 +296,7 @@ func deref(s *string) string {
 
 func (s *Service) serviceRequests(ctx context.Context, tx pgx.Tx, p Params) (*Report, error) {
 	r := newReport("service-requests", p)
-	sc, args, err := s.scope(ctx, p, "sr.property_id")
+	sc, args, err := s.scope(ctx, p, "sr.property_id", "sr.location_id")
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +316,7 @@ func (s *Service) serviceRequests(ctx context.Context, tx pgx.Tx, p Params) (*Re
 	// SLA compliance: resolved dalam resolution_due_at (sla_tracking)
 	sla, err := summary(ctx, tx, fmt.Sprintf(`SELECT
 		count(*) FILTER (WHERE st.resolution_due_at IS NOT NULL)::float8,
-		count(*) FILTER (WHERE st.resolution_due_at IS NOT NULL AND st.resolved_at IS NOT NULL AND st.resolved_at <= st.resolution_due_at)::float8,
+		count(*) FILTER (WHERE st.resolution_due_at IS NOT NULL AND st.resolved_at IS NOT NULL AND st.resolved_at <= st.resolution_due_at + (st.paused_minutes || ' minutes')::interval)::float8,
 		count(*) FILTER (WHERE st.response_due_at IS NOT NULL)::float8,
 		count(*) FILTER (WHERE st.response_due_at IS NOT NULL AND st.responded_at IS NOT NULL AND st.responded_at <= st.response_due_at)::float8,
 		count(*) FILTER (WHERE st.sla_breached_at IS NOT NULL)::float8
@@ -317,7 +369,7 @@ func (s *Service) serviceRequests(ctx context.Context, tx pgx.Tx, p Params) (*Re
 
 func (s *Service) workOrders(ctx context.Context, tx pgx.Tx, p Params) (*Report, error) {
 	r := newReport("work-orders", p)
-	sc, args, err := s.scope(ctx, p, "w.property_id")
+	sc, args, err := s.scope(ctx, p, "w.property_id", "w.location_id")
 	if err != nil {
 		return nil, err
 	}
@@ -325,17 +377,26 @@ func (s *Service) workOrders(ctx context.Context, tx pgx.Tx, p Params) (*Report,
 		count(*) FILTER (WHERE w.created_at >= $1 AND w.created_at < $2)::float8,
 		count(*) FILTER (WHERE w.completed_at >= $1 AND w.completed_at < $2)::float8,
 		count(*) FILTER (WHERE w.completed_at >= $1 AND w.completed_at < $2 AND (w.due_at IS NULL OR w.completed_at <= w.due_at))::float8,
-		count(*) FILTER (WHERE w.status NOT IN ('completed','closed','cancelled'))::float8,
-		count(*) FILTER (WHERE w.status NOT IN ('completed','closed','cancelled') AND w.due_at < now())::float8,
+		count(*) FILTER (WHERE w.status NOT IN ('completed','closed','cancelled','draft'))::float8,
+		count(*) FILTER (WHERE w.status NOT IN ('completed','closed','cancelled','draft') AND w.due_at < now())::float8,
 		COALESCE(avg(EXTRACT(EPOCH FROM (w.completed_at - COALESCE(w.started_at, w.created_at)))/3600) FILTER (WHERE w.completed_at >= $1 AND w.completed_at < $2), 0)::float8,
 		COALESCE(sum(w.actual_cost_amount) FILTER (WHERE w.completed_at >= $1 AND w.completed_at < $2), 0)::float8,
 		count(*) FILTER (WHERE w.completed_at >= $1 AND w.completed_at < $2 AND w.reopen_count > 0)::float8,
-		count(*) FILTER (WHERE w.created_at >= $1 AND w.created_at < $2 AND w.vendor_id IS NOT NULL)::float8
-		FROM work_orders w WHERE %s`, sc), []string{"created", "completed", "completed_on_time", "open_now", "overdue_now", "avg_completion_hours", "actual_cost_total", "reopened", "vendor_assigned"}, args...)
+		count(*) FILTER (WHERE w.created_at >= $1 AND w.created_at < $2 AND w.vendor_id IS NOT NULL)::float8,
+		COALESCE(sum(w.parts_cost_amount) FILTER (WHERE w.completed_at >= $1 AND w.completed_at < $2), 0)::float8,
+		COALESCE(sum(w.service_cost_amount) FILTER (WHERE w.completed_at >= $1 AND w.completed_at < $2), 0)::float8,
+		COALESCE(sum(w.other_cost_amount) FILTER (WHERE w.completed_at >= $1 AND w.completed_at < $2), 0)::float8,
+		COALESCE(sum(w.estimated_cost_amount) FILTER (WHERE w.completed_at >= $1 AND w.completed_at < $2), 0)::float8,
+		count(*) FILTER (WHERE w.completed_at >= $1 AND w.completed_at < $2 AND EXISTS (SELECT 1 FROM sla_tracking st WHERE st.object_type = 'work_order' AND st.object_id = w.id AND st.resolution_due_at IS NOT NULL))::float8,
+		count(*) FILTER (WHERE w.completed_at >= $1 AND w.completed_at < $2 AND EXISTS (SELECT 1 FROM sla_tracking st WHERE st.object_type = 'work_order' AND st.object_id = w.id AND st.resolution_due_at IS NOT NULL AND st.resolved_at <= st.resolution_due_at + (st.paused_minutes || ' minutes')::interval))::float8,
+		count(*) FILTER (WHERE w.status = 'draft')::float8
+		FROM work_orders w WHERE %s`, sc), []string{"created", "completed", "completed_on_time", "open_now", "overdue_now", "avg_completion_hours", "actual_cost_total", "reopened", "vendor_assigned",
+		"parts_cost_total", "service_cost_total", "other_cost_total", "estimated_cost_total", "completed_with_sla", "completed_within_sla", "draft_now"}, args...)
 	if err != nil {
 		return nil, err
 	}
 	sum["on_time_pct"] = pct(sum["completed_on_time"], sum["completed"])
+	sum["within_sla_pct"] = pct(sum["completed_within_sla"], sum["completed_with_sla"])
 	r.Summary = sum
 	if r.Series, err = series(ctx, tx, fmt.Sprintf(`SELECT d::date, count(w.id) FILTER (WHERE w.created_at >= d AND w.created_at < d + interval '1 day')::float8, count(w.id) FILTER (WHERE w.completed_at >= d AND w.completed_at < d + interval '1 day')::float8
 		FROM generate_series($1::timestamptz, $2::timestamptz - interval '1 day', interval '1 day') d LEFT JOIN work_orders w ON (%s) AND ((w.created_at >= d AND w.created_at < d + interval '1 day') OR (w.completed_at >= d AND w.completed_at < d + interval '1 day'))
@@ -364,7 +425,7 @@ func (s *Service) workOrders(ctx context.Context, tx pgx.Tx, p Params) (*Report,
 
 func (s *Service) maintenance(ctx context.Context, tx pgx.Tx, p Params) (*Report, error) {
 	r := newReport("maintenance", p)
-	sc, args, err := s.scope(ctx, p, "ms.property_id")
+	sc, args, err := s.scope(ctx, p, "ms.property_id", "(SELECT a2.location_id FROM assets a2 WHERE a2.id = ms.asset_id)")
 	if err != nil {
 		return nil, err
 	}
@@ -400,7 +461,7 @@ func (s *Service) maintenance(ctx context.Context, tx pgx.Tx, p Params) (*Report
 
 func (s *Service) patrolCleaning(ctx context.Context, tx pgx.Tx, p Params) (*Report, error) {
 	r := newReport("patrol-cleaning", p)
-	sc, args, err := s.scope(ctx, p, "t.property_id")
+	sc, args, err := s.scope(ctx, p, "t.property_id", "t.location_id")
 	if err != nil {
 		return nil, err
 	}
@@ -432,7 +493,7 @@ func (s *Service) patrolCleaning(ctx context.Context, tx pgx.Tx, p Params) (*Rep
 	if r.Breakdowns["team"], err = breakdown(ctx, tx, fmt.Sprintf(`SELECT tm.id::text, tm.name, count(*)::float8, count(*) FILTER (WHERE t.status IN ('completed','closed'))::float8 FROM tasks t JOIN teams tm ON tm.id = t.assignee_team_id WHERE t.task_type IN ('patrol','cleaning','inspection') AND COALESCE(t.scheduled_start_at, t.created_at) >= $1 AND COALESCE(t.scheduled_start_at, t.created_at) < $2 AND %s GROUP BY tm.id, tm.name ORDER BY count(*) DESC`, sc), []string{"total", "completed"}, args...); err != nil {
 		return nil, err
 	}
-	if r.Breakdowns["findings"], err = breakdown(ctx, tx, fmt.Sprintf(`SELECT f.severity, f.severity, count(*)::float8 FROM findings f WHERE f.source_type IN ('task','patrol_task','inspection','housekeeping_inspection','checklist_run_item') AND f.created_at >= $1 AND f.created_at < $2 AND %s GROUP BY f.severity`, replaceCol(sc, "t.property_id", "f.property_id")), []string{"count"}, args...); err != nil {
+	if r.Breakdowns["findings"], err = breakdown(ctx, tx, fmt.Sprintf(`SELECT f.severity, f.severity, count(*)::float8 FROM findings f WHERE f.source_type IN ('task','patrol_task','inspection','housekeeping_inspection','checklist_run_item') AND f.created_at >= $1 AND f.created_at < $2 AND %s GROUP BY f.severity`, swapAlias(sc, "t", "f")), []string{"count"}, args...); err != nil {
 		return nil, err
 	}
 	return r, nil
@@ -502,7 +563,7 @@ func replaceCol(clause, from, to string) string {
 
 func (s *Service) visitors(ctx context.Context, tx pgx.Tx, p Params) (*Report, error) {
 	r := newReport("visitors", p)
-	sc, args, err := s.scope(ctx, p, "v.property_id")
+	sc, args, err := s.scope(ctx, p, "v.property_id", "v.host_unit_location_id")
 	if err != nil {
 		return nil, err
 	}
@@ -546,39 +607,50 @@ func (s *Service) billing(ctx context.Context, tx pgx.Tx, p Params) (*Report, er
 	if err != nil {
 		return nil, err
 	}
+	pmSc := replaceCol(sc, "i.property_id", "pm.property_id")
+	// PRD P4 v2.1 P4-COL-05 (B-02): collection rate kanonis = pembayaran diterima atas tagihan jatuh tempo pada periode ÷ tagihan
+	// jatuh tempo pada periode (total − credit note), tanpa draft & cancelled. Terkumpul (kas) = pembayaran lunas pada periode.
 	sum, err := summary(ctx, tx, fmt.Sprintf(`SELECT
 		count(*) FILTER (WHERE i.issued_at >= $1 AND i.issued_at < $2)::float8,
 		COALESCE(sum(i.total_amount) FILTER (WHERE i.issued_at >= $1 AND i.issued_at < $2), 0)::float8,
-		COALESCE(sum(i.paid_amount) FILTER (WHERE i.issued_at >= $1 AND i.issued_at < $2), 0)::float8,
 		count(*) FILTER (WHERE i.status = 'paid' AND i.paid_at >= $1 AND i.paid_at < $2)::float8,
 		count(*) FILTER (WHERE i.status = 'overdue')::float8,
-		COALESCE(sum(i.total_amount - i.paid_amount) FILTER (WHERE i.status = 'overdue'), 0)::float8,
-		COALESCE(sum(i.total_amount - i.paid_amount) FILTER (WHERE i.status IN ('issued','partially_paid','overdue')), 0)::float8,
-		COALESCE(avg(EXTRACT(EPOCH FROM (i.paid_at - i.issued_at))/86400) FILTER (WHERE i.paid_at IS NOT NULL AND i.paid_at >= $1 AND i.paid_at < $2), 0)::float8
-		FROM invoices i WHERE %s`, sc), []string{"issued", "issued_amount", "collected_amount", "paid", "overdue_now", "overdue_amount", "outstanding_amount", "avg_days_to_pay"}, args...)
+		COALESCE(sum(i.total_amount - i.paid_amount - i.credited_amount) FILTER (WHERE i.status = 'overdue'), 0)::float8,
+		COALESCE(sum(i.total_amount - i.paid_amount - i.credited_amount) FILTER (WHERE i.status IN ('issued','partially_paid','overdue')), 0)::float8,
+		COALESCE(avg(EXTRACT(EPOCH FROM (i.paid_at - i.issued_at))/86400) FILTER (WHERE i.paid_at IS NOT NULL AND i.paid_at >= $1 AND i.paid_at < $2), 0)::float8,
+		COALESCE(sum(i.total_amount - i.credited_amount) FILTER (WHERE i.due_at >= $1 AND i.due_at < $2), 0)::float8,
+		COALESCE(sum(LEAST(i.paid_amount, i.total_amount - i.credited_amount)) FILTER (WHERE i.due_at >= $1 AND i.due_at < $2), 0)::float8,
+		COALESCE(sum(i.credited_amount) FILTER (WHERE i.issued_at >= $1 AND i.issued_at < $2), 0)::float8
+		FROM invoices i WHERE i.status NOT IN ('draft','cancelled') AND i.invoice_number IS NOT NULL AND %s`, sc),
+		[]string{"issued", "issued_amount", "paid", "overdue_now", "overdue_amount", "outstanding_amount", "avg_days_to_pay", "due_amount", "collected_on_due", "credited_amount"}, args...)
 	if err != nil {
 		return nil, err
 	}
-	sum["collection_rate_pct"] = pct(sum["collected_amount"], sum["issued_amount"])
+	var cash, cancelled float64
+	_ = tx.QueryRow(ctx, fmt.Sprintf(`SELECT COALESCE(sum(pm.amount),0)::float8 FROM payments pm WHERE pm.status IN ('paid','refunded') AND pm.method <> 'credit' AND pm.paid_at >= $1 AND pm.paid_at < $2 AND %s`, pmSc), args...).Scan(&cash)
+	_ = tx.QueryRow(ctx, fmt.Sprintf(`SELECT count(*)::float8 FROM invoices i WHERE i.status = 'cancelled' AND i.cancelled_at >= $1 AND i.cancelled_at < $2 AND %s`, sc), args...).Scan(&cancelled)
+	sum["collected_amount"] = cash
+	sum["cancelled"] = cancelled
+	sum["collection_rate_pct"] = pct(sum["collected_on_due"], sum["due_amount"])
 	r.Summary = sum
-	if r.Series, err = series(ctx, tx, fmt.Sprintf(`SELECT d::date, COALESCE(sum(i.total_amount) FILTER (WHERE i.issued_at >= d AND i.issued_at < d + interval '1 day'),0)::float8, COALESCE(sum(pm.amount) FILTER (WHERE pm.paid_at >= d AND pm.paid_at < d + interval '1 day'),0)::float8
-		FROM generate_series($1::timestamptz, $2::timestamptz - interval '1 day', interval '1 day') d
-		LEFT JOIN invoices i ON (%s) AND i.issued_at >= d AND i.issued_at < d + interval '1 day'
-		LEFT JOIN payments pm ON pm.status = 'paid' AND pm.paid_at >= d AND pm.paid_at < d + interval '1 day' AND %s
-		GROUP BY d ORDER BY d`, sc, replaceCol(sc, "i.property_id", "pm.property_id")), []string{"issued_amount", "collected_amount"}, args...); err != nil {
+	// B-01: deret harian — diterbitkan & terkumpul dihitung terpisah (tanpa join silang invoice × payment)
+	if r.Series, err = series(ctx, tx, fmt.Sprintf(`SELECT d::date,
+		COALESCE((SELECT sum(i.total_amount) FROM invoices i WHERE i.status NOT IN ('draft','cancelled') AND i.issued_at >= d AND i.issued_at < d + interval '1 day' AND %s),0)::float8,
+		COALESCE((SELECT sum(pm.amount) FROM payments pm WHERE pm.status IN ('paid','refunded') AND pm.method <> 'credit' AND pm.paid_at >= d AND pm.paid_at < d + interval '1 day' AND %s),0)::float8
+		FROM generate_series($1::timestamptz, $2::timestamptz - interval '1 day', interval '1 day') d ORDER BY d`, sc, pmSc), []string{"issued_amount", "collected_amount"}, args...); err != nil {
 		return nil, err
 	}
-	if r.Breakdowns["status"], err = breakdown(ctx, tx, fmt.Sprintf(`SELECT i.status, i.status, count(*)::float8, COALESCE(sum(i.total_amount),0)::float8, COALESCE(sum(i.total_amount - i.paid_amount),0)::float8 FROM invoices i WHERE i.issued_at >= $1 AND i.issued_at < $2 AND %s GROUP BY i.status`, sc), []string{"count", "amount", "outstanding"}, args...); err != nil {
+	if r.Breakdowns["status"], err = breakdown(ctx, tx, fmt.Sprintf(`SELECT i.status, i.status, count(*)::float8, COALESCE(sum(i.total_amount),0)::float8, COALESCE(sum(i.total_amount - i.paid_amount - i.credited_amount) FILTER (WHERE i.status <> 'cancelled'),0)::float8 FROM invoices i WHERE i.issued_at >= $1 AND i.issued_at < $2 AND i.invoice_number IS NOT NULL AND %s GROUP BY i.status`, sc), []string{"count", "amount", "outstanding"}, args...); err != nil {
 		return nil, err
 	}
-	if r.Breakdowns["type"], err = breakdown(ctx, tx, fmt.Sprintf(`SELECT i.invoice_type, i.invoice_type, count(*)::float8, COALESCE(sum(i.total_amount),0)::float8, COALESCE(sum(i.paid_amount),0)::float8 FROM invoices i WHERE i.issued_at >= $1 AND i.issued_at < $2 AND %s GROUP BY i.invoice_type`, sc), []string{"count", "amount", "collected"}, args...); err != nil {
+	if r.Breakdowns["type"], err = breakdown(ctx, tx, fmt.Sprintf(`SELECT i.invoice_type, i.invoice_type, count(*)::float8, COALESCE(sum(i.total_amount),0)::float8, COALESCE(sum(i.paid_amount),0)::float8 FROM invoices i WHERE i.status NOT IN ('draft','cancelled') AND i.issued_at >= $1 AND i.issued_at < $2 AND %s GROUP BY i.invoice_type`, sc), []string{"count", "amount", "collected"}, args...); err != nil {
 		return nil, err
 	}
 	if r.Breakdowns["provider"], err = breakdown(ctx, tx, fmt.Sprintf(`SELECT pm.provider_code || '/' || pm.method, pm.provider_code || ' · ' || pm.method, count(*)::float8, count(*) FILTER (WHERE pm.status = 'paid')::float8, COALESCE(sum(pm.amount) FILTER (WHERE pm.status = 'paid'),0)::float8, count(*) FILTER (WHERE pm.status IN ('failed','expired'))::float8
-		FROM payments pm WHERE pm.created_at >= $1 AND pm.created_at < $2 AND %s GROUP BY pm.provider_code, pm.method ORDER BY count(*) DESC`, replaceCol(sc, "i.property_id", "pm.property_id")), []string{"count", "paid", "paid_amount", "failed"}, args...); err != nil {
+		FROM payments pm WHERE pm.created_at >= $1 AND pm.created_at < $2 AND %s GROUP BY pm.provider_code, pm.method ORDER BY count(*) DESC`, pmSc), []string{"count", "paid", "paid_amount", "failed"}, args...); err != nil {
 		return nil, err
 	}
-	if r.Breakdowns["tenant_overdue"], err = breakdown(ctx, tx, fmt.Sprintf(`SELECT t.id::text, t.name, count(*)::float8, COALESCE(sum(i.total_amount - i.paid_amount),0)::float8 FROM invoices i JOIN tenants t ON t.id = i.tenant_id WHERE i.status = 'overdue' AND $1::timestamptz <= $2::timestamptz AND %s GROUP BY t.id, t.name ORDER BY sum(i.total_amount - i.paid_amount) DESC LIMIT 10`, sc), []string{"count", "outstanding"}, args...); err != nil {
+	if r.Breakdowns["tenant_overdue"], err = breakdown(ctx, tx, fmt.Sprintf(`SELECT t.id::text, t.name, count(*)::float8, COALESCE(sum(i.total_amount - i.paid_amount - i.credited_amount),0)::float8 FROM invoices i JOIN tenants t ON t.id = i.tenant_id WHERE i.status = 'overdue' AND $1::timestamptz <= $2::timestamptz AND %s GROUP BY t.id, t.name ORDER BY sum(i.total_amount - i.paid_amount - i.credited_amount) DESC LIMIT 10`, sc), []string{"count", "outstanding"}, args...); err != nil {
 		return nil, err
 	}
 	return r, nil
@@ -588,7 +660,7 @@ func (s *Service) billing(ctx context.Context, tx pgx.Tx, p Params) (*Report, er
 
 func (s *Service) vendors(ctx context.Context, tx pgx.Tx, p Params) (*Report, error) {
 	r := newReport("vendors", p)
-	sc, args, err := s.scope(ctx, p, "w.property_id")
+	sc, args, err := s.scope(ctx, p, "w.property_id", "w.location_id")
 	if err != nil {
 		return nil, err
 	}
@@ -640,7 +712,17 @@ func (s *Service) inventory(ctx context.Context, tx pgx.Tx, p Params) (*Report, 
 	if err != nil {
 		return nil, err
 	}
-	low, err := summary(ctx, tx, `SELECT count(*)::float8 FROM inventory_items i WHERE i.is_active AND i.min_stock > 0 AND COALESCE((SELECT sum(quantity) FROM stock_levels sl WHERE sl.item_id = i.id), 0) <= i.min_stock`, []string{"low_stock_items"})
+	// B-06 (PRD P4): low stock mengikuti filter & scope property — stok dijumlahkan dari gudang dalam scope; dengan filter
+	// property hanya item yang disimpan di gudang property tersebut (item yang belum pernah distok hanya dihitung tanpa filter).
+	// Definisi sama dengan modul inventory: stok < minimum.
+	lowSC := swapAlias(sc, "st", "sloc")
+	stocked := `EXISTS (SELECT 1 FROM stock_levels lv JOIN stock_locations sloc ON sloc.id = lv.stock_location_id WHERE lv.item_id = i.id AND ` + lowSC + `)`
+	if p.PropertyID == nil {
+		stocked = `(` + stocked + ` OR NOT EXISTS (SELECT 1 FROM stock_levels lv WHERE lv.item_id = i.id))`
+	}
+	lowQty := `COALESCE((SELECT sum(lv.quantity) FROM stock_levels lv JOIN stock_locations sloc ON sloc.id = lv.stock_location_id WHERE lv.item_id = i.id AND ` + lowSC + `), 0)`
+	lowWhere := `i.is_active AND i.deleted_at IS NULL AND i.min_stock > 0 AND ` + lowQty + ` < i.min_stock AND ` + stocked + ` AND $1::timestamptz IS NOT NULL AND $2::timestamptz IS NOT NULL`
+	low, err := summary(ctx, tx, `SELECT count(*)::float8 FROM inventory_items i WHERE `+lowWhere, []string{"low_stock_items"}, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -658,8 +740,8 @@ func (s *Service) inventory(ctx context.Context, tx pgx.Tx, p Params) (*Report, 
 		FROM stock_transactions st JOIN inventory_items i ON i.id = st.item_id WHERE st.transaction_type = 'usage' AND st.performed_at >= $1 AND st.performed_at < $2 AND %s GROUP BY i.id, i.item_code, i.name ORDER BY -sum(st.quantity) DESC LIMIT 15`, sc), []string{"quantity", "cost", "transactions"}, args...); err != nil {
 		return nil, err
 	}
-	if r.Breakdowns["low_stock"], err = breakdown(ctx, tx, `SELECT i.id::text, i.item_code || ' ' || i.name, COALESCE((SELECT sum(quantity) FROM stock_levels sl WHERE sl.item_id = i.id), 0)::float8, i.min_stock::float8
-		FROM inventory_items i WHERE i.is_active AND i.min_stock > 0 AND COALESCE((SELECT sum(quantity) FROM stock_levels sl WHERE sl.item_id = i.id), 0) <= i.min_stock ORDER BY 3 LIMIT 20`, []string{"quantity", "min_stock"}); err != nil {
+	if r.Breakdowns["low_stock"], err = breakdown(ctx, tx, `SELECT i.id::text, i.item_code || ' ' || i.name, `+lowQty+`::float8, i.min_stock::float8
+		FROM inventory_items i WHERE `+lowWhere+` ORDER BY 3 LIMIT 20`, []string{"quantity", "min_stock"}, args...); err != nil {
 		return nil, err
 	}
 	return r, nil

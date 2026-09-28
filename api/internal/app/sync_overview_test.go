@@ -397,13 +397,13 @@ func TestOverview(t *testing.T) {
 		if len(a.AllowedActions) == 0 || a.AllowedActions[0] != "view" {
 			t.Fatalf("setiap item harus punya CTA (view minimal): %+v", a)
 		}
-		if a.Category == "overdue" && a.Label == wo.Number {
+		if a.Category == "overdue_work_order" && a.Label == wo.Number { // PRD P1 v2 §11: overdue dipecah task/WO
 			if a.Severity != "critical" || a.LocationPath == nil || !has(a.AllowedActions, "assign") {
 				t.Fatalf("overdue WO item: %+v", a)
 			}
 		}
 	}
-	if !cats["overdue"] || !cats["critical_incident"] {
+	if !cats["overdue_work_order"] || !cats["critical_incident"] {
 		t.Fatalf("Attention Required kategori: %v", cats)
 	}
 	if att.Data[0].Severity != "critical" {
@@ -445,6 +445,19 @@ func TestOverview(t *testing.T) {
 	}
 	if towerA == nil || towerB == nil || towerA.Overdue != 1 || towerB.Open != 1 {
 		t.Fatalf("Building State: %+v", bs.Data)
+	}
+	// Building Management Overview: sensus penghuni — bentuk respons & angka tidak negatif
+	var rs struct {
+		OccupantsActive    int            `json:"occupants_active"`
+		UnitsWithOccupants int            `json:"units_with_occupants"`
+		TenantsActive      int            `json:"tenants_active"`
+		AppUsers           map[string]int `json:"app_users"`
+		PendingValidation  int            `json:"pending_validation"`
+	}
+	st, body = e.do(pm, http.MethodGet, "/api/v1/overview/residents?property_id="+e.refs.PropertyID.String(), nil)
+	e.mustJSON(st, body, 200, &rs)
+	if rs.AppUsers == nil || rs.OccupantsActive < 0 || rs.UnitsWithOccupants < 0 || rs.TenantsActive < 0 || rs.PendingValidation < 0 {
+		t.Fatalf("Residents: %+v", rs)
 	}
 	var tr struct {
 		NewToday int                              `json:"new_today"`

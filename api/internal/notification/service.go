@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/buildingvision/api/internal/audit"
 	"github.com/buildingvision/api/internal/operations"
 	"github.com/buildingvision/api/internal/platform/apperr"
 	"github.com/buildingvision/api/internal/platform/authctx"
@@ -23,13 +24,14 @@ import (
 type Service struct {
 	DB        *db.DB
 	Jobs      jobs.Enqueuer
-	Pusher    Pusher
+	Pusher    Pusher    // FCM (APK Staff/Tenant); nil = tanpa push FCM (inbox tetap jalan)
+	WebPush   WebPusher // Web Push PWA (VAPID); nil = tanpa Web Push
 	PublicURL string
-}
-
-// Pusher: channel adapter push (FCM). Nil = tidak ada push (inbox tetap jalan).
-type Pusher interface {
-	Send(ctx context.Context, token string, notificationID uuid.UUID, deepLink, title, body string) error
+	// VAPIDPublicKey & FCMEnabled: dilaporkan ke klien lewat GET /push/config (PRD P3 v2.1 P3-PSH-01..02)
+	VAPIDPublicKey string
+	FCMEnabled     bool
+	// Channels: adapter channel eksternal selain in-app & push (PRD P0 v2 §14.3), mis. "email". Email di-hold (Roadmap §39.4).
+	Channels map[string]ChannelAdapter
 }
 
 func (s *Service) Name() string { return "notification" }
@@ -70,7 +72,7 @@ func (s *Service) Handle(ctx context.Context, ev events.Event) error {
 		for _, r := range rules {
 			recipients := s.resolve(ctx, tx, r.resolver, ev)
 			title, body, deepLink := title, body, deepLink
-			if r.resolver == "tenant_user" {
+			if tenantResolvers[r.resolver] {
 				// P1: penerima tenant → judul/status tenant-facing & deep link Tenant App (PRD §14, §20; guardrail #12)
 				if tTitle == "" {
 					tTitle, tBody, tLink = s.render(ctx, tx, ev, true)
@@ -90,9 +92,12 @@ func (s *Service) Handle(ctx context.Context, ev events.Event) error {
 						continue
 					}
 				}
-				var pref struct{ inapp, push bool }
+				var pref struct {
+					inapp, push bool
+					email       *bool
+				}
 				pref.inapp, pref.push = true, true
-				_ = tx.QueryRow(ctx, `SELECT inapp, push FROM notification_preferences WHERE user_id = $1 AND type = $2`, uid, r.ntype).Scan(&pref.inapp, &pref.push)
+				_ = tx.QueryRow(ctx, `SELECT inapp, push, email FROM notification_preferences WHERE user_id = $1 AND type = $2`, uid, r.ntype).Scan(&pref.inapp, &pref.push, &pref.email)
 				if !pref.inapp {
 					continue
 				}
@@ -104,6 +109,7 @@ func (s *Service) Handle(ctx context.Context, ev events.Event) error {
 				if pref.push && contains(r.channels, "push") && s.Jobs != nil {
 					_ = s.Jobs.EnqueueTx(ctx, tx, jobs.NotificationPushArgs{NotificationID: nid, OrganizationID: ev.OrganizationID})
 				}
+				s.enqueueChannels(ctx, tx, ev.OrganizationID, nid, r.channels, pref.email)
 			}
 		}
 		return nil
@@ -237,31 +243,67 @@ func (s *Service) resolve(ctx context.Context, tx pgx.Tx, resolver string, ev ev
 			add(id)
 		}
 	case "tenant_user":
-		// P1: pelapor Tenant App (users.id) — dari payload atau dari objek
-		if id := getUUID("tenant_user_id"); id != uuid.Nil {
-			add(id)
+		// P1: pelapor/pemilik object di Tenant App (users.id) — dari payload atau dari objek. Tagihan & pembayaran: seluruh
+		// tenant user yang melihat invoice tersebut (PRD P4 v2.1 B-10), ditambah pembayar bila ada.
+		payer := getUUID("tenant_user_id")
+		if payer != uuid.Nil && ev.ObjectType != "invoice" && ev.ObjectType != "payment" {
+			add(payer)
 		} else {
-			var tu *uuid.UUID
-			switch ev.ObjectType {
-			case "service_request":
-				_ = tx.QueryRow(ctx, `SELECT tenant_user_id FROM service_requests WHERE id = $1`, ev.ObjectID).Scan(&tu)
-			case "tenant_user":
-				_ = tx.QueryRow(ctx, `SELECT user_id FROM tenant_users WHERE id = $1`, ev.ObjectID).Scan(&tu)
-			case "booking":
-				_ = tx.QueryRow(ctx, `SELECT tenant_user_id FROM bookings WHERE id = $1`, ev.ObjectID).Scan(&tu)
-			case "visitor":
-				_ = tx.QueryRow(ctx, `SELECT tenant_user_id FROM visitors WHERE id = $1`, ev.ObjectID).Scan(&tu)
-			case "invoice":
-				_ = tx.QueryRow(ctx, `SELECT tu.user_id FROM invoices i JOIN tenant_users tu ON tu.tenant_id = i.tenant_id AND tu.status = 'active' WHERE i.id = $1 LIMIT 1`, ev.ObjectID).Scan(&tu)
-			case "payment":
-				_ = tx.QueryRow(ctx, `SELECT tu.user_id FROM payments pm JOIN invoices i ON i.id = pm.invoice_id JOIN tenant_users tu ON tu.tenant_id = i.tenant_id AND tu.status = 'active' WHERE pm.id = $1 LIMIT 1`, ev.ObjectID).Scan(&tu)
-			}
-			if tu != nil {
-				add(*tu)
+			add(payer)
+			for _, id := range s.tenantRecipients(ctx, tx, ev) {
+				add(id)
 			}
 		}
+	// PRD P1 v2 §49 Notifications Matrix: kolom "Manager" — pemegang role manajer (property/building/operations) pada property.
+	case "property_manager":
+		rows, err := tx.Query(ctx, `SELECT DISTINCT ur.user_id FROM user_roles ur JOIN roles r ON r.id = ur.role_id JOIN users u ON u.id = ur.user_id
+			WHERE r.code = ANY($1) AND u.is_active AND u.deleted_at IS NULL AND ($2::uuid IS NULL OR ur.property_id IS NULL OR ur.property_id = $2)`,
+			[]string{"property_manager", "building_manager", "operations_manager"}, ev.PropertyID)
+		if err == nil {
+			for rows.Next() {
+				var id uuid.UUID
+				if rows.Scan(&id) == nil {
+					add(id)
+				}
+			}
+			rows.Close()
+		}
+	// kolom "Worker": seluruh anggota team domain pada property (mis. Critical Incident → petugas security on duty)
+	case "property_domain_team":
+		if domain == "" {
+			domain = domainOfObject(ctx, tx, ev)
+		}
+		rows, err := tx.Query(ctx, `SELECT DISTINCT tm.user_id FROM team_members tm JOIN teams t ON t.id = tm.team_id
+			WHERE t.is_active AND t.domain = $2 AND ($1::uuid IS NULL OR t.property_id IS NULL OR t.property_id = $1)`, ev.PropertyID, domain)
+		if err == nil {
+			for rows.Next() {
+				var id uuid.UUID
+				if rows.Scan(&id) == nil {
+					add(id)
+				}
+			}
+			rows.Close()
+		}
+	// PRD P2 v2.1 P2-DTY-03 / P2-EMG-03: staf ON-DUTY (clock-in aktif) domain di property; fallback staf yang dijadwalkan
+	// pada shift yang sedang berjalan, lalu seluruh anggota team domain (perilaku lama property_domain_team).
+	case "property_domain_on_duty":
+		if domain == "" {
+			domain = domainOfObject(ctx, tx, ev)
+		}
+		for _, id := range s.onDutyUsers(ctx, tx, ev, domain) {
+			add(id)
+		}
+	// tujuan eskalasi eksplisit (POST /tasks|work-orders/{id}/escalate escalate_to_user_id)
+	case "escalate_to":
+		add(getUUID("escalate_to_user_id"))
 	case "tenant_property_users":
-		// P1: seluruh tenant user aktif pada property (announcement)
+		// P1: seluruh tenant user aktif pada property; pengumuman bertarget (PRD P3 v2.1 P3-ANN-02) hanya ke audiens target
+		if ev.ObjectType == "announcement" {
+			for _, id := range announcementAudience(ctx, tx, ev.ObjectID) {
+				add(id)
+			}
+			break
+		}
 		rows, err := tx.Query(ctx, `SELECT user_id FROM tenant_users WHERE status = 'active' AND ($1::uuid IS NULL OR property_id = $1)`, ev.PropertyID)
 		if err == nil {
 			for rows.Next() {
@@ -317,6 +359,33 @@ func (s *Service) domainSupervisors(ctx context.Context, tx pgx.Tx, ev events.Ev
 	return out
 }
 
+// onDutyUsers: penerima "on-duty" domain (P2-DTY-03) — attendance terbuka → roster shift berjalan → team domain.
+func (s *Service) onDutyUsers(ctx context.Context, tx pgx.Tx, ev events.Event, domain string) []uuid.UUID {
+	queries := []string{
+		`SELECT DISTINCT a.user_id FROM attendance_records a JOIN users u ON u.id = a.user_id WHERE a.clock_out_at IS NULL AND a.domain = $2 AND u.is_active AND ($1::uuid IS NULL OR a.property_id = $1)`,
+		`SELECT DISTINCT sa.user_id FROM shift_assignments sa JOIN users u ON u.id = sa.user_id WHERE sa.status = 'scheduled' AND sa.domain = $2 AND u.is_active AND now() BETWEEN sa.starts_at AND sa.ends_at AND ($1::uuid IS NULL OR sa.property_id = $1)`,
+		`SELECT DISTINCT tm.user_id FROM team_members tm JOIN teams t ON t.id = tm.team_id WHERE t.is_active AND t.domain = $2 AND ($1::uuid IS NULL OR t.property_id IS NULL OR t.property_id = $1)`,
+	}
+	for _, q := range queries {
+		var out []uuid.UUID
+		rows, err := tx.Query(ctx, q, ev.PropertyID, domain)
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var id uuid.UUID
+			if rows.Scan(&id) == nil {
+				out = append(out, id)
+			}
+		}
+		rows.Close()
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return nil
+}
+
 func domainOfObject(ctx context.Context, tx pgx.Tx, ev events.Event) string {
 	if d, ok := ev.Payload["domain"].(string); ok && d != "" {
 		return d
@@ -364,20 +433,21 @@ func domainOfObject(ctx context.Context, tx pgx.Tx, ev events.Event) string {
 	return ""
 }
 
-// tenantStatusLabel: status internal → label tenant-facing (PRD §14; TD-P1-008).
-var tenantStatusLabel = map[string]string{
-	"new": "Submitted", "acknowledged": "Received", "assigned": "Being Assigned", "in_progress": "In Progress",
-	"waiting_for_tenant": "Need Your Response", "resolved": "Resolved", "closed": "Closed", "cancelled": "Cancelled",
-}
-
 // render: Title (Naming Convention §52 [Object] + [Event]) / body (Context: business id — title, location) / deep link.
 // tenantFacing=true → istilah "Ticket", status tenant-facing, tanpa detail internal, deep link route Tenant App.
 func (s *Service) render(ctx context.Context, tx pgx.Tx, ev events.Event, tenantFacing bool) (title, body, deepLink string) {
 	if tenantFacing {
 		return s.renderTenant(ctx, tx, ev)
 	}
-	objectLabel := map[string]string{"task": "Task", "work_order": "Work Order", "service_request": "Service Request", "incident": "Incident", "finding": "Finding", "maintenance_schedule": "Maintenance", "export": "Export",
-		"tenant_user": "Tenant Account", "announcement": "Announcement", "booking": "Booking", "visitor": "Visitor", "invoice": "Invoice", "payment": "Payment", "hotel_reservation": "Reservation", "unit_rental_reservation": "Rental Reservation", "unit_sales_lead": "Sales Lead", "unit_sale_reservation": "Unit Reservation", "unit_listing": "Unit Listing", "unit_rental_listing": "Rental Listing"}[ev.ObjectType]
+	objectLabel := map[string]string{"system": "System", "task": "Task", "work_order": "Work Order", "service_request": "Service Request", "incident": "Incident", "finding": "Finding", "maintenance_schedule": "Maintenance", "export": "Export",
+		"tenant_user": "Tenant Account", "announcement": "Announcement", "booking": "Booking", "visitor": "Visitor", "invoice": "Invoice", "payment": "Payment", "hotel_reservation": "Reservation", "unit_rental_reservation": "Rental Reservation", "unit_sales_lead": "Sales Lead", "unit_sale_reservation": "Unit Reservation", "unit_listing": "Unit Listing", "unit_rental_listing": "Rental Listing",
+		// PRD P2 v2.1
+		"emergency_alert": "Emergency", "parking_violation": "Parking Violation", "lost_found_item": "Lost & Found", "shift_handover": "Shift Handover", "asset_document": "Equipment Document", "asset": "Asset", "cleaning_route_run": "Cleaning Route", "workforce": "Workforce", "attendance": "Attendance",
+		"inventory_item": "Inventory Item",
+		// PRD P3 v2.1 & P4 v2.1
+		"package": "Package", "parking_permit": "Parking Permit", "tenant_feedback": "Tenant Feedback", "recurring_issue": "Recurring Issue",
+		"billing_run": "Billing Run", "credit_note": "Credit Note", "meter_reading": "Meter Reading", "collection_log": "Collection", "budget": "Budget",
+		"bank_statement_import": "Bank Statement"}[ev.ObjectType]
 	if objectLabel == "" {
 		objectLabel = ev.ObjectType
 	}
@@ -387,6 +457,9 @@ func (s *Service) render(ctx context.Context, tx pgx.Tx, ev events.Event, tenant
 		"cancelled": "Cancelled", "due_soon": "Due Soon", "overdue": "Overdue", "sla_risk": "SLA Risk", "sla_breached": "SLA Breached",
 		"resolved": "Resolved", "escalated": "Escalated", "checkpoint_missed": "Checkpoint Missed", "due": "Due", "conflict": "Sync Conflict", "ready": "Ready",
 		"confirmed": "Confirmed", "activated": "Activated", "sold": "Sold", "handed_over": "Handed Over", "published": "Published", "status_changed": "Updated",
+		"critical": "Critical Alert", "submitted": "Submitted",
+		"raised": "Raised", "acknowledged": "Acknowledged", "responding": "Responding", "expiring": "Expiring Soon", "expired": "Expired", "health_changed": "Health Changed", "shortage": "Shortage",
+		"detected": "Detected", "received": "Received", "requested": "Requested", "flagged": "Flagged", "generated": "Generated", "issued": "Issued", "approved": "Approved", "pending_approval": "Pending Approval",
 	}[verb]
 	if eventLabel == "" {
 		eventLabel = strings.Title(strings.ReplaceAll(verb, "_", " "))
@@ -430,107 +503,32 @@ func (s *Service) render(ctx context.Context, tx pgx.Tx, ev events.Event, tenant
 	if r, ok := ev.Payload["reason"].(string); ok && r != "" {
 		body += "\n" + r
 	}
+	if lp, ok := ev.Payload["location_path"].(string); ok && lp != "" && locPath == "" {
+		body += "\n" + lp
+	}
 	route := map[string]string{"task": "/operations/tasks/", "work_order": "/operations/work-orders/", "service_request": "/operations/service-requests/", "incident": "/operations/incidents/", "finding": "/findings/", "maintenance_schedule": "/engineering/preventive-maintenance/", "export": "/exports/",
-		"tenant_user": "/tenant-relation/tenant-users/", "announcement": "/tenant-relation/announcements/", "booking": "/booking/bookings/", "visitor": "/security/visitors/", "invoice": "/billing/invoices/", "payment": "/billing/payments/", "hotel_reservation": "/commercial/hotel/reservations/", "unit_rental_reservation": "/commercial/rental/reservations/", "unit_sales_lead": "/commercial/sales/leads/", "unit_sale_reservation": "/commercial/sales/reservations/", "unit_listing": "/commercial/sales/listings/", "unit_rental_listing": "/commercial/rental/listings/"}[ev.ObjectType]
+		"tenant_user": "/tenant-relation/tenant-users/", "announcement": "/tenant-relation/announcements/", "booking": "/booking/bookings/", "visitor": "/security/visitors/", "invoice": "/billing/invoices/", "payment": "/billing/payments/", "hotel_reservation": "/commercial/hotel/reservations/", "unit_rental_reservation": "/commercial/rental/reservations/", "unit_sales_lead": "/commercial/sales/leads/", "unit_sale_reservation": "/commercial/sales/reservations/", "unit_listing": "/commercial/sales/listings/", "unit_rental_listing": "/commercial/rental/listings/",
+		"emergency_alert": "/security/emergency/", "parking_violation": "/security/parking/violations/", "lost_found_item": "/security/lost-found/", "asset": "/assets/",
+		"inventory_item": "/inventory?item=", "cleaning_route_run": "/housekeeping/routes?run=",
+		"package": "/security/packages/", "parking_permit": "/security/parking/permits/", "tenant_feedback": "/tenant-relation/feedback/general/", "recurring_issue": "/tenant-relation/recurring-issues/",
+		"billing_run": "/billing/runs/", "credit_note": "/billing/credit-notes/", "meter_reading": "/billing/meters/readings/", "budget": "/finance/budgets/", "collection_log": "/billing/collections?log=",
+		"bank_statement_import": "/billing/reconciliation/"}[ev.ObjectType]
 	if route != "" {
 		deepLink = route + ev.ObjectID.String()
 	}
+	// PRD P2 v2.1 §8: serah terima & kapasitas shift dibuka dari modul domainnya
+	if d, ok := ev.Payload["domain"].(string); ok && (d == "security" || d == "housekeeping") {
+		switch ev.ObjectType {
+		case "shift_handover":
+			deepLink = "/" + d + "/shifts?tab=handovers&id=" + ev.ObjectID.String()
+		case "attendance":
+			deepLink = "/" + d + "/shifts?tab=attendance"
+		case "workforce":
+			deepLink = "/" + d + "/shifts?tab=on-duty"
+		}
+	}
 	if m, ok := ev.Payload["message_preview"].(string); ok && m != "" {
 		body += "\n" + m
-	}
-	return
-}
-
-// renderTenant: notifikasi untuk Mobile Tenant (PRD §20). Tidak memuat catatan internal, cost, atau assignment terbatas.
-func (s *Service) renderTenant(ctx context.Context, tx pgx.Tx, ev events.Event) (title, body, deepLink string) {
-	verb := ev.Type[strings.LastIndex(ev.Type, ".")+1:]
-	label := ev.ObjectLabel
-	switch ev.ObjectType {
-	case "service_request":
-		var num, ttl string
-		_ = tx.QueryRow(ctx, `SELECT request_number, title FROM service_requests WHERE id = $1`, ev.ObjectID).Scan(&num, &ttl)
-		if num != "" {
-			label = num
-		}
-		to := ""
-		if v, ok := ev.Payload["to"]; ok && v != nil {
-			to = fmt.Sprint(v) // string atau workflow.Status (in-process)
-		}
-		switch verb {
-		case "created":
-			title = "Ticket Created"
-		case "message":
-			title = "New Message from Building Management"
-		case "auto_closed":
-			title = "Ticket Closed"
-		default:
-			if l := tenantStatusLabel[to]; l != "" {
-				title = "Ticket " + l
-			} else {
-				title = "Ticket Updated"
-			}
-		}
-		body = label
-		if ttl != "" {
-			body += " — " + ttl
-		}
-		if m, ok := ev.Payload["message_preview"].(string); ok && m != "" {
-			body += "\n" + m
-		}
-		deepLink = "/requests/" + ev.ObjectID.String()
-	case "tenant_user":
-		switch verb {
-		case "approved":
-			title, body = "Account Approved", "Akun Tenant App Anda telah divalidasi. Silakan masuk."
-		case "rejected":
-			title, body = "Account Rejected", "Pendaftaran akun tidak dapat disetujui."
-			if r, ok := ev.Payload["reason"].(string); ok && r != "" {
-				body += "\n" + r
-			}
-		case "suspended":
-			title, body = "Account Suspended", "Akun Anda ditangguhkan. Hubungi building management."
-		default:
-			title, body = "Account Updated", ""
-		}
-		deepLink = "/profile"
-	case "announcement":
-		title = "Announcement"
-		var ttl, excerpt string
-		_ = tx.QueryRow(ctx, `SELECT title, COALESCE(excerpt,'') FROM announcements WHERE id = $1`, ev.ObjectID).Scan(&ttl, &excerpt)
-		body = ttl
-		if excerpt != "" {
-			body += "\n" + excerpt
-		}
-		deepLink = "/inbox/announcements/" + ev.ObjectID.String()
-	case "booking":
-		title = "Booking " + strings.Title(strings.ReplaceAll(verb, "_", " "))
-		body = label
-		deepLink = "/facilities/bookings/" + ev.ObjectID.String()
-	case "visitor":
-		title = "Visitor " + strings.Title(strings.ReplaceAll(verb, "_", " "))
-		body = label
-		deepLink = "/visitors/" + ev.ObjectID.String()
-	case "invoice":
-		title = "Invoice " + strings.Title(strings.ReplaceAll(verb, "_", " "))
-		body = label
-		deepLink = "/bills/" + ev.ObjectID.String()
-	case "payment":
-		title = "Payment " + strings.Title(strings.ReplaceAll(verb, "_", " "))
-		body = label
-		deepLink = "/bills"
-	case "unit_rental_reservation":
-		switch verb {
-		case "activated":
-			title, body = "Welcome Home", "Sewa unit Anda aktif. Akun Tenant App Anda dapat digunakan untuk permintaan layanan, tagihan, dan informasi gedung."
-		case "completed":
-			title, body = "Rental Completed", "Masa sewa unit Anda telah berakhir. Terima kasih."
-		default:
-			title, body = "Rental "+strings.Title(strings.ReplaceAll(verb, "_", " ")), label
-		}
-		deepLink = "/home"
-	default:
-		title = strings.Title(strings.ReplaceAll(ev.ObjectType, "_", " ")) + " " + strings.Title(strings.ReplaceAll(verb, "_", " "))
-		body = label
 	}
 	return
 }
@@ -620,22 +618,60 @@ type Preference struct {
 	Type  string `json:"type"`
 	InApp bool   `json:"inapp"`
 	Push  bool   `json:"push"`
+	Email bool   `json:"email"` // PRD P0 v2 §14.3 (default mengikuti channel rule)
+	// EmailAvailable: rule tipe ini mendukung email
+	EmailAvailable bool `json:"email_available"`
+	// Category: pengelompokan untuk layar preferensi (Tenant App P3-ACC-09): request | billing | announcement | booking |
+	// visitor | package | parking | account | feedback | other
+	Category string `json:"category"`
+}
+
+// preferenceCategory: kelompok tipe notifikasi untuk UI preferensi.
+func preferenceCategory(ntype string) string {
+	switch {
+	case strings.HasPrefix(ntype, "ticket_") || strings.HasPrefix(ntype, "service_request"):
+		return "request"
+	case strings.HasPrefix(ntype, "invoice_") || strings.HasPrefix(ntype, "payment_") || strings.HasPrefix(ntype, "credit_note") ||
+		strings.HasPrefix(ntype, "billing_run") || strings.HasPrefix(ntype, "meter_reading") || strings.HasPrefix(ntype, "collection_"):
+		return "billing"
+	case strings.HasPrefix(ntype, "announcement"):
+		return "announcement"
+	case strings.HasPrefix(ntype, "booking_"):
+		return "booking"
+	case strings.HasPrefix(ntype, "visitor_"):
+		return "visitor"
+	case strings.HasPrefix(ntype, "package_"):
+		return "package"
+	case strings.HasPrefix(ntype, "parking_"):
+		return "parking"
+	case strings.HasPrefix(ntype, "tenant_account") || strings.HasPrefix(ntype, "rental_"):
+		return "account"
+	case strings.HasPrefix(ntype, "tenant_feedback"):
+		return "feedback"
+	}
+	return "other"
 }
 
 func (s *Service) ListPreferences(ctx context.Context) ([]Preference, error) {
 	p := authctx.Must(ctx)
 	var out []Preference
 	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT DISTINCT r.notification_type, COALESCE(np.inapp, true), COALESCE(np.push, true) FROM notification_rules r LEFT JOIN notification_preferences np ON np.type = r.notification_type AND np.user_id = $1 WHERE r.is_active ORDER BY 1`, p.UserID)
+		// akun tenant hanya melihat tipe notifikasi tenant-facing; staf tidak melihat tipe khusus tenant (PRD P3 v2.1 P3-ACC-09)
+		rows, err := tx.Query(ctx, `SELECT r.notification_type, bool_and(COALESCE(np.inapp, true)), bool_and(COALESCE(np.push, true)),
+			bool_or('email' = ANY(r.channels)), bool_and(COALESCE(np.email, 'email' = ANY(r.channels)))
+			FROM notification_rules r LEFT JOIN notification_preferences np ON np.type = r.notification_type AND np.user_id = $1
+			WHERE r.is_active AND ((r.recipient_resolver IN ('tenant_user','tenant_property_users')) = $2)
+			GROUP BY r.notification_type ORDER BY 1`, p.UserID, p.IsTenant)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var pr Preference
-			if err := rows.Scan(&pr.Type, &pr.InApp, &pr.Push); err != nil {
+			if err := rows.Scan(&pr.Type, &pr.InApp, &pr.Push, &pr.EmailAvailable, &pr.Email); err != nil {
 				return err
 			}
+			pr.Category = preferenceCategory(pr.Type)
 			out = append(out, pr)
 		}
 		return rows.Err()
@@ -646,60 +682,31 @@ func (s *Service) ListPreferences(ctx context.Context) ([]Preference, error) {
 	return out, err
 }
 
-func (s *Service) SetPreference(ctx context.Context, pr Preference) error {
-	p := authctx.Must(ctx)
-	return s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `INSERT INTO notification_preferences (user_id, type, inapp, push) VALUES ($1,$2,$3,$4) ON CONFLICT (user_id, type) DO UPDATE SET inapp = EXCLUDED.inapp, push = EXCLUDED.push`, p.UserID, pr.Type, pr.InApp, pr.Push)
-		return err
-	})
+// PreferenceInput: kanal yang tidak dikirim tidak berubah (nilai lama / default rule).
+type PreferenceInput struct {
+	Type  string `json:"type"`
+	InApp *bool  `json:"inapp"`
+	Push  *bool  `json:"push"`
+	Email *bool  `json:"email"`
 }
 
-// SendPush (worker): payload hanya notification_id + deep_link (TAD §5.14); token invalid → hapus device.
-func (s *Service) SendPush(ctx context.Context, orgID, notificationID uuid.UUID) error {
-	if s.Pusher == nil {
-		return nil
+func (s *Service) SetPreference(ctx context.Context, pr PreferenceInput) error {
+	p := authctx.Must(ctx)
+	if strings.TrimSpace(pr.Type) == "" {
+		return apperr.Validation("type wajib").WithField("type", "wajib")
 	}
-	return s.DB.WithOrgTx(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
-		var userID uuid.UUID
-		var title, body string
-		var deepLink *string
-		if err := tx.QueryRow(ctx, `SELECT user_id, title, body, deep_link FROM notifications WHERE id = $1`, notificationID).Scan(&userID, &title, &body, &deepLink); err != nil {
-			return nil
-		}
-		rows, err := tx.Query(ctx, `SELECT id, token FROM device_tokens WHERE user_id = $1`, userID)
+	return s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO notification_preferences (user_id, type, inapp, push, email)
+			VALUES ($1, $2, COALESCE($3::boolean, true), COALESCE($4::boolean, true),
+				COALESCE($5::boolean, (SELECT bool_or('email' = ANY(channels)) FROM notification_rules WHERE notification_type = $2), false))
+			ON CONFLICT (user_id, type) DO UPDATE SET inapp = COALESCE($3::boolean, notification_preferences.inapp),
+				push = COALESCE($4::boolean, notification_preferences.push), email = COALESCE($5::boolean, notification_preferences.email)`,
+			p.UserID, pr.Type, pr.InApp, pr.Push, pr.Email)
 		if err != nil {
 			return err
 		}
-		type dt struct {
-			id    uuid.UUID
-			token string
-		}
-		var tokens []dt
-		for rows.Next() {
-			var d dt
-			if rows.Scan(&d.id, &d.token) == nil {
-				tokens = append(tokens, d)
-			}
-		}
-		rows.Close()
-		var lastErr error
-		delivered := false
-		for _, d := range tokens {
-			if err := s.Pusher.Send(ctx, d.token, notificationID, derefStr(deepLink), title, body); err != nil {
-				lastErr = err
-				if IsInvalidToken(err) {
-					_, _ = tx.Exec(ctx, `DELETE FROM device_tokens WHERE id = $1`, d.id)
-				}
-				continue
-			}
-			delivered = true
-		}
-		if delivered {
-			_, _ = tx.Exec(ctx, `UPDATE notifications SET delivered_push_at = now() WHERE id = $1`, notificationID)
-		} else if lastErr != nil {
-			_, _ = tx.Exec(ctx, `UPDATE notifications SET push_error = $2 WHERE id = $1`, notificationID, lastErr.Error())
-		}
-		return nil
+		// PRD P0 v2 §16: perubahan konfigurasi tercatat di audit trail
+		return audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditConfigChange, EntityType: "notification_preference", EntityID: &p.UserID, EntityLabel: pr.Type, After: pr})
 	})
 }
 

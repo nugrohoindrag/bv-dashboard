@@ -40,6 +40,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.With(req("security.patrol.view")).Get("/patrol-tasks/{id}/scans", h.listScans)
 	r.With(h.IAM.RequireAny("security.patrol.start", "security.patrol.manage")).Post("/patrol-tasks/{id}/scans", h.scan)
 	r.With(h.IAM.RequireAny("security.patrol.start", "security.patrol.manage")).Post("/patrol-tasks/{id}/checkpoints/{cpId}/missed", h.missed)
+	h.mountP2(r)
 }
 
 func (h *Handler) listCheckpoints(w http.ResponseWriter, r *http.Request) {
@@ -198,6 +199,7 @@ func (h *Handler) updateSchedule(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	in.IfVersion = httpx.IfMatchVersion(r)
 	sc, err := h.Svc.UpdateSchedule(r.Context(), id, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)

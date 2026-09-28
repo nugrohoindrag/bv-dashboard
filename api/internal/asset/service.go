@@ -163,6 +163,13 @@ type Asset struct {
 	OpenWorkOrders    int            `json:"open_work_orders"`
 	NextPMDue         *time.Time     `json:"next_pm_due"`
 	LastMaintenanceAt *time.Time     `json:"last_maintenance_at"`
+	// PRD P2 v2.1 §5.6: equipment health & dokumen
+	HealthScore       *int           `json:"health_score"`
+	HealthStatus      string         `json:"health_status"` // healthy | warning | critical | offline | unknown
+	HealthFactors     []HealthFactor `json:"health_factors"`
+	HealthUpdatedAt   *time.Time     `json:"health_updated_at"`
+	DocumentCount     int            `json:"document_count"`
+	ExpiringDocuments int            `json:"expiring_documents"` // kedaluwarsa / ≤ 30 hari
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
 	Version           int            `json:"version"`
@@ -307,7 +314,7 @@ func (s *Service) UpdateAsset(ctx context.Context, id uuid.UUID, in AssetInput, 
 		if err != nil {
 			return err
 		}
-		if !p.HasOnProperty("engineering.assets.update", before.PropertyID) {
+		if !p.HasOnPropertyAt("engineering.assets.update", before.PropertyID, db.LocationPathFn(ctx, tx, &before.LocationID)) {
 			return apperr.Forbidden("")
 		}
 		if ifVersion != nil && *ifVersion != before.Version {
@@ -372,18 +379,25 @@ func nullBytes(b []byte) any {
 
 const assetSelect = `SELECT a.id, a.property_id, a.asset_code, a.name, a.equipment_id, e.category_code, e.category_name, e.type_name, a.location_id, l.name,
 	a.status, a.criticality, a.manufacturer, a.model, a.serial_number, a.installed_at, a.warranty_until, a.specifications, a.notes, a.qr_code, a.created_at, a.updated_at, a.version,
-	(SELECT count(*) FROM work_orders w WHERE w.asset_id = a.id AND w.status NOT IN ('closed','cancelled')),
+	(SELECT count(*) FROM work_orders w WHERE w.asset_id = a.id AND w.status NOT IN ('closed','cancelled','draft')),
 	(SELECT min(ms.due_at) FROM maintenance_schedules ms WHERE ms.asset_id = a.id AND ms.status IN ('scheduled','due','overdue')),
-	(SELECT max(w.closed_at) FROM work_orders w WHERE w.asset_id = a.id AND w.work_order_type = 'maintenance' AND w.status = 'closed')
+	(SELECT max(w.closed_at) FROM work_orders w WHERE w.asset_id = a.id AND w.work_order_type = 'maintenance' AND w.status = 'closed'),
+	a.health_score, a.health_status, a.health_factors, a.health_updated_at,
+	(SELECT count(*) FROM asset_documents d WHERE d.asset_id = a.id AND d.is_active),
+	(SELECT count(*) FROM asset_documents d WHERE d.asset_id = a.id AND d.is_active AND d.expires_on <= CURRENT_DATE + 30)
 	FROM assets a JOIN equipment e ON e.id = a.equipment_id JOIN locations l ON l.id = a.location_id`
 
 func scanAsset(row pgx.Row) (*Asset, error) {
 	var a Asset
-	var spec []byte
+	var spec, hf []byte
 	if err := row.Scan(&a.ID, &a.PropertyID, &a.AssetCode, &a.Name, &a.EquipmentID, &a.CategoryCode, &a.CategoryName, &a.TypeName, &a.LocationID, &a.LocationName,
 		&a.Status, &a.Criticality, &a.Manufacturer, &a.Model, &a.SerialNumber, &a.InstalledAt, &a.WarrantyUntil, &spec, &a.Notes, &a.QRCode, &a.CreatedAt, &a.UpdatedAt, &a.Version,
-		&a.OpenWorkOrders, &a.NextPMDue, &a.LastMaintenanceAt); err != nil {
+		&a.OpenWorkOrders, &a.NextPMDue, &a.LastMaintenanceAt, &a.HealthScore, &a.HealthStatus, &hf, &a.HealthUpdatedAt, &a.DocumentCount, &a.ExpiringDocuments); err != nil {
 		return nil, err
+	}
+	_ = json.Unmarshal(hf, &a.HealthFactors)
+	if a.HealthFactors == nil {
+		a.HealthFactors = []HealthFactor{}
 	}
 	_ = json.Unmarshal(spec, &a.Specifications)
 	if a.Specifications == nil {
@@ -415,7 +429,7 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (*Asset, error) {
 		if err != nil {
 			return err
 		}
-		if !authctx.Must(ctx).HasOnProperty("engineering.assets.view", a.PropertyID) {
+		if !canViewAsset(ctx, tx, a) {
 			return apperr.Forbidden("")
 		}
 		out = a
@@ -432,6 +446,9 @@ type Filter struct {
 	Statuses     []string
 	Criticality  []string
 	Q            string
+	// PRD P2 v2.1 P2-EQH-04: filter health & at-risk (warning + critical)
+	HealthStatuses []string
+	AtRisk         bool
 }
 
 func (s *Service) List(ctx context.Context, f Filter, page httpx.Page) ([]Asset, *string, error) {
@@ -443,10 +460,16 @@ func (s *Service) List(ctx context.Context, f Filter, page httpx.Page) ([]Asset,
 		add := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
 		where := " WHERE a.deleted_at IS NULL"
 		if f.PropertyID != nil {
+			// PRD P0 v2 §24.1: property_id eksplisit tetap wajib dalam scope user
+			if !p.HasAnyOnProperty("engineering.assets.view", *f.PropertyID) {
+				return apperr.Forbidden("")
+			}
 			where += " AND a.property_id = " + add(*f.PropertyID)
-		} else if pids, all := p.PropertyIDsFor("engineering.assets.view"); !all {
-			where += " AND a.property_id = ANY(" + add(pids) + "::uuid[])"
 		}
+		if p.VendorID != nil && !p.IsSystem {
+			where += " AND FALSE"
+		}
+		where += " AND " + p.ScopeSQL("engineering.assets.view", "a.property_id", "(SELECT sl.path FROM locations sl WHERE sl.id = a.location_id)", add)
 		if f.LocationID != nil {
 			where += " AND a.location_id IN (SELECT d.id FROM locations d JOIN locations r ON d.path <@ r.path WHERE r.id = " + add(*f.LocationID) + ")"
 		}
@@ -461,6 +484,12 @@ func (s *Service) List(ctx context.Context, f Filter, page httpx.Page) ([]Asset,
 		}
 		if len(f.Criticality) > 0 {
 			where += " AND a.criticality = ANY(" + add(f.Criticality) + ")"
+		}
+		if len(f.HealthStatuses) > 0 {
+			where += " AND a.health_status = ANY(" + add(f.HealthStatuses) + ")"
+		}
+		if f.AtRisk {
+			where += " AND a.health_status IN ('warning','critical')"
 		}
 		if f.Q != "" {
 			q := add("%" + f.Q + "%")
@@ -524,7 +553,7 @@ func (s *Service) History(ctx context.Context, id uuid.UUID, limit int) ([]Histo
 		if err != nil {
 			return err
 		}
-		if !authctx.Must(ctx).HasOnProperty("engineering.assets.view", a.PropertyID) {
+		if !canViewAsset(ctx, tx, a) {
 			return apperr.Forbidden("")
 		}
 		rows, err := tx.Query(ctx, `
@@ -659,4 +688,13 @@ func (s *Service) RotateQR(ctx context.Context, objectType string, objectID uuid
 		return audit.Log(ctx, tx, audit.AuditEntry{Action: "qr_rotated", EntityType: objectType, EntityID: &objectID})
 	})
 	return newCode, err
+}
+
+// canViewAsset: scope property/building (PRD P0 v2 §8.4); akun vendor tidak melihat register asset.
+func canViewAsset(ctx context.Context, tx pgx.Tx, a *Asset) bool {
+	p := authctx.Must(ctx)
+	if p.VendorID != nil && !p.IsSystem {
+		return false
+	}
+	return p.HasOnPropertyAt("engineering.assets.view", a.PropertyID, db.LocationPathFn(ctx, tx, &a.LocationID))
 }

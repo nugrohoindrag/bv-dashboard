@@ -27,12 +27,15 @@ import (
 	"github.com/buildingvision/api/internal/bvrooms"
 	"github.com/buildingvision/api/internal/commercial"
 	"github.com/buildingvision/api/internal/engineering"
+	"github.com/buildingvision/api/internal/finance"
 	"github.com/buildingvision/api/internal/hotel"
 	"github.com/buildingvision/api/internal/housekeeping"
 	"github.com/buildingvision/api/internal/iam"
 	"github.com/buildingvision/api/internal/inventory"
+	"github.com/buildingvision/api/internal/metering"
 	"github.com/buildingvision/api/internal/notification"
 	"github.com/buildingvision/api/internal/operations"
+	"github.com/buildingvision/api/internal/parcels"
 	"github.com/buildingvision/api/internal/platform/apperr"
 	"github.com/buildingvision/api/internal/platform/authctx"
 	"github.com/buildingvision/api/internal/platform/db"
@@ -49,12 +52,13 @@ import (
 	"github.com/buildingvision/api/internal/tenantservice"
 	"github.com/buildingvision/api/internal/vendor"
 	"github.com/buildingvision/api/internal/visitor"
+	"github.com/buildingvision/api/internal/workforce"
 )
 
 const (
 	OrgSlug     = "demo"
 	OrgName     = "BuildingVision Demo"
-	SeedVersion = "1.1"
+	SeedVersion = "1.2" // 1.2: data PRD P2 v2.1 (shift, emergency, parkir, lost & found, kompetensi, dokumen, route, consumable)
 	// Password seluruh akun demo (dev/demo saja; didokumentasikan di docs/demo/BuildingVision-Demo-Guide.md).
 	Password   = "Demo12345!"
 	AdminEmail = "admin.demo@buildingvision.local"
@@ -104,9 +108,13 @@ type Service struct {
 	Billing      *billing.Service
 	Vendor       *vendor.Service
 	Inventory    *inventory.Service
+	Workforce    *workforce.Service // PRD P2 v2.1: shift, roster, kompetensi
 	Hotel        *hotel.Service
 	Commercial   *commercial.Service
 	BVRooms      *bvrooms.Service
+	Parcels      *parcels.Service  // PRD P3 v2.1: paket
+	Metering     *metering.Service // PRD P4 v2.1: meter & pembacaan
+	Finance      *finance.Service  // PRD P4 v2.1: budget, biaya
 }
 
 // New merakit service domain dengan enqueuer sinkron: event domain dikirim ke Notification & Search segera setelah
@@ -138,10 +146,15 @@ func New(d Deps) *Service {
 	s.Billing = billing.New(d.DB, j, s.Profile, d.PublicURL)
 	s.Vendor = vendor.New(d.DB, j)
 	s.Inventory = inventory.New(d.DB, j)
+	s.Workforce = workforce.New(d.DB, j)
 	s.Hotel = hotel.New(d.DB, j, s.Profile, s.Property, s.HK, s.Billing, s.TR, s.Ops)
 	s.Commercial = commercial.New(d.DB, j, s.Profile, s.Property, s.Billing, s.TR)
 	s.BVRooms = bvrooms.New(d.DB, j, d.Storage, s.Hotel, s.Profile, d.Signer, d.Log, bvrooms.Config{Env: d.Env, PublicURL: d.PublicURL})
 	s.BVRooms.SetIPRateLimit(0)
+	s.Parcels = parcels.New(d.DB, j, s.Attachments)
+	s.Metering = metering.New(d.DB, j, s.Attachments)
+	s.Billing.Metering = s.Metering
+	s.Finance = finance.New(d.DB, j, s.Attachments)
 	s.subscribers = []events.Subscriber{s.Notification, s.Search}
 	return s
 }

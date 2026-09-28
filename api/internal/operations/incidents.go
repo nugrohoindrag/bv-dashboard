@@ -24,37 +24,62 @@ import (
 
 var IncidentCategories = []string{"unauthorized_access", "suspicious_activity", "property_damage", "lost_property", "fire_smoke", "emergency", "safety", "other"}
 
+// IncidentTypes (CHECK incidents.incident_type): security | safety | building.
+var IncidentTypes = map[string]bool{"security": true, "safety": true, "building": true}
+
+// IncidentTypeForCategory: tipe default dari kategori (dipakai bila klien hanya mengirim kategori).
+func IncidentTypeForCategory(category string) string {
+	switch category {
+	case "fire_smoke", "fire", "emergency", "safety", "medical":
+		return "safety"
+	case "property_damage", "building":
+		return "building"
+	}
+	return "security"
+}
+
 type Incident struct {
-	ID              uuid.UUID       `json:"id"`
-	PropertyID      uuid.UUID       `json:"property_id"`
-	IncidentNumber  string          `json:"incident_number"`
-	IncidentType    string          `json:"incident_type"`
-	Category        string          `json:"category"`
-	Title           string          `json:"title"`
-	Description     *string         `json:"description"`
-	Location        LocationRef     `json:"location"`
-	Severity        string          `json:"severity"`
-	Priority        string          `json:"priority"`
-	Status          workflow.Status `json:"status"`
-	ReportedBy      *uuid.UUID      `json:"reported_by"`
-	ReportedByName  *string         `json:"reported_by_name"`
-	ReportedAt      time.Time       `json:"reported_at"`
-	OccurredAt      *time.Time      `json:"occurred_at"`
-	Assignee        AssigneeRef     `json:"assignee"`
-	Resolution      *string         `json:"resolution"`
-	ResolvedAt      *time.Time      `json:"resolved_at"`
-	ClosedAt        *time.Time      `json:"closed_at"`
-	SLARiskAt       *time.Time      `json:"sla_risk_at"`
-	SLABreachedAt   *time.Time      `json:"sla_breached_at"`
-	SourceType      *string         `json:"source_type"`
-	SourceID        *uuid.UUID      `json:"source_id"`
-	Links           []ObjectLink    `json:"links"`
-	AttachmentCount int             `json:"attachment_count"`
-	CommentCount    int             `json:"comment_count"`
-	AllowedActions  []string        `json:"allowed_actions"`
-	Flags           []string        `json:"flags"`
-	CreatedAt       time.Time       `json:"created_at"`
-	Version         int             `json:"version"`
+	ID             uuid.UUID       `json:"id"`
+	PropertyID     uuid.UUID       `json:"property_id"`
+	IncidentNumber string          `json:"incident_number"`
+	IncidentType   string          `json:"incident_type"`
+	Category       string          `json:"category"`
+	Title          string          `json:"title"`
+	Description    *string         `json:"description"`
+	Location       LocationRef     `json:"location"`
+	Severity       string          `json:"severity"`
+	Priority       string          `json:"priority"`
+	Status         workflow.Status `json:"status"`
+	ReportedBy     *uuid.UUID      `json:"reported_by"`
+	ReportedByName *string         `json:"reported_by_name"`
+	ReportedAt     time.Time       `json:"reported_at"`
+	OccurredAt     *time.Time      `json:"occurred_at"`
+	Assignee       AssigneeRef     `json:"assignee"`
+	Resolution     *string         `json:"resolution"`
+	ActionTaken    *string         `json:"action_taken"` // PRD P1 v2 §33
+	SLAStatus      string          `json:"sla_status"`   // on_track | at_risk | breached | completed
+	SLA            *SLAInfo        `json:"sla,omitempty"`
+	ResolvedAt     *time.Time      `json:"resolved_at"`
+	ClosedAt       *time.Time      `json:"closed_at"`
+	SLARiskAt      *time.Time      `json:"sla_risk_at"`
+	SLABreachedAt  *time.Time      `json:"sla_breached_at"`
+	SourceType     *string         `json:"source_type"`
+	SourceID       *uuid.UUID      `json:"source_id"`
+	// PRD P1 v2.1 P1-XMW-01: SR asal rantai (bila incident lahir dari pekerjaan permintaan tenant)
+	OriginServiceRequestID *uuid.UUID `json:"origin_service_request_id"`
+	// PRD P2 v2.1 §6.3: eskalasi, investigasi, people involved, video evidence
+	EscalatedAt     *time.Time             `json:"escalated_at"`
+	EscalationLevel int                    `json:"escalation_level"`
+	Investigation   *IncidentInvestigation `json:"investigation,omitempty"`
+	PeopleCount     int                    `json:"people_count"`
+	VideoCount      int                    `json:"video_count"`
+	Links           []ObjectLink           `json:"links"`
+	AttachmentCount int                    `json:"attachment_count"`
+	CommentCount    int                    `json:"comment_count"`
+	AllowedActions  []string               `json:"allowed_actions"`
+	Flags           []string               `json:"flags"`
+	CreatedAt       time.Time              `json:"created_at"`
+	Version         int                    `json:"version"`
 }
 
 type CreateIncidentInput struct {
@@ -71,8 +96,11 @@ type CreateIncidentInput struct {
 	AssigneeTeamID   *uuid.UUID `json:"assignee_team_id"`
 	SourceType       *string    `json:"source_type"`
 	SourceID         *uuid.UUID `json:"source_id"`
+	ActionTaken      *string    `json:"action_taken"`
 	ClientRecordedAt *time.Time `json:"client_recorded_at"`
 	FromSync         bool       `json:"-"`
+	// SuppressCritical: incident otomatis dari Emergency Alert — notifikasi kritis sudah dikirim lewat emergency_alert.raised
+	SuppressCritical bool `json:"-"`
 }
 
 type UpdateIncidentInput struct {
@@ -83,6 +111,14 @@ type UpdateIncidentInput struct {
 	Severity    *string    `json:"severity"`
 	Priority    *string    `json:"priority"`
 	OccurredAt  *time.Time `json:"occurred_at"`
+	ActionTaken *string    `json:"action_taken"` // tindakan yang sudah diambil (PRD P1 v2 §33)
+	// PRD P2 v2.1 P2-SIN-06: investigasi
+	InvestigationStatus   *string    `json:"investigation_status"`
+	InvestigatorUserID    *uuid.UUID `json:"investigator_user_id"`
+	InvestigationFindings *string    `json:"investigation_findings"`
+	RootCause             *string    `json:"root_cause"`
+	CorrectiveAction      *string    `json:"corrective_action"`
+	CorrectiveOwnerUserID *uuid.UUID `json:"corrective_owner_user_id"`
 }
 
 func (s *Service) CreateIncident(ctx context.Context, in CreateIncidentInput) (*Incident, error) {
@@ -104,11 +140,18 @@ func (s *Service) CreateIncidentTx(ctx context.Context, tx pgx.Tx, in CreateInci
 	if in.Title == "" {
 		return uuid.Nil, apperr.Validation("title wajib")
 	}
-	if in.IncidentType == "" {
-		in.IncidentType = "security"
-	}
 	if in.Category == "" {
 		in.Category = "other"
+	}
+	if in.IncidentType == "" {
+		in.IncidentType = IncidentTypeForCategory(in.Category)
+	}
+	// PRD P1 v2.1 GAP-P1-09: tipe incident divalidasi (sebelumnya nilai kategori lolos ke CHECK DB → error insert 500)
+	if !IncidentTypes[in.IncidentType] {
+		return uuid.Nil, apperr.Validation("incident_type harus security|safety|building (kategori dikirim di field category)").WithField("incident_type", "tidak valid")
+	}
+	if len(in.Category) > 60 {
+		return uuid.Nil, apperr.Validation("category maksimal 60 karakter").WithField("category", "terlalu panjang")
 	}
 	if in.Severity == "" {
 		in.Severity = "medium"
@@ -142,10 +185,13 @@ func (s *Service) CreateIncidentTx(ctx context.Context, tx pgx.Tx, in CreateInci
 		status = workflow.Assigned
 	}
 	var id uuid.UUID
-	err = tx.QueryRow(ctx, `INSERT INTO incidents (organization_id, property_id, incident_number, incident_type, category, title, description, location_id, severity, priority, status, reported_by, occurred_at, assignee_user_id, assignee_team_id, source_type, source_id, created_by, updated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$12,$12) RETURNING id`,
-		p.OrganizationID, propertyID, number, in.IncidentType, in.Category, in.Title, in.Description, in.LocationID, in.Severity, in.Priority, status, actorOrNil(p), in.OccurredAt, in.AssigneeUserID, in.AssigneeTeamID, in.SourceType, in.SourceID).Scan(&id)
+	err = tx.QueryRow(ctx, `INSERT INTO incidents (organization_id, property_id, incident_number, incident_type, category, title, description, location_id, severity, priority, status, reported_by, occurred_at, assignee_user_id, assignee_team_id, source_type, source_id, created_by, updated_by, action_taken)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$12,$12,$18) RETURNING id`,
+		p.OrganizationID, propertyID, number, in.IncidentType, in.Category, in.Title, in.Description, in.LocationID, in.Severity, in.Priority, status, actorOrNil(p), in.OccurredAt, in.AssigneeUserID, in.AssigneeTeamID, in.SourceType, in.SourceID, in.ActionTaken).Scan(&id)
 	if err != nil {
+		return uuid.Nil, err
+	}
+	if err := setOriginTx(ctx, tx, ObjIncident, id, in.SourceType, in.SourceID); err != nil {
 		return uuid.Nil, err
 	}
 	if in.AssigneeUserID != nil || in.AssigneeTeamID != nil {
@@ -172,6 +218,11 @@ func (s *Service) CreateIncidentTx(ctx context.Context, tx pgx.Tx, in CreateInci
 			_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: events.IncidentAssigned, OrganizationID: p.OrganizationID, PropertyID: &propertyID, ObjectType: ObjIncident, ObjectID: id, ObjectLabel: number, ActorUserID: actorOrNil(p),
 				Payload: map[string]any{"assignee_user_id": in.AssigneeUserID, "assignee_team_id": in.AssigneeTeamID}})
 		}
+		if in.Severity == "critical" && !in.SuppressCritical {
+			// PRD P1 v2 §35/§49: Critical Incident → manager, supervisor, worker (team security)
+			_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: events.IncidentCritical, OrganizationID: p.OrganizationID, PropertyID: &propertyID, ObjectType: ObjIncident, ObjectID: id, ObjectLabel: number, ActorUserID: actorOrNil(p),
+				Payload: map[string]any{"severity": in.Severity, "category": in.Category, "assignee_user_id": in.AssigneeUserID, "assignee_team_id": in.AssigneeTeamID, "domain": "security"}})
+		}
 		_ = s.Jobs.EnqueueTx(ctx, tx, searchIndexArgs(p.OrganizationID, ObjIncident, id))
 	}
 	return id, nil
@@ -181,13 +232,13 @@ func (s *Service) getIncidentTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*
 	var i Incident
 	err := tx.QueryRow(ctx, `SELECT i.id, i.property_id, i.incident_number, i.incident_type, i.category, i.title, i.description, i.location_id, l.name, i.severity, i.priority, i.status,
 		i.reported_by, u.full_name, i.reported_at, i.occurred_at, i.assignee_user_id, au.full_name, i.assignee_team_id, t.name, i.resolution, i.resolved_at, i.closed_at, i.sla_risk_at, i.sla_breached_at,
-		i.source_type, i.source_id, i.created_at, i.version,
+		i.source_type, i.source_id, i.created_at, i.version, i.action_taken, i.origin_service_request_id,
 		(SELECT count(*) FROM attachments x WHERE x.object_type = 'incident' AND x.object_id = i.id AND x.deleted_at IS NULL),
 		(SELECT count(*) FROM comments c WHERE c.object_type = 'incident' AND c.object_id = i.id AND c.deleted_at IS NULL)
 		FROM incidents i LEFT JOIN locations l ON l.id = i.location_id LEFT JOIN users u ON u.id = i.reported_by LEFT JOIN users au ON au.id = i.assignee_user_id LEFT JOIN teams t ON t.id = i.assignee_team_id WHERE i.id = $1`, id).
 		Scan(&i.ID, &i.PropertyID, &i.IncidentNumber, &i.IncidentType, &i.Category, &i.Title, &i.Description, &i.Location.ID, &i.Location.Name, &i.Severity, &i.Priority, &i.Status,
 			&i.ReportedBy, &i.ReportedByName, &i.ReportedAt, &i.OccurredAt, &i.Assignee.UserID, &i.Assignee.UserName, &i.Assignee.TeamID, &i.Assignee.TeamName, &i.Resolution, &i.ResolvedAt, &i.ClosedAt, &i.SLARiskAt, &i.SLABreachedAt,
-			&i.SourceType, &i.SourceID, &i.CreatedAt, &i.Version, &i.AttachmentCount, &i.CommentCount)
+			&i.SourceType, &i.SourceID, &i.CreatedAt, &i.Version, &i.ActionTaken, &i.OriginServiceRequestID, &i.AttachmentCount, &i.CommentCount)
 	if err != nil {
 		if db.IsNoRows(err) {
 			return nil, apperr.NotFound("Incident")
@@ -205,6 +256,29 @@ func (s *Service) getIncidentTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*
 	} else if i.SLARiskAt != nil {
 		i.Flags = append(i.Flags, "sla_risk")
 	}
+	if i.Severity == "critical" && !isDoneStatus(string(i.Status)) {
+		i.Flags = append(i.Flags, "critical")
+	}
+	var sla SLAInfo
+	var started time.Time
+	if err := tx.QueryRow(ctx, `SELECT policy_id, response_due_at, resolution_due_at, responded_at, resolved_at, sla_risk_at, sla_breached_at, escalated_at, started_at, response_breached_at FROM sla_tracking WHERE object_type = 'incident' AND object_id = $1`, id).
+		Scan(&sla.PolicyID, &sla.ResponseDueAt, &sla.ResolutionDueAt, &sla.RespondedAt, &sla.ResolvedAt, &sla.RiskAt, &sla.BreachedAt, &sla.EscalatedAt, &started, &sla.ResponseBreachedAt); err == nil {
+		if sla.ResolutionDueAt != nil {
+			ref := time.Now()
+			if sla.ResolvedAt != nil {
+				ref = *sla.ResolvedAt
+			}
+			if total := sla.ResolutionDueAt.Sub(started); total > 0 {
+				pct := int(ref.Sub(started) * 100 / total)
+				sla.ElapsedPct = &pct
+			}
+			rem := int(sla.ResolutionDueAt.Sub(ref).Minutes())
+			sla.RemainingMinutes = &rem
+		}
+		FillSLAStatus(&sla, string(i.Status))
+		i.SLA = &sla
+	}
+	i.SLAStatus = DeriveSLAStatus(string(i.Status), i.SLARiskAt, i.SLABreachedAt, i.SLA != nil)
 	p := authctx.Must(ctx)
 	i.AllowedActions = []string{"view"}
 	isAssignee := (i.Assignee.UserID != nil && *i.Assignee.UserID == p.UserID) || (i.Assignee.TeamID != nil && p.IsMemberOfTeam(*i.Assignee.TeamID))
@@ -229,6 +303,7 @@ func (s *Service) getIncidentTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*
 	if p.HasOnProperty("operations.attachments.create", i.PropertyID) {
 		i.AllowedActions = append(i.AllowedActions, "attach")
 	}
+	s.loadIncidentExtTx(ctx, tx, &i)
 	return &i, nil
 }
 
@@ -259,6 +334,9 @@ type IncidentFilter struct {
 	Open       *bool
 	Q          string
 	From, To   *time.Time
+	SLAStatus  []string // PRD P1 v2 §39
+	SortCol    SortCol  // PRD P0 v2 §17.3
+	SortDesc   bool
 }
 
 func (s *Service) ListIncidents(ctx context.Context, f IncidentFilter, page httpx.Page) ([]Incident, *string, error) {
@@ -270,10 +348,13 @@ func (s *Service) ListIncidents(ctx context.Context, f IncidentFilter, page http
 		add := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
 		where := " WHERE 1=1"
 		if f.PropertyID != nil {
+			// PRD P0 v2 §24.1: property_id eksplisit tetap wajib dalam scope user
+			if !p.HasAnyOnProperty("operations.incidents.view", *f.PropertyID) {
+				return apperr.Forbidden("")
+			}
 			where += " AND i.property_id = " + add(*f.PropertyID)
-		} else if pids, all := p.PropertyIDsFor("operations.incidents.view"); !all {
-			where += " AND i.property_id = ANY(" + add(pids) + "::uuid[])"
 		}
+		where += " AND " + locationScopeSQL(p, "operations.incidents.view", "i", add)
 		if len(f.Statuses) > 0 {
 			where += " AND i.status = ANY(" + add(f.Statuses) + ")"
 		}
@@ -295,6 +376,9 @@ func (s *Service) ListIncidents(ctx context.Context, f IncidentFilter, page http
 		if f.Open != nil && *f.Open {
 			where += " AND i.status NOT IN ('closed','cancelled')"
 		}
+		if len(f.SLAStatus) > 0 {
+			where += SLAStatusSQL("i", f.SLAStatus, "'resolved','closed'", false)
+		}
 		if f.From != nil {
 			where += " AND i.reported_at >= " + add(*f.From)
 		}
@@ -305,38 +389,21 @@ func (s *Service) ListIncidents(ctx context.Context, f IncidentFilter, page http
 			q := add("%" + f.Q + "%")
 			where += " AND (i.incident_number ILIKE " + q + " OR i.title ILIKE " + q + ")"
 		}
-		if page.Cursor != nil {
-			where += " AND (i.reported_at, i.id) < (" + add(page.Cursor.Value) + "::timestamptz, " + add(page.Cursor.ID) + ")"
+		col := f.SortCol
+		if col.Expr == "" {
+			col, f.SortDesc = IncidentSortCols["created_at"], true
 		}
-		rows, err := tx.Query(ctx, `SELECT i.id FROM incidents i`+where+` ORDER BY i.reported_at DESC, i.id DESC LIMIT `+add(page.Limit+1), args...)
+		idList, nx, err := KeysetIDs(ctx, tx, KeysetQuery{From: "FROM incidents i", Where: where, IDCol: "i.id", Args: args}, col, f.SortDesc, page)
 		if err != nil {
 			return err
 		}
-		var idList []uuid.UUID
-		for rows.Next() {
-			var id uuid.UUID
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			idList = append(idList, id)
-		}
-		rows.Close()
-		hasMore := len(idList) > page.Limit
-		if hasMore {
-			idList = idList[:page.Limit]
-		}
+		next = nx
 		for _, id := range idList {
-			inc, err := s.getIncidentTx(ctx, tx, id)
+			it, err := s.getIncidentTx(ctx, tx, id)
 			if err != nil {
 				return err
 			}
-			out = append(out, *inc)
-		}
-		if hasMore && len(out) > 0 {
-			last := out[len(out)-1]
-			c := httpx.EncodeCursor(last.ReportedAt.UTC().Format(time.RFC3339Nano), last.ID)
-			next = &c
+			out = append(out, *it)
 		}
 		return nil
 	})
@@ -373,9 +440,22 @@ func (s *Service) UpdateIncident(ctx context.Context, id uuid.UUID, in UpdateInc
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE incidents SET category = COALESCE(NULLIF($2,''), category), title = COALESCE(NULLIF($3,''), title), description = COALESCE($4, description), location_id = COALESCE($5, location_id),
-			severity = COALESCE(NULLIF($6,''), severity), priority = COALESCE(NULLIF($7,''), priority), occurred_at = COALESCE($8, occurred_at), updated_by = $9 WHERE id = $1`,
-			id, derefStr(in.Category), derefStr(in.Title), in.Description, in.LocationID, derefStr(in.Severity), derefStr(in.Priority), in.OccurredAt, p.UserID); err != nil {
+			severity = COALESCE(NULLIF($6,''), severity), priority = COALESCE(NULLIF($7,''), priority), occurred_at = COALESCE($8, occurred_at), updated_by = $9, action_taken = COALESCE($10, action_taken) WHERE id = $1`,
+			id, derefStr(in.Category), derefStr(in.Title), in.Description, in.LocationID, derefStr(in.Severity), derefStr(in.Priority), in.OccurredAt, p.UserID, in.ActionTaken); err != nil {
 			return err
+		}
+		if in.Severity != nil && *in.Severity == "critical" && before.Severity != "critical" && s.Jobs != nil {
+			// eskalasi severity → Critical Incident (PRD P1 v2 §35)
+			_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: events.IncidentCritical, OrganizationID: p.OrganizationID, PropertyID: &before.PropertyID, ObjectType: ObjIncident, ObjectID: id, ObjectLabel: before.IncidentNumber, ActorUserID: actorOrNil(p),
+				Payload: map[string]any{"severity": "critical", "from": before.Severity, "assignee_user_id": before.Assignee.UserID, "assignee_team_id": before.Assignee.TeamID, "domain": "security"}})
+			_ = audit.Record(ctx, tx, audit.Entry{ObjectType: ObjIncident, ObjectID: id, Action: audit.ActEscalated, From: before.Severity, To: "critical", Payload: map[string]any{"reason": "severity critical"}})
+		}
+		if err := s.updateInvestigationTx(ctx, tx, before, IncidentInvestigationInput{InvestigationStatus: in.InvestigationStatus, InvestigatorUserID: in.InvestigatorUserID,
+			InvestigationFindings: in.InvestigationFindings, RootCause: in.RootCause, CorrectiveAction: in.CorrectiveAction, CorrectiveOwnerUserID: in.CorrectiveOwnerUserID}); err != nil {
+			return err
+		}
+		if in.ActionTaken != nil && derefStr(before.ActionTaken) != *in.ActionTaken {
+			_ = audit.Record(ctx, tx, audit.Entry{ObjectType: ObjIncident, ObjectID: id, Action: audit.ActUpdated, Payload: map[string]any{"action_taken": *in.ActionTaken}})
 		}
 		if in.Priority != nil && *in.Priority != before.Priority {
 			_ = audit.Record(ctx, tx, audit.Entry{ObjectType: ObjIncident, ObjectID: id, Action: audit.ActPriorityChanged, From: before.Priority, To: *in.Priority})
@@ -463,6 +543,12 @@ func (s *Service) TransitionIncident(ctx context.Context, id uuid.UUID, action s
 		if tr.RequireReason && reason == "" {
 			return apperr.Validation("reason/resolution wajib").WithField("reason", "wajib")
 		}
+		if action == workflow.ActClose {
+			// P2-XTW-02 (Roadmap §17 contoh 2): incident baru Closed setelah WO & verifikasi security selesai
+			if err := guardChainClose(ctx, tx, ObjIncident, id); err != nil {
+				return err
+			}
+		}
 		sets := "status = $2, updated_by = $3"
 		args := []any{id, tr.To, p.UserID}
 		now := time.Now().UTC()
@@ -491,6 +577,11 @@ func (s *Service) TransitionIncident(ctx context.Context, id uuid.UUID, action s
 			_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: "incident." + eventVerb(action), OrganizationID: p.OrganizationID, PropertyID: &inc.PropertyID, ObjectType: ObjIncident, ObjectID: id, ObjectLabel: inc.IncidentNumber, ActorUserID: &p.UserID,
 				Payload: map[string]any{"from": inc.Status, "to": tr.To, "assignee_user_id": inc.Assignee.UserID, "assignee_team_id": inc.Assignee.TeamID, "reporter_user_id": inc.ReportedBy}})
 			_ = s.Jobs.EnqueueTx(ctx, tx, searchIndexArgs(p.OrganizationID, ObjIncident, id))
+		}
+		if action == workflow.ActResolve || action == workflow.ActClose {
+			if err := s.chainProgressTx(ctx, tx, ObjIncident, id, inc.IncidentNumber, &reason); err != nil {
+				return err
+			}
 		}
 		out, err = s.getIncidentTx(ctx, tx, id)
 		return err

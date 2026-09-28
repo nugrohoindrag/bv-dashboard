@@ -126,6 +126,69 @@ func SeedNotificationRules(ctx context.Context, q db.Querier) error {
 		event, resolver, ntype, severity string
 		dedup                            int
 	}
+	// PRD P0 v2 §14.2: update Work Order (start/hold/reopen/cancel) & Task reopen/cancel
+	extra := []rule{
+		{"work_order.started", "requester", "work_order_started", "info", 0},
+		{"work_order.held", "assignee_team_supervisor", "work_order_on_hold", "warning", 0},
+		{"work_order.reopened", "assignee", "work_order_reopened", "warning", 0},
+		{"work_order.cancelled", "assignee", "work_order_cancelled", "info", 0},
+		{"work_order.cancelled", "requester", "work_order_cancelled", "info", 0},
+		{"task.reopened", "assignee", "task_reopened", "warning", 0},
+		{"task.cancelled", "assignee", "task_cancelled", "info", 0},
+		// ---- PRD P1 v2 §35 & §49 Notifications Matrix (Manager · Supervisor · Worker · Tenant) ----
+		{"task.overdue", "property_manager", "task_overdue", "critical", 60},
+		{"work_order.overdue", "property_manager", "work_order_overdue", "critical", 60},
+		{"task.sla_risk", "property_manager", "task_sla_risk", "warning", 60},
+		{"work_order.sla_risk", "property_manager", "work_order_sla_risk", "warning", 60},
+		{"service_request.sla_risk", "property_manager", "service_request_sla_risk", "warning", 60},
+		{"task.sla_breached", "assignee", "task_sla_breached", "critical", 30},
+		{"task.sla_breached", "property_manager", "task_sla_breached", "critical", 60},
+		{"work_order.sla_breached", "assignee", "work_order_sla_breached", "critical", 30},
+		{"work_order.sla_breached", "property_manager", "work_order_sla_breached", "critical", 60},
+		{"service_request.sla_breached", "assignee", "service_request_sla_breached", "critical", 30},
+		{"service_request.sla_breached", "assignee_team_supervisor", "service_request_sla_breached", "critical", 30},
+		{"service_request.sla_breached", "property_manager", "service_request_sla_breached", "critical", 60},
+		{"incident.sla_risk", "assignee", "incident_sla_risk", "warning", 30},
+		{"incident.sla_breached", "property_domain_supervisor:security", "incident_sla_breached", "critical", 30},
+		{"incident.critical", "property_manager", "incident_critical", "critical", 0},
+		{"incident.critical", "property_domain_supervisor:security", "incident_critical", "critical", 0},
+		{"incident.critical", "property_domain_team:security", "incident_critical", "critical", 0},
+		{"work_order.submitted", "property_domain_supervisor", "work_order_submitted", "info", 0},
+		{"task.escalated", "assignee_team_supervisor", "task_escalated", "warning", 0},
+		{"task.escalated", "property_manager", "task_escalated", "warning", 0},
+		{"task.escalated", "escalate_to", "task_escalated", "warning", 0},
+		{"work_order.escalated", "assignee_team_supervisor", "work_order_escalated", "warning", 0},
+		{"work_order.escalated", "property_manager", "work_order_escalated", "warning", 0},
+		{"work_order.escalated", "escalate_to", "work_order_escalated", "warning", 0},
+		{"service_request.created", "property_manager", "service_request_received", "info", 0},
+		{"service_request.resolved", "property_domain_supervisor:tenant_relation", "service_request_resolved", "success", 0},
+		{"service_request.resolved", "property_manager", "service_request_resolved", "success", 0},
+		{"service_request.reopened", "tenant_user", "ticket_reopened", "warning", 0}, // reopen oleh staf; tenant yang me-reopen sendiri tidak diberi tahu (aktor)
+		// ---- PRD P2 v2.1 §6.4 Emergency: notifikasi segera ke security on-duty, supervisor, manager (P2-EMG-03) ----
+		{"emergency_alert.raised", "property_domain_on_duty:security", "emergency_raised", "critical", 0},
+		{"emergency_alert.raised", "property_domain_supervisor:security", "emergency_raised", "critical", 0},
+		{"emergency_alert.raised", "property_manager", "emergency_raised", "critical", 0},
+		{"emergency_alert.acknowledged", "reporter", "emergency_acknowledged", "info", 0},
+		{"emergency_alert.acknowledged", "property_manager", "emergency_acknowledged", "info", 0},
+		{"emergency_alert.responding", "reporter", "emergency_responding", "info", 0},
+		{"emergency_alert.escalated", "property_manager", "emergency_escalated", "critical", 0},
+		{"emergency_alert.escalated", "property_domain_supervisor:security", "emergency_escalated", "critical", 0},
+		{"emergency_alert.resolved", "reporter", "emergency_resolved", "success", 0},
+		{"emergency_alert.resolved", "property_domain_supervisor:security", "emergency_resolved", "success", 0},
+		{"emergency_alert.cancelled", "property_domain_supervisor:security", "emergency_cancelled", "info", 0},
+		// §6.3 eskalasi incident (P2-SIN-05)
+		{"incident.escalated", "property_domain_supervisor:security", "incident_escalated", "warning", 0},
+		{"incident.escalated", "property_manager", "incident_escalated", "warning", 0},
+		{"incident.escalated", "escalate_to", "incident_escalated", "warning", 0},
+		// §8 Workforce: serah terima shift → penerima + supervisor domain; sertifikat/lisensi kedaluwarsa (P2-TEC-02, P2-SPN-02)
+		{"shift_handover.submitted", "assignee", "shift_handover", "info", 0},
+		{"shift_handover.submitted", "property_domain_supervisor", "shift_handover", "info", 0},
+		// §5.6 dokumen equipment & warranty kedaluwarsa (P2-DOC-02), health equipment turun ke critical (P2-EQH-03)
+		{"asset_document.expiring", "property_domain_supervisor:engineering", "document_expiring", "warning", 0},
+		{"asset_document.expired", "property_domain_supervisor:engineering", "document_expired", "critical", 0},
+		{"asset_document.expired", "property_manager", "document_expired", "critical", 0},
+		{"asset.health_changed", "property_domain_supervisor:engineering", "asset_health_critical", "warning", 0},
+	}
 	rules := []rule{
 		{"task.assigned", "assignee", "task_assigned", "info", 0},
 		{"work_order.assigned", "assignee", "work_order_assigned", "info", 0},
@@ -142,6 +205,8 @@ func SeedNotificationRules(ctx context.Context, q db.Querier) error {
 		{"task.sla_breached", "assignee_team_supervisor", "task_sla_breached", "critical", 30},
 		{"work_order.sla_breached", "assignee_team_supervisor", "work_order_sla_breached", "critical", 30},
 		{"patrol_task.overdue", "property_domain_supervisor:security", "patrol_overdue", "critical", 30},
+		// PRD P2 v2.1 P2-PAT-05: event checkpoint_missed sudah dipancarkan security service tetapi belum punya rule
+		{"patrol_task.checkpoint_missed", "property_domain_supervisor:security", "checkpoint_missed", "warning", 0},
 		{"finding.created", "property_domain_supervisor", "finding_created", "warning", 0},
 		{"service_request.created", "property_domain_supervisor", "service_request_received", "info", 0},
 		{"service_request.assigned", "assignee", "service_request_assigned", "info", 0},
@@ -151,7 +216,7 @@ func SeedNotificationRules(ctx context.Context, q db.Querier) error {
 		{"work_order.completed", "requester", "work_order_completed", "success", 0},
 		{"work_order.closed", "requester", "work_order_closed", "success", 0},
 		{"task.completed", "assignee_team_supervisor", "task_completed", "success", 0},
-		{"incident.created", "property_domain_supervisor:security", "incident_reported", "critical", 0},
+		{"incident.created", "property_domain_supervisor:security", "incident_reported", "warning", 0}, // severity critical → event incident.critical (PRD P1 v2 §35)
 		{"incident.assigned", "assignee", "incident_assigned", "warning", 0},
 		{"maintenance_schedule.due", "property_domain_supervisor:engineering", "maintenance_due", "warning", 720},
 		{"sync.conflict", "assignee_team_supervisor", "sync_conflict", "warning", 0},
@@ -165,7 +230,6 @@ func SeedNotificationRules(ctx context.Context, q db.Querier) error {
 		{"service_request.waiting_for_tenant", "tenant_user", "ticket_need_response", "warning", 0},
 		{"service_request.resolved", "tenant_user", "ticket_resolved", "success", 0},
 		{"service_request.closed", "tenant_user", "ticket_closed", "success", 0},
-		{"service_request.auto_closed", "tenant_user", "ticket_closed", "info", 0},
 		{"service_request.cancelled", "tenant_user", "ticket_status", "info", 0},
 		{"service_request.reopened", "assignee", "service_request_reopened", "warning", 0},
 		{"service_request.reopened", "property_domain_supervisor:tenant_relation", "service_request_reopened", "warning", 0},
@@ -200,7 +264,8 @@ func SeedNotificationRules(ctx context.Context, q db.Querier) error {
 		{"payment.initiated", "property_domain_supervisor:finance", "payment_pending", "info", 0},
 		// Vendor & Inventory (PRD §24–§25)
 		{"work_order.vendor_assigned", "assignee_team_supervisor", "work_order_vendor_assigned", "info", 0},
-		{"inventory.low_stock", "property_domain_supervisor:engineering", "inventory_low_stock", "warning", 720},
+		// PRD P2 v2.1 P2-CNS-03: domain dari payload (consumable → housekeeping, spare part/tool → engineering)
+		{"inventory.low_stock", "property_domain_supervisor", "inventory_low_stock", "warning", 720},
 		// Hotel Booking (PRD §3.9)
 		{"hotel_reservation.created", "property_domain_supervisor:tenant_relation", "reservation_received", "info", 0},
 		{"hotel_reservation.checked_out", "property_domain_supervisor:housekeeping", "room_turnover", "info", 0},
@@ -219,13 +284,46 @@ func SeedNotificationRules(ctx context.Context, q db.Querier) error {
 		{"unit_rental_reservation.completed", "property_domain_supervisor:housekeeping", "rental_completed", "info", 0},
 		{"unit_rental_reservation.completed", "tenant_user", "rental_completed", "info", 0},
 		{"unit_rental_reservation.cancelled", "property_domain_supervisor:management", "rental_cancelled", "warning", 0},
+		// ---- PRD P3 v2.1 (Tenant Experience) ----
+		// B-03: service_request.auto_closed tidak lagi punya rule tenant — event closed (actor_kind system) sudah memberi satu notifikasi
+		{"recurring_issue.detected", "property_domain_supervisor:tenant_relation", "recurring_issue_detected", "warning", 0},
+		{"recurring_issue.detected", "property_manager", "recurring_issue_detected", "warning", 0},
+		{"tenant_feedback.submitted", "property_domain_supervisor:tenant_relation", "tenant_feedback_received", "info", 0},
+		{"tenant_feedback.responded", "tenant_user", "tenant_feedback_responded", "info", 0},
+		{"announcement.broadcast", "tenant_property_users", "announcement_alert", "warning", 0},
+		{"package.received", "tenant_user", "package_received", "info", 0},
+		{"package.reminder", "tenant_user", "package_reminder", "warning", 0},
+		{"package.picked_up", "tenant_user", "package_picked_up", "success", 0},
+		{"package.returned", "tenant_user", "package_returned", "warning", 0},
+		{"parking_permit.requested", "property_domain_supervisor:security", "parking_permit_requested", "info", 0},
+		{"parking_permit.approved", "tenant_user", "parking_permit_approved", "success", 0},
+		{"parking_permit.rejected", "tenant_user", "parking_permit_rejected", "warning", 0},
+		{"parking_permit.revoked", "tenant_user", "parking_permit_revoked", "warning", 0},
+		{"parking_permit.expiring", "tenant_user", "parking_permit_expiring", "warning", 0},
+		{"parking_permit.expired", "tenant_user", "parking_permit_expired", "info", 0},
+		{"parking_violation.recorded", "tenant_user", "parking_violation", "warning", 0},
+		// ---- PRD P4 v2.1 (Financial Operations) ----
+		{"invoice.reminder", "tenant_user", "invoice_reminder", "warning", 0}, // P4-COL-02 pengingat bertahap H+n (H-n = invoice.due_soon)
+		{"invoice.cancelled", "tenant_user", "invoice_cancelled", "info", 0},  // B-18
+		{"payment.refunded", "tenant_user", "payment_refunded", "info", 0},
+		{"credit_note.requested", "property_domain_supervisor:finance", "credit_note_requested", "info", 0},
+		{"credit_note.approved", "tenant_user", "credit_note_approved", "success", 0},
+		{"billing_run.generated", "property_domain_supervisor:finance", "billing_run_generated", "info", 0},
+		{"meter_reading.flagged", "property_domain_supervisor:finance", "meter_reading_flagged", "warning", 0},
+		{"collection_promise.broken", "property_domain_supervisor:finance", "collection_promise_broken", "warning", 0},
 	}
+	rules = append(rules, extra...)
 	if _, err := q.Exec(ctx, `DELETE FROM notification_rules WHERE organization_id IS NULL`); err != nil {
 		return err
 	}
 	for _, r := range rules {
-		if _, err := q.Exec(ctx, `INSERT INTO notification_rules (organization_id, event_type, recipient_resolver, notification_type, severity, dedup_minutes) VALUES (NULL,$1,$2,$3,$4,$5)`,
-			r.event, r.resolver, r.ntype, r.severity, r.dedup); err != nil {
+		// channel email aktif default untuk kejadian kritis (SLA breach, overdue, incident kritis) — PRD P0 v2 §14.3
+		channels := []string{"inapp", "push"}
+		if r.severity == "critical" {
+			channels = append(channels, "email")
+		}
+		if _, err := q.Exec(ctx, `INSERT INTO notification_rules (organization_id, event_type, recipient_resolver, notification_type, severity, dedup_minutes, channels) VALUES (NULL,$1,$2,$3,$4,$5,$6)`,
+			r.event, r.resolver, r.ntype, r.severity, r.dedup, channels); err != nil {
 			return err
 		}
 	}
@@ -310,12 +408,22 @@ func SeedInternalOrganization(ctx context.Context, d *db.DB, iamSvc *iam.Service
 		if err := iamSvc.SeedSystemRoles(ctx, tx, orgID); err != nil { // termasuk admin_internal karena is_internal = true
 			return err
 		}
-		var exists bool
-		_ = tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE organization_id = $1 AND lower(email) = lower($2) AND deleted_at IS NULL)`, orgID, email).Scan(&exists)
-		if exists || (!created && email == "") {
-			return nil
+		var userID uuid.UUID
+		err := tx.QueryRow(ctx, `SELECT id FROM users WHERE organization_id = $1 AND lower(email) = lower($2) AND deleted_at IS NULL`, orgID, email).Scan(&userID)
+		if err != nil && !db.IsNoRows(err) {
+			return err
 		}
-		_, err := CreateUser(ctx, tx, orgID, email, "Admin Internal", password, "admin_internal", nil)
+		if db.IsNoRows(err) {
+			if !created && email == "" {
+				return nil
+			}
+			if userID, err = CreateUser(ctx, tx, orgID, email, "Admin Internal", password, "admin_internal", nil); err != nil {
+				return err
+			}
+		}
+		// PRD P0 v2 §8.2: Admin Internal juga Platform Admin (registry organization pelanggan)
+		_, err = tx.Exec(ctx, `INSERT INTO user_roles (user_id, role_id, property_id)
+			SELECT $1, r.id, NULL FROM roles r WHERE r.organization_id = $2 AND r.code = 'platform_admin' ON CONFLICT DO NOTHING`, userID, orgID)
 		return err
 	})
 }

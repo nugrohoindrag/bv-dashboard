@@ -17,6 +17,7 @@ import (
 	"github.com/buildingvision/api/internal/platform/authctx"
 	"github.com/buildingvision/api/internal/platform/cache"
 	"github.com/buildingvision/api/internal/platform/db"
+	"github.com/buildingvision/api/internal/platform/mailer"
 )
 
 type Service struct {
@@ -24,6 +25,11 @@ type Service struct {
 	Signer     *TokenSigner
 	RefreshTTL time.Duration
 	Catalog    *catalog.Catalog
+
+	// Undangan user (PRD P0 v2 §26.1)
+	Mailer           mailer.Mailer
+	PublicURL        string
+	ExposeInviteLink bool // non-produksi tanpa SMTP: kembalikan tautan undangan di respons
 
 	permOnce     sync.Once
 	permCache    *cache.TTLMap[uuid.UUID, cachedPrincipal] // userID -> principal (TTL 60 s, disapu otomatis)
@@ -52,6 +58,8 @@ type TokenPair struct {
 	RefreshToken     string    `json:"refresh_token,omitempty"`
 	RefreshExpiresAt time.Time `json:"refresh_expires_at"`
 	TokenType        string    `json:"token_type"`
+	// MustChangePassword: akun dengan password sementara wajib mengganti password setelah login (PRD P3 v2.1 P3-ACC-03).
+	MustChangePassword bool `json:"must_change_password,omitempty"`
 }
 
 type userRow struct {
@@ -100,6 +108,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, *authct
 			return err
 		}
 		if u.LockedUntil != nil && u.LockedUntil.After(time.Now()) {
+			s.auditLoginFailed(ctx, u, in, "account_locked")
 			return apperr.New(423, "ACCOUNT_LOCKED", "Account locked", "Akun terkunci sementara; coba lagi nanti")
 		}
 		if !VerifyPassword(u.PasswordHash, in.Password) {
@@ -116,31 +125,65 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, *authct
 			}
 			_ = s.DB.WithAuthLookupTx(ctx, func(ctx context.Context, tx2 pgx.Tx) error {
 				_, _ = tx2.Exec(ctx, `UPDATE users SET failed_login_count = $2, locked_until = $3 WHERE id = $1`, u.ID, failed, lock)
-				return audit.LogAs(ctx, tx2, u.OrgID, &u.ID, in.IP, in.UserAgent, audit.AuditEntry{Action: audit.AuditLoginFailed, EntityType: "user", EntityID: &u.ID, EntityLabel: u.FullName})
+				return audit.LogAs(ctx, tx2, u.OrgID, &u.ID, in.IP, in.UserAgent, audit.AuditEntry{Action: audit.AuditLoginFailed, EntityType: "user", EntityID: &u.ID, EntityLabel: u.FullName, After: map[string]any{"reason": "invalid_password", "failed_count": failed}})
 			})
 			return apperr.Unauthorized("Email/username atau password salah")
+		}
+		// PRD P0 v2 §6: organization nonaktif/ditangguhkan tidak dapat login (dicek setelah kredensial valid)
+		if err := orgStatusError(ctx, tx, u.OrgID); err != nil {
+			s.auditLoginFailed(ctx, u, in, "organization_"+err.Code)
+			return err
 		}
 		// TD-P1-003: akun Mobile Tenant vs akun staf — dicek setelah password valid agar status tidak bocor tanpa kredensial
 		var tuStatus *string
 		_ = tx.QueryRow(ctx, `SELECT status FROM tenant_users WHERE user_id = $1`, u.ID).Scan(&tuStatus)
+		// kredensial sudah valid → konteks org agar data property (nama, nomor WhatsApp pengelola) terbaca untuk pesan status akun
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.organization_id', $1, true)`, u.OrgID.String()); err != nil {
+			return err
+		}
 		isTenant := tuStatus != nil
 		if in.Client == authctx.ClientTenantApp && !isTenant {
+			s.auditLoginFailed(ctx, u, in, "not_tenant_account")
 			return apperr.New(403, "NOT_TENANT_ACCOUNT", "Not a tenant account", "Akun ini bukan akun tenant; gunakan dashboard atau Staff App")
 		}
 		if in.Client != authctx.ClientTenantApp && isTenant {
+			s.auditLoginFailed(ctx, u, in, "tenant_account_only")
 			return apperr.New(403, "TENANT_ACCOUNT_ONLY", "Tenant account", "Akun tenant hanya dapat masuk melalui Tenant App")
 		}
-		if isTenant {
+		if isTenant && *tuStatus != "active" {
+			s.auditLoginFailed(ctx, u, in, "tenant_"+*tuStatus)
+		}
+		if isTenant && *tuStatus != "active" {
+			// PRD P3 v2.1 P3-ACC-07 / B-08: keputusan akun & alasannya tampil di layar login (notifikasi in-app tidak terbaca
+			// karena akun nonaktif), beserta kontak WhatsApp pengelola property (P3-WAM-05).
+			var reason, propName, wa *string
+			_ = tx.QueryRow(ctx, `SELECT CASE tu.status WHEN 'rejected' THEN tu.rejection_reason WHEN 'suspended' THEN tu.suspension_reason END, l.name, p.whatsapp_number
+				FROM tenant_users tu JOIN properties p ON p.location_id = tu.property_id JOIN locations l ON l.id = tu.property_id WHERE tu.user_id = $1`, u.ID).Scan(&reason, &propName, &wa)
+			var e *apperr.Error
 			switch *tuStatus {
 			case "pending_validation":
-				return apperr.New(403, "ACCOUNT_PENDING", "Account pending validation", "Akun menunggu validasi building management")
+				e = apperr.New(403, "ACCOUNT_PENDING", "Account pending validation", "Akun menunggu validasi building management")
 			case "rejected":
-				return apperr.New(403, "ACCOUNT_REJECTED", "Account rejected", "Pendaftaran akun ditolak")
+				e = apperr.New(403, "ACCOUNT_REJECTED", "Account rejected", "Pendaftaran akun ditolak")
 			case "suspended":
-				return apperr.New(403, "ACCOUNT_SUSPENDED", "Account suspended", "Akun ditangguhkan; hubungi building management")
+				e = apperr.New(403, "ACCOUNT_SUSPENDED", "Account suspended", "Akun ditangguhkan; hubungi building management")
+			}
+			if e != nil {
+				e = e.WithMeta("account_status", *tuStatus)
+				if reason != nil && *reason != "" {
+					e = e.WithMeta("reason", *reason)
+				}
+				if propName != nil {
+					e = e.WithMeta("property_name", *propName)
+				}
+				if wa != nil && *wa != "" {
+					e = e.WithMeta("whatsapp_number", *wa)
+				}
+				return e
 			}
 		}
 		if !u.IsActive {
+			s.auditLoginFailed(ctx, u, in, "user_inactive")
 			return apperr.Unauthorized("Akun tidak aktif")
 		}
 		_, err = tx.Exec(ctx, `UPDATE users SET failed_login_count = 0, locked_until = NULL, last_login_at = now() WHERE id = $1`, u.ID)
@@ -169,6 +212,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, *authct
 			return err
 		}
 		pair = &TokenPair{AccessToken: access, AccessExpiresAt: exp, RefreshToken: raw, RefreshExpiresAt: now.Add(s.RefreshTTL), TokenType: "Bearer"}
+		_ = tx.QueryRow(ctx, `SELECT must_change_password FROM users WHERE id = $1`, u.ID).Scan(&pair.MustChangePassword)
 		_ = audit.LogAs(ctx, tx, u.OrgID, &u.ID, in.IP, in.UserAgent, audit.AuditEntry{Action: audit.AuditLogin, EntityType: "user", EntityID: &u.ID, EntityLabel: u.FullName, After: map[string]any{"client": in.Client}})
 		// scope org agar roles/teams (RLS) terbaca untuk respons login (user.roles, is_internal_admin)
 		if _, err := tx.Exec(ctx, `SELECT set_config('app.organization_id', $1, true)`, u.OrgID.String()); err != nil {
@@ -196,14 +240,21 @@ func (s *Service) Refresh(ctx context.Context, rawRefresh, client, ip, ua string
 		var expires time.Time
 		var revoked *time.Time
 		var prevHash *string
-		err := tx.QueryRow(ctx, `SELECT id, user_id, organization_id, expires_at, revoked_at, previous_token_hash FROM sessions WHERE refresh_token_hash = $1`, hash).
+		// FOR UPDATE: refresh paralel dengan token yang sama diserialisasi (yang kedua melihat token sudah dirotasi)
+		err := tx.QueryRow(ctx, `SELECT id, user_id, organization_id, expires_at, revoked_at, previous_token_hash FROM sessions WHERE refresh_token_hash = $1 FOR UPDATE`, hash).
 			Scan(&sid, &userID, &orgID, &expires, &revoked, &prevHash)
 		if err != nil {
 			if db.IsNoRows(err) {
 				// mungkin token lama yang sudah dirotasi → reuse detection
 				var reuseUser uuid.UUID
 				var reuseOrg uuid.UUID
-				if e2 := tx.QueryRow(ctx, `SELECT user_id, organization_id FROM sessions WHERE previous_token_hash = $1`, hash).Scan(&reuseUser, &reuseOrg); e2 == nil {
+				var rotatedAt *time.Time
+				if e2 := tx.QueryRow(ctx, `SELECT user_id, organization_id, last_used_at FROM sessions WHERE previous_token_hash = $1 AND revoked_at IS NULL`, hash).Scan(&reuseUser, &reuseOrg, &rotatedAt); e2 == nil {
+					// grace: token baru saja dirotasi oleh request paralel yang sah (multi-tab / efek ganda) → tolak tanpa
+					// mencabut sesi; klien memakai cookie hasil rotasi. Di luar jendela ini tetap dianggap pencurian token.
+					if rotatedAt != nil && time.Since(*rotatedAt) < refreshReuseGrace {
+						return apperr.New(401, "REFRESH_SUPERSEDED", "Refresh superseded", "Token sudah diperbarui oleh permintaan lain; ulangi")
+					}
 					// revoke di transaksi terpisah agar tetap commit meski handler mengembalikan 401
 					_ = s.DB.WithAuthLookupTx(ctx, func(ctx context.Context, tx2 pgx.Tx) error {
 						_, _ = tx2.Exec(ctx, `UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, reuseUser)
@@ -223,6 +274,9 @@ func (s *Service) Refresh(ctx context.Context, rawRefresh, client, ip, ua string
 		var permVer int
 		if err := tx.QueryRow(ctx, `SELECT is_active, permission_version FROM users WHERE id = $1 AND deleted_at IS NULL`, userID).Scan(&isActive, &permVer); err != nil || !isActive {
 			return apperr.Unauthorized("Akun tidak aktif")
+		}
+		if err := orgStatusError(ctx, tx, orgID); err != nil {
+			return err
 		}
 		newRaw, newHash, err := NewRefreshToken()
 		if err != nil {
@@ -250,9 +304,19 @@ func (s *Service) Logout(ctx context.Context, rawRefresh string) error {
 	p, ok := authctx.From(ctx)
 	return s.DB.WithAuthLookupTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		if rawRefresh != "" {
-			_, err := tx.Exec(ctx, `UPDATE sessions SET revoked_at = now() WHERE refresh_token_hash = $1 AND revoked_at IS NULL`, HashToken(rawRefresh))
-			if err != nil {
+			var sid, uid, oid uuid.UUID
+			err := tx.QueryRow(ctx, `UPDATE sessions SET revoked_at = now() WHERE refresh_token_hash = $1 AND revoked_at IS NULL RETURNING id, user_id, organization_id`, HashToken(rawRefresh)).Scan(&sid, &uid, &oid)
+			if err != nil && !db.IsNoRows(err) {
 				return err
+			}
+			// logout tanpa access token (hanya cookie/refresh token) tetap tercatat (PRD P0 v2 §16)
+			if err == nil && (!ok || p.SessionID != sid) {
+				ip, ua := "", ""
+				if ok {
+					ip, ua = p.IP, p.UserAgent
+				}
+				_ = audit.LogAs(ctx, tx, oid, &uid, ip, ua, audit.AuditEntry{Action: audit.AuditLogout, EntityType: "user", EntityID: &uid, After: map[string]any{"session_id": sid}})
+				s.principalCache().Delete(uid)
 			}
 		}
 		if ok && p.SessionID != uuid.Nil {
@@ -303,6 +367,9 @@ func (s *Service) PrincipalFromClaims(ctx context.Context, c *Claims) (*authctx.
 		if ver != c.Ver {
 			return apperr.New(401, "TOKEN_STALE", "Token stale", "Permission berubah; refresh token diperlukan")
 		}
+		if err := orgStatusError(ctx, tx, orgID); err != nil {
+			return err
+		}
 		if sid != uuid.Nil {
 			if err := tx.QueryRow(ctx, `SELECT revoked_at FROM sessions WHERE id = $1`, sid).Scan(&sessRevoked); err == nil && sessRevoked != nil {
 				return apperr.Unauthorized("sesi telah berakhir")
@@ -321,6 +388,9 @@ func (s *Service) PrincipalFromClaims(ctx context.Context, c *Claims) (*authctx.
 
 const principalCacheTTL = 60 * time.Second
 
+// refreshReuseGrace: jendela toleransi refresh paralel (lihat Refresh).
+const refreshReuseGrace = 20 * time.Second
+
 // principalCache: lazy agar Service yang dibuat literal (test) tetap punya cache.
 func (s *Service) principalCache() *cache.TTLMap[uuid.UUID, cachedPrincipal] {
 	s.permOnce.Do(func() { s.permCache = cache.New[uuid.UUID, cachedPrincipal](principalCacheTTL) })
@@ -331,28 +401,29 @@ func (s *Service) InvalidateUser(userID uuid.UUID) { s.principalCache().Delete(u
 
 func (s *Service) loadPrincipalTx(ctx context.Context, tx pgx.Tx, userID, orgID, sid uuid.UUID, ver int) (*authctx.Principal, error) {
 	p := &authctx.Principal{UserID: userID, OrganizationID: orgID, SessionID: sid, PermissionVersion: ver}
-	if err := tx.QueryRow(ctx, `SELECT full_name FROM users WHERE id = $1`, userID).Scan(&p.FullName); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT full_name, vendor_id, must_change_password FROM users WHERE id = $1`, userID).Scan(&p.FullName, &p.VendorID, &p.MustChangePassword); err != nil {
 		return nil, err
 	}
 	rows, err := tx.Query(ctx, `
-		SELECT r.code, ur.property_id, array_agg(rp.permission_code ORDER BY rp.permission_code)
+		SELECT r.code, ur.property_id, ur.scope_location_id, COALESCE(sl.path::text, ''), array_agg(rp.permission_code ORDER BY rp.permission_code)
 		FROM user_roles ur JOIN roles r ON r.id = ur.role_id AND r.deleted_at IS NULL
+		LEFT JOIN locations sl ON sl.id = ur.scope_location_id
 		LEFT JOIN role_permissions rp ON rp.role_id = r.id
-		WHERE ur.user_id = $1 GROUP BY r.code, ur.property_id`, userID)
+		WHERE ur.user_id = $1 GROUP BY r.code, ur.property_id, ur.scope_location_id, sl.path`, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	roleSet := map[string]struct{}{}
 	for rows.Next() {
-		var code string
-		var propID *uuid.UUID
+		var code, scopePath string
+		var propID, scopeID *uuid.UUID
 		var perms []*string
-		if err := rows.Scan(&code, &propID, &perms); err != nil {
+		if err := rows.Scan(&code, &propID, &scopeID, &scopePath, &perms); err != nil {
 			return nil, err
 		}
 		roleSet[code] = struct{}{}
-		g := authctx.PropertyGrant{PropertyID: propID, Permissions: map[string]struct{}{}}
+		g := authctx.PropertyGrant{PropertyID: propID, ScopeLocationID: scopeID, ScopePath: scopePath, Permissions: map[string]struct{}{}}
 		for _, pc := range perms {
 			if pc != nil {
 				g.Permissions[*pc] = struct{}{}
@@ -372,7 +443,10 @@ func (s *Service) loadPrincipalTx(ctx context.Context, tx pgx.Tx, userID, orgID,
 			// role internal hanya berlaku bila organization memang internal (bukan sekadar nama role)
 			var internal bool
 			_ = tx.QueryRow(ctx, `SELECT is_internal FROM organizations WHERE id = $1`, orgID).Scan(&internal)
-			p.IsInternalAdmin = internal
+			p.IsInternalAdmin = p.IsInternalAdmin || internal
+			if r == catalog.RolePlatformAdmin {
+				p.IsPlatformAdmin = internal
+			}
 		}
 	}
 	trows, err := tx.Query(ctx, `SELECT team_id, is_lead FROM team_members WHERE user_id = $1`, userID)
@@ -432,6 +506,10 @@ func (l *loginLimiter) Allow(ip string) bool {
 }
 
 var ErrNotFound = errors.New("not found")
+
+// InvalidateAll: kosongkan cache principal instance ini (mis. status organization berubah). Instance lain
+// mengikuti lewat permission_version yang dinaikkan di DB (token stale → refresh → cek status org).
+func (s *Service) InvalidateAll() { s.invalidateAll() }
 
 func (s *Service) invalidateAll() {
 	s.permOnce.Do(func() {})

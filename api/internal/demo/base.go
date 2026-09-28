@@ -480,6 +480,10 @@ func (s *Service) seedBase(ctx context.Context, env *Env, sp propSpec, logf func
 	}
 	s.flush(ctx)
 	logf("%s: inventory %d item, aset %d, PM plan 4 (WO PM %d), patroli 3 + insiden 2, cleaning 3 jadwal + 3 adhoc", sp.Prefix, len(inventoryItems), len(p.Assets), len(pmWOs))
+	// PRD P2 v2.1 — Workforce Operations
+	if err := s.seedP2(ctx, env, p, sp, logf); err != nil {
+		return nil, fmt.Errorf("P2: %w", err)
+	}
 	return p, nil
 }
 
@@ -500,6 +504,19 @@ func (s *Service) seedFacilities(ctx context.Context, env *Env, p *prop, specs [
 			return fmt.Errorf("facility %s: %w", f.Name, err)
 		}
 		ids = append(ids, fac.ID)
+	}
+	// PRD P1 v2 §6.3: facility operasional (bukan booking) — lobby, lift, toilet, koridor
+	for _, f := range []struct{ name, typ, area, status string }{
+		{"Lobby Utama", "lobby", "lobby", "operational"}, {"Lift Penumpang", "lift", "lift_lobby", "under_maintenance"},
+		{"Toilet Umum", "toilet", "toilet", "operational"}, {"Koridor Utama", "corridor", "corridor", "operational"},
+	} {
+		in := booking.FacilityInput{PropertyID: &p.ID, Name: ptr(f.name), FacilityType: ptr(f.typ), Status: ptr(f.status), IsBookable: ptr(false), Description: ptr("Facility operasional " + f.name)}
+		if id, ok := p.Areas[f.area]; ok {
+			in.LocationID = &id
+		}
+		if _, err := s.Booking.CreateFacility(admin, in); err != nil {
+			s.Log.Warn("demo facility operasional", "facility", f.name, "err", err)
+		}
 	}
 	// penutupan terjadwal (maintenance) fasilitas pertama minggu depan
 	nextWeek := today().AddDate(0, 0, 7)
@@ -709,14 +726,26 @@ func (s *Service) seedBilling(ctx context.Context, env *Env, p *prop, tenants []
 	if _, err := mk(tm, 0, "Tagihan "+invoiceType, true, 20); err != nil {
 		return err
 	}
-	// pembayaran gagal (invoice bulan ini t1): inisiasi manual lalu ditolak Finance
-	inv5, err := mk(t1, 0, "Tagihan "+invoiceType, true, 20)
+	// pembayaran gagal (B-08): tenant ber-akun Tenant App mengajukan transfer (pending) lalu Finance menolak — sebelumnya
+	// RecordManual langsung lunas sehingga FailPayment selalu gagal (error ditelan) dan skenario tidak pernah terjadi.
+	payer := t1
+	for _, t := range []tenantRef{t1, tm, t0} {
+		if t.AppEmail != "" {
+			payer = t
+			break
+		}
+	}
+	inv5, err := mk(payer, 0, "Tagihan "+invoiceType, true, 20)
 	if err != nil {
 		return err
 	}
-	if pay, err := s.Billing.RecordManual(fin, inv5.ID, billing.RecordInput{Amount: inv5.TotalAmount / 2, Method: "transfer", Notes: ptr("Bukti transfer tidak valid")}); err == nil {
+	if payer.AppEmail != "" {
+		pay, err := s.Billing.TenantPay(s.asEmail(ctx, env, payer.AppEmail), inv5.ID, billing.InitiateInput{ProviderCode: "manual", Method: "transfer"})
+		if err != nil {
+			return fmt.Errorf("demo pembayaran gagal (inisiasi): %w", err)
+		}
 		if _, err := s.Billing.FailPayment(fin, pay.ID, "Nominal tidak sesuai bukti transfer"); err != nil {
-			s.Log.Debug("demo fail payment", "err", err)
+			return fmt.Errorf("demo pembayaran gagal (tolak): %w", err)
 		}
 	}
 	// draft (bulan depan) & cancelled

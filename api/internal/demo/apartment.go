@@ -178,6 +178,13 @@ func (s *Service) seedApartment(ctx context.Context, env *Env, logf func(string,
 	if err := s.seedBilling(ctx, env, p, tenants, "service_charge", 1250000, logf); err != nil {
 		return uuid.Nil, err
 	}
+	// PRD P3 v2.1 & P4 v2.1: data demo Tenant Experience & Financial Operations
+	if err := s.seedP3(ctx, env, p, tenants, logf); err != nil {
+		return uuid.Nil, err
+	}
+	if err := s.seedP4(ctx, env, p, tenants, logf); err != nil {
+		return uuid.Nil, err
+	}
 	for _, a := range []struct{ title, excerpt, body, imp string }{
 		{"Maintenance Notice: Pengurasan tangki air", "Sabtu 09:00–13:00, air mati sementara", "Pengurasan tangki air Tower A & B. Mohon menampung air secukupnya.", "important"},
 		{"Facility Closure: Kolam renang", "Ditutup Senin untuk perawatan", "Kolam renang ditutup untuk pembersihan filter dan pengecekan pompa.", "normal"},

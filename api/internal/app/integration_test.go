@@ -628,11 +628,31 @@ func TestAuthRefreshRotation(t *testing.T) {
 	if r2.RefreshToken == "" || r2.RefreshToken == lr.RefreshToken {
 		t.Fatal("refresh token harus dirotasi")
 	}
-	// reuse token lama → seluruh sesi dicabut
-	st, _ = e.do("", http.MethodPost, "/api/v1/auth/refresh", map[string]any{"refresh_token": lr.RefreshToken, "client": "mobile"})
+	// reuse token lama dalam jendela grace (refresh paralel sah) → 401 REFRESH_SUPERSEDED, sesi tetap hidup
+	st, body = e.do("", http.MethodPost, "/api/v1/auth/refresh", map[string]any{"refresh_token": lr.RefreshToken, "client": "mobile"})
+	if st != 401 || !strings.Contains(string(body), "REFRESH_SUPERSEDED") {
+		t.Fatalf("reuse dalam grace harus 401 REFRESH_SUPERSEDED, got %d %s", st, body)
+	}
+	st, body = e.do("", http.MethodPost, "/api/v1/auth/refresh", map[string]any{"refresh_token": r2.RefreshToken, "client": "mobile"})
+	e.mustJSON(st, body, 200, &r2)
+	// token lama dipakai lagi setelah jendela grace → dianggap pencurian: seluruh sesi dicabut
+	prev := r2.RefreshToken
+	st, body = e.do("", http.MethodPost, "/api/v1/auth/refresh", map[string]any{"refresh_token": prev, "client": "mobile"})
+	var r3 struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	e.mustJSON(st, body, 200, &r3)
+	if err := e.app.DB.WithOrgTx(context.Background(), e.refs.OrgID, func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE sessions SET last_used_at = now() - interval '5 minutes' WHERE user_id = $1`, e.refs.Users["technician"])
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = e.do("", http.MethodPost, "/api/v1/auth/refresh", map[string]any{"refresh_token": prev, "client": "mobile"})
 	if st != 401 {
 		t.Fatalf("reuse harus 401, got %d", st)
 	}
+	r2.RefreshToken = r3.RefreshToken
 	st, _ = e.do("", http.MethodPost, "/api/v1/auth/refresh", map[string]any{"refresh_token": r2.RefreshToken, "client": "mobile"})
 	if st != 401 {
 		t.Fatalf("setelah reuse-detection, token baru pun harus 401, got %d", st)

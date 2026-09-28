@@ -248,7 +248,7 @@ func (s *Service) OverdueSweep(ctx context.Context, orgID uuid.UUID) (int, error
 	err := s.DB.WithOrgTx(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
 		for _, ot := range []string{ObjTask, ObjWorkOrder} {
 			t, _ := tableFor(ot)
-			rows, err := tx.Query(ctx, fmt.Sprintf(`UPDATE %s SET is_overdue = true WHERE organization_id = $1 AND NOT is_overdue AND due_at < now() AND status NOT IN ('completed','closed','cancelled')
+			rows, err := tx.Query(ctx, fmt.Sprintf(`UPDATE %s SET is_overdue = true WHERE organization_id = $1 AND NOT is_overdue AND due_at < now() AND status NOT IN ('completed','closed','cancelled','draft')
 				RETURNING id, %s, property_id, assignee_user_id, assignee_team_id, %s`, t.table, t.numberCol, t.typeCol), orgID)
 			if err != nil {
 				return err
@@ -359,6 +359,8 @@ func (s *Service) SLASweep(ctx context.Context, orgID uuid.UUID) (int, error) {
 			}
 		}
 		rows.Close()
+		// target respons terlewati tanpa respons (PRD P1 v2 §21.2)
+		_, _ = tx.Exec(ctx, `UPDATE sla_tracking SET response_breached_at = now() WHERE organization_id = $1 AND response_breached_at IS NULL AND responded_at IS NULL AND resolved_at IS NULL AND response_due_at IS NOT NULL AND response_due_at < now() AND paused_at IS NULL`, orgID)
 		for _, r := range rs {
 			total++
 			table := map[string]string{ObjTask: "tasks", ObjWorkOrder: "work_orders", ObjServiceRequest: "service_requests", ObjIncident: "incidents"}[r.ot]
@@ -384,6 +386,18 @@ func (s *Service) SLASweep(ctx context.Context, orgID uuid.UUID) (int, error) {
 				_, _ = tx.Exec(ctx, `UPDATE sla_tracking SET escalated_at = COALESCE(escalated_at, now()) WHERE object_type = $1 AND object_id = $2`, r.ot, r.id)
 			}
 			_, _ = tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET %s = now() WHERE id = $1 AND %s IS NULL`, table, col, col), r.id)
+			if r.kind == "breach" {
+				// breach menyiratkan risk: isi sla_risk_at bila risk & breach terlewati dalam satu sweep (filter sla_risk tetap konsisten)
+				_, _ = tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET sla_risk_at = COALESCE(sla_risk_at, now()) WHERE id = $1`, table), r.id)
+				_, _ = tx.Exec(ctx, `UPDATE sla_tracking SET sla_risk_at = COALESCE(sla_risk_at, sla_breached_at) WHERE object_type = $1 AND object_id = $2`, r.ot, r.id)
+				if r.ot == ObjTask || r.ot == ObjWorkOrder || r.ot == ObjIncident {
+					// PRD P1 v2 §52: SLA breach = eskalasi otomatis level 1 ke supervisor (incident: PRD P2 v2.1 P2-SIN-05)
+					tag, _ := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET escalated_at = COALESCE(escalated_at, now()), escalation_level = GREATEST(escalation_level, 1) WHERE id = $1 AND escalation_level = 0`, table), r.id)
+					if tag.RowsAffected() > 0 {
+						_ = audit.Record(ctx, tx, audit.Entry{ObjectType: r.ot, ObjectID: r.id, Action: audit.ActEscalated, Payload: map[string]any{"reason": "SLA breached", "level": 1, "auto": true}})
+					}
+				}
+			}
 			_ = audit.Record(ctx, tx, audit.Entry{ObjectType: r.ot, ObjectID: r.id, Action: act})
 			if s.Jobs != nil {
 				_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: r.ot + evSuffix, OrganizationID: orgID, PropertyID: &prop, ObjectType: r.ot, ObjectID: r.id, ObjectLabel: number,

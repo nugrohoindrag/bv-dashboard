@@ -67,6 +67,15 @@ const (
 	IncidentResolved  = "incident.resolved"
 	IncidentClosed    = "incident.closed"
 	IncidentEscalated = "incident.escalated"
+	IncidentCritical  = "incident.critical" // PRD P1 v2 §35 Critical Incident
+
+	// PRD P2 v2.1 §6.4 Emergency (NC §16): Panic Button → Emergency Alert → Security Response → Incident
+	EmergencyRaised       = "emergency_alert.raised"
+	EmergencyAcknowledged = "emergency_alert.acknowledged"
+	EmergencyResponding   = "emergency_alert.responding"
+	EmergencyEscalated    = "emergency_alert.escalated"
+	EmergencyResolved     = "emergency_alert.resolved"
+	EmergencyCancelled    = "emergency_alert.cancelled"
 
 	ServiceRequestCreated       = "service_request.created"
 	ServiceRequestAssigned      = "service_request.assigned"
@@ -85,6 +94,12 @@ const (
 	TenantUpdated   = "tenant.updated"
 	LocationCreated = "location.created"
 	LocationUpdated = "location.updated"
+	LocationDeleted = "location.deleted" // PRD P0 v2 §17: dokumen search dihapus
+	UserCreated     = "user.created"     // PRD P0 v2 §17.1: search User Name
+	UserUpdated     = "user.updated"
+	VendorCreated   = "vendor.created" // PRD P0 v2 §17.1: search Vendor Name
+	VendorUpdated   = "vendor.updated"
+	SystemBroadcast = "system.broadcast" // PRD P0 v2 §14.2: system notification
 
 	AttachmentConfirmed = "attachment.confirmed"
 	CommentAdded        = "comment.added"

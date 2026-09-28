@@ -71,18 +71,27 @@ type Facility struct {
 	IsActive           bool       `json:"is_active"`
 	UpcomingBookings   int        `json:"upcoming_bookings"`
 	Version            int        `json:"version"`
+	// PRD P1 v2 §6.3: facility operasional
+	Status     string `json:"status"`      // operational | under_maintenance | closed | inactive
+	IsBookable bool   `json:"is_bookable"` // dapat dibooking tenant (butuh capability facility_booking)
+	OpenWork   int    `json:"open_work"`   // task + WO terbuka di lokasi facility (subtree)
 }
 
 const facSelect = `SELECT f.id, f.property_id, f.facility_code, f.name, f.description, f.facility_type, f.location_id, f.capacity, f.requires_approval, f.slot_minutes, f.min_duration_minutes, f.max_duration_minutes,
 	f.advance_booking_days, to_char(f.open_time,'HH24:MI'), to_char(f.close_time,'HH24:MI'), f.weekdays, f.rules, f.image_attachment_id, f.is_active, f.version,
 	(SELECT count(*) FROM bookings b WHERE b.facility_id = f.id AND b.status IN ('pending','confirmed') AND b.starts_at >= now()),
-	(SELECT string_agg(a.name, ' · ' ORDER BY a.depth) FROM locations l JOIN locations a ON a.path @> l.path AND a.depth > 0 WHERE l.id = f.location_id)
+	(SELECT string_agg(a.name, ' · ' ORDER BY a.depth) FROM locations l JOIN locations a ON a.path @> l.path AND a.depth > 0 WHERE l.id = f.location_id),
+	f.status, f.is_bookable,
+	CASE WHEN f.location_id IS NULL THEN 0 ELSE (
+	  (SELECT count(*) FROM tasks t JOIN locations tl ON tl.id = t.location_id JOIN locations fl ON fl.id = f.location_id WHERE tl.path <@ fl.path AND t.status NOT IN ('completed','closed','cancelled')) +
+	  (SELECT count(*) FROM work_orders w JOIN locations wl ON wl.id = w.location_id JOIN locations fl ON fl.id = f.location_id WHERE wl.path <@ fl.path AND w.status NOT IN ('completed','closed','cancelled','draft'))) END
 	FROM facilities f`
 
 func scanFacility(row pgx.Row) (*Facility, error) {
 	var f Facility
 	if err := row.Scan(&f.ID, &f.PropertyID, &f.FacilityCode, &f.Name, &f.Description, &f.FacilityType, &f.LocationID, &f.Capacity, &f.RequiresApproval, &f.SlotMinutes, &f.MinDurationMinutes, &f.MaxDurationMinutes,
-		&f.AdvanceBookingDays, &f.OpenTime, &f.CloseTime, &f.Weekdays, &f.Rules, &f.ImageAttachmentID, &f.IsActive, &f.Version, &f.UpcomingBookings, &f.LocationPath); err != nil {
+		&f.AdvanceBookingDays, &f.OpenTime, &f.CloseTime, &f.Weekdays, &f.Rules, &f.ImageAttachmentID, &f.IsActive, &f.Version, &f.UpcomingBookings, &f.LocationPath,
+		&f.Status, &f.IsBookable, &f.OpenWork); err != nil {
 		return nil, err
 	}
 	return &f, nil
@@ -116,9 +125,49 @@ type FacilityInput struct {
 	Rules              *string    `json:"rules"`
 	ImageAttachmentID  *uuid.UUID `json:"image_attachment_id"`
 	IsActive           *bool      `json:"is_active"`
+	Status             *string    `json:"status"`      // PRD P1 v2 §6.3
+	IsBookable         *bool      `json:"is_bookable"` // default: tipe bookable & property punya capability facility_booking
 }
 
-var facilityTypes = map[string]bool{"meeting_room": true, "function_hall": true, "gym": true, "pool": true, "court": true, "bbq": true, "coworking": true, "lounge": true, "parking": true, "other": true}
+// PRD P1 v2 §6.3: lobby, lift, parking, gym, swimming pool (pool), meeting room, toilet, corridor, common area + tipe booking P1 v1.3.
+var facilityTypes = map[string]bool{"meeting_room": true, "function_hall": true, "gym": true, "pool": true, "court": true, "bbq": true, "coworking": true, "lounge": true, "parking": true, "other": true,
+	"lobby": true, "lift": true, "toilet": true, "corridor": true, "common_area": true}
+
+// bookableTypes: tipe yang lazim dibooking tenant (default is_bookable).
+var bookableTypes = map[string]bool{"meeting_room": true, "function_hall": true, "gym": true, "pool": true, "court": true, "bbq": true, "coworking": true, "lounge": true}
+
+var facilityStatuses = map[string]bool{"operational": true, "under_maintenance": true, "closed": true, "inactive": true}
+
+// canFacility: facility dikelola lewat modul Booking (booking.facilities.*) atau Building Management (property.facilities.*).
+// Scope Building/Tower (PRD P1 v2.1 P1-BLD-09): grant ber-scope berlaku bila lokasi facility ada di subtree scope-nya.
+func canFacility(ctx context.Context, q db.Querier, action string, propertyID uuid.UUID, locationID *uuid.UUID) error {
+	p, ok := authctx.From(ctx)
+	if !ok {
+		return apperr.Unauthorized("")
+	}
+	path := db.LocationPathFn(ctx, q, locationID)
+	if p.HasOnPropertyAt("property.facilities."+action, propertyID, path) || p.HasOnPropertyAt("booking.facilities."+action, propertyID, path) {
+		return nil
+	}
+	return apperr.Forbidden("Tidak memiliki property.facilities." + action + " / booking.facilities." + action + " pada lokasi ini")
+}
+
+// facilityScopeSQL: baris facility dalam scope user (property-wide ATAU subtree Building/Tower) untuk salah satu permission view.
+func facilityScopeSQL(p *authctx.Principal, add func(any) string) string {
+	path := "(SELECT sl.path FROM locations sl WHERE sl.id = f.location_id)"
+	return "(" + p.ScopeSQL("property.facilities.view", "f.property_id", path, add) + " OR " + p.ScopeSQL("booking.facilities.view", "f.property_id", path, add) + ")"
+}
+
+// FacilityFilter (PRD P1 v2 §6.3): type/status/bookable/location.
+type FacilityFilter struct {
+	PropertyID *uuid.UUID
+	ActiveOnly bool
+	Types      []string
+	Statuses   []string
+	Bookable   *bool
+	LocationID *uuid.UUID // subtree
+	Q          string
+}
 
 func parseHHMM(v string) (time.Duration, error) {
 	t, err := time.Parse("15:04", v)
@@ -129,23 +178,41 @@ func parseHHMM(v string) (time.Duration, error) {
 }
 
 func (s *Service) ListFacilities(ctx context.Context, propertyID *uuid.UUID, activeOnly bool) ([]Facility, error) {
+	return s.ListFacilitiesFiltered(ctx, FacilityFilter{PropertyID: propertyID, ActiveOnly: activeOnly})
+}
+
+func (s *Service) ListFacilitiesFiltered(ctx context.Context, ff FacilityFilter) ([]Facility, error) {
 	p := authctx.Must(ctx)
 	var out []Facility
 	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		where := " WHERE f.deleted_at IS NULL"
 		var args []any
-		if propertyID != nil {
-			if err := iam.CanOnProperty(ctx, "booking.facilities.view", *propertyID); err != nil {
-				return err
+		add := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
+		if ff.PropertyID != nil {
+			if !p.HasAnyOnProperty("property.facilities.view", *ff.PropertyID) && !p.HasAnyOnProperty("booking.facilities.view", *ff.PropertyID) {
+				return apperr.Forbidden("Tidak memiliki akses facility pada property ini")
 			}
-			args = append(args, *propertyID)
-			where += " AND f.property_id = $1"
-		} else if pids, all := p.PropertyIDsFor("booking.facilities.view"); !all {
-			args = append(args, pids)
-			where += " AND f.property_id = ANY($1)"
+			where += " AND f.property_id = " + add(*ff.PropertyID)
 		}
-		if activeOnly {
+		where += " AND " + facilityScopeSQL(p, add)
+		if ff.ActiveOnly {
 			where += " AND f.is_active"
+		}
+		if len(ff.Types) > 0 {
+			where += " AND f.facility_type = ANY(" + add(ff.Types) + ")"
+		}
+		if len(ff.Statuses) > 0 {
+			where += " AND f.status = ANY(" + add(ff.Statuses) + ")"
+		}
+		if ff.Bookable != nil {
+			where += " AND f.is_bookable = " + add(*ff.Bookable)
+		}
+		if ff.LocationID != nil {
+			where += " AND f.location_id IN (SELECT d.id FROM locations d JOIN locations r ON d.path <@ r.path WHERE r.id = " + add(*ff.LocationID) + ")"
+		}
+		if q := strings.TrimSpace(ff.Q); q != "" {
+			v := add("%" + q + "%")
+			where += " AND (f.name ILIKE " + v + " OR f.facility_code ILIKE " + v + ")"
 		}
 		rows, err := tx.Query(ctx, facSelect+where+" ORDER BY f.name", args...)
 		if err != nil {
@@ -189,7 +256,7 @@ func (s *Service) GetFacility(ctx context.Context, id uuid.UUID) (*Facility, err
 		if err != nil {
 			return err
 		}
-		if err := iam.CanOnProperty(ctx, "booking.facilities.view", f.PropertyID); err != nil {
+		if err := canFacility(ctx, tx, "view", f.PropertyID, f.LocationID); err != nil {
 			return err
 		}
 		out = f
@@ -203,8 +270,15 @@ func (s *Service) CreateFacility(ctx context.Context, in FacilityInput) (*Facili
 	if in.PropertyID == nil {
 		return nil, apperr.Validation("property_id wajib")
 	}
-	if err := iam.CanOnProperty(ctx, "booking.facilities.create", *in.PropertyID); err != nil {
-		return nil, err
+	if !p.HasAnyOnProperty("property.facilities.create", *in.PropertyID) && !p.HasAnyOnProperty("booking.facilities.create", *in.PropertyID) {
+		return nil, apperr.Forbidden("Tidak memiliki property.facilities.create / booking.facilities.create pada property ini")
+	}
+	status := "operational"
+	if in.Status != nil {
+		if !facilityStatuses[*in.Status] {
+			return nil, apperr.Validation("status harus operational|under_maintenance|closed|inactive").WithField("status", "tidak valid")
+		}
+		status = *in.Status
 	}
 	name := strings.TrimSpace(deref(in.Name))
 	if name == "" {
@@ -252,8 +326,14 @@ func (s *Service) CreateFacility(ctx context.Context, in FacilityInput) (*Facili
 	}
 	var out *Facility
 	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		if err := s.Profile.RequireCapabilityTx(ctx, tx, *in.PropertyID, profile.CapFacilityBooking); err != nil {
-			return err
+		// Booking hanya untuk facility bookable; facility operasional (lobby/lift/toilet/…) tidak butuh capability booking.
+		hasBooking := s.Profile.RequireCapabilityTx(ctx, tx, *in.PropertyID, profile.CapFacilityBooking) == nil
+		bookable := bookableTypes[ft] && hasBooking
+		if in.IsBookable != nil {
+			bookable = *in.IsBookable
+			if bookable && !hasBooking {
+				return s.Profile.RequireCapabilityTx(ctx, tx, *in.PropertyID, profile.CapFacilityBooking)
+			}
 		}
 		if in.LocationID != nil {
 			pid, err := property.ResolvePropertyOfLocation(ctx, tx, *in.LocationID)
@@ -261,14 +341,18 @@ func (s *Service) CreateFacility(ctx context.Context, in FacilityInput) (*Facili
 				return apperr.Validation("location_id tidak berada di property ini")
 			}
 		}
+		// scope Building: user ber-scope hanya membuat facility di subtree Building/Tower-nya
+		if err := canFacility(ctx, tx, "create", *in.PropertyID, in.LocationID); err != nil {
+			return err
+		}
 		code, err := ids.NextPlain(ctx, tx, p.OrganizationID, ids.PrefixFacility)
 		if err != nil {
 			return err
 		}
 		var id uuid.UUID
-		if err := tx.QueryRow(ctx, `INSERT INTO facilities (organization_id, property_id, facility_code, name, description, facility_type, location_id, capacity, requires_approval, slot_minutes, min_duration_minutes, max_duration_minutes, advance_booking_days, open_time, close_time, weekdays, rules, image_attachment_id, created_by, updated_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::time,$15::time,$16,$17,$18,$19,$19) RETURNING id`,
-			p.OrganizationID, *in.PropertyID, code, name, in.Description, ft, in.LocationID, in.Capacity, in.RequiresApproval, slot, minD, maxD, adv, open, closeT, wd, in.Rules, in.ImageAttachmentID, p.UserID).Scan(&id); err != nil {
+		if err := tx.QueryRow(ctx, `INSERT INTO facilities (organization_id, property_id, facility_code, name, description, facility_type, location_id, capacity, requires_approval, slot_minutes, min_duration_minutes, max_duration_minutes, advance_booking_days, open_time, close_time, weekdays, rules, image_attachment_id, created_by, updated_by, status, is_bookable, is_active)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::time,$15::time,$16,$17,$18,$19,$19,$20,$21,$22) RETURNING id`,
+			p.OrganizationID, *in.PropertyID, code, name, in.Description, ft, in.LocationID, in.Capacity, in.RequiresApproval, slot, minD, maxD, adv, open, closeT, wd, in.Rules, in.ImageAttachmentID, p.UserID, status, bookable, status != "inactive").Scan(&id); err != nil {
 			return err
 		}
 		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "facility", EntityID: &id, EntityLabel: code + " " + name})
@@ -286,14 +370,46 @@ func (s *Service) UpdateFacility(ctx context.Context, id uuid.UUID, in FacilityI
 		if err != nil {
 			return err
 		}
-		if err := iam.CanOnProperty(ctx, "booking.facilities.update", f.PropertyID); err != nil {
+		if err := canFacility(ctx, tx, "update", f.PropertyID, f.LocationID); err != nil {
 			return err
+		}
+		if in.LocationID != nil {
+			if err := canFacility(ctx, tx, "update", f.PropertyID, in.LocationID); err != nil {
+				return err
+			}
 		}
 		if ifVersion != nil && *ifVersion != f.Version {
 			return apperr.StaleVersion()
 		}
 		if in.FacilityType != nil && !facilityTypes[*in.FacilityType] {
 			return apperr.Validation("facility_type tidak valid")
+		}
+		if in.Status != nil && !facilityStatuses[*in.Status] {
+			return apperr.Validation("status harus operational|under_maintenance|closed|inactive").WithField("status", "tidak valid")
+		}
+		if in.IsBookable != nil && *in.IsBookable && !f.IsBookable {
+			if err := s.Profile.RequireCapabilityTx(ctx, tx, f.PropertyID, profile.CapFacilityBooking); err != nil {
+				return err
+			}
+		}
+		if in.LocationID != nil {
+			pid, err := property.ResolvePropertyOfLocation(ctx, tx, *in.LocationID)
+			if err != nil || pid != f.PropertyID {
+				return apperr.Validation("location_id tidak berada di property ini")
+			}
+		}
+		// status ⇄ is_active tetap sinkron
+		isActive := in.IsActive
+		status := in.Status
+		if status != nil {
+			v := *status != "inactive"
+			isActive = &v
+		} else if in.IsActive != nil {
+			v := "operational"
+			if !*in.IsActive {
+				v = "inactive"
+			}
+			status = &v
 		}
 		for _, t := range []*string{in.OpenTime, in.CloseTime} {
 			if t != nil {
@@ -310,11 +426,13 @@ func (s *Service) UpdateFacility(ctx context.Context, id uuid.UUID, in FacilityI
 		if _, err := tx.Exec(ctx, `UPDATE facilities SET name = COALESCE(NULLIF(TRIM($2),''), name), description = COALESCE($3, description), facility_type = COALESCE($4, facility_type), location_id = COALESCE($5, location_id),
 			capacity = COALESCE($6, capacity), requires_approval = CASE WHEN $7::bool IS NULL THEN requires_approval ELSE $7 END, slot_minutes = COALESCE($8, slot_minutes), min_duration_minutes = COALESCE($9, min_duration_minutes),
 			max_duration_minutes = COALESCE($10, max_duration_minutes), advance_booking_days = COALESCE($11, advance_booking_days), open_time = COALESCE($12::time, open_time), close_time = COALESCE($13::time, close_time),
-			weekdays = COALESCE($14, weekdays), rules = COALESCE($15, rules), image_attachment_id = COALESCE($16, image_attachment_id), is_active = COALESCE($17, is_active), updated_by = $18 WHERE id = $1`,
-			id, deref(in.Name), in.Description, in.FacilityType, in.LocationID, in.Capacity, in.RequiresApproval, in.SlotMinutes, in.MinDurationMinutes, in.MaxDurationMinutes, in.AdvanceBookingDays, in.OpenTime, in.CloseTime, wdArg, in.Rules, in.ImageAttachmentID, in.IsActive, p.UserID); err != nil {
+			weekdays = COALESCE($14, weekdays), rules = COALESCE($15, rules), image_attachment_id = COALESCE($16, image_attachment_id), is_active = COALESCE($17, is_active), updated_by = $18,
+			status = COALESCE($19, status), is_bookable = COALESCE($20, is_bookable) WHERE id = $1`,
+			id, deref(in.Name), in.Description, in.FacilityType, in.LocationID, in.Capacity, in.RequiresApproval, in.SlotMinutes, in.MinDurationMinutes, in.MaxDurationMinutes, in.AdvanceBookingDays, in.OpenTime, in.CloseTime, wdArg, in.Rules, in.ImageAttachmentID, isActive, p.UserID,
+			status, in.IsBookable); err != nil {
 			return err
 		}
-		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditUpdate, EntityType: "facility", EntityID: &id, EntityLabel: f.FacilityCode, After: in})
+		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditUpdate, EntityType: "facility", EntityID: &id, EntityLabel: f.FacilityCode, Before: f, After: in})
 		out, err = s.getFacilityTx(ctx, tx, id)
 		return err
 	})
@@ -328,7 +446,7 @@ func (s *Service) DeleteFacility(ctx context.Context, id uuid.UUID) error {
 		if err != nil {
 			return err
 		}
-		if err := iam.CanOnProperty(ctx, "booking.facilities.delete", f.PropertyID); err != nil {
+		if err := canFacility(ctx, tx, "delete", f.PropertyID, f.LocationID); err != nil {
 			return err
 		}
 		if f.UpcomingBookings > 0 {
@@ -368,7 +486,7 @@ func (s *Service) ListSchedules(ctx context.Context, facilityID uuid.UUID) ([]Sc
 		if err != nil {
 			return err
 		}
-		if err := iam.CanOnProperty(ctx, "booking.facilities.view", f.PropertyID); err != nil {
+		if err := canFacility(ctx, tx, "view", f.PropertyID, f.LocationID); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT id, kind, starts_at, ends_at, to_char(open_time,'HH24:MI'), to_char(close_time,'HH24:MI'), reason FROM facility_schedules WHERE facility_id = $1 AND ends_at >= now() - interval '30 days' ORDER BY starts_at`, facilityID)
@@ -405,7 +523,7 @@ func (s *Service) AddSchedule(ctx context.Context, facilityID uuid.UUID, in Sche
 		if err != nil {
 			return err
 		}
-		if err := iam.CanOnProperty(ctx, "booking.facilities.update", f.PropertyID); err != nil {
+		if err := canFacility(ctx, tx, "update", f.PropertyID, f.LocationID); err != nil {
 			return err
 		}
 		if err := tx.QueryRow(ctx, `INSERT INTO facility_schedules (organization_id, facility_id, kind, starts_at, ends_at, open_time, close_time, reason, created_by) VALUES ($1,$2,$3,$4,$5,$6::time,$7::time,$8,$9) RETURNING id`,
@@ -425,7 +543,7 @@ func (s *Service) DeleteSchedule(ctx context.Context, facilityID, scheduleID uui
 		if err != nil {
 			return err
 		}
-		if err := iam.CanOnProperty(ctx, "booking.facilities.update", f.PropertyID); err != nil {
+		if err := canFacility(ctx, tx, "update", f.PropertyID, f.LocationID); err != nil {
 			return err
 		}
 		ct, err := tx.Exec(ctx, `DELETE FROM facility_schedules WHERE id = $1 AND facility_id = $2`, scheduleID, facilityID)
@@ -640,8 +758,11 @@ func (s *Service) createTx(ctx context.Context, tx pgx.Tx, in CreateBookingInput
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if !f.IsActive {
-		return uuid.Nil, apperr.Validation("Fasilitas tidak aktif")
+	if !f.IsActive || f.Status != "operational" {
+		return uuid.Nil, apperr.Validation("Fasilitas tidak tersedia untuk booking (status " + f.Status + ")")
+	}
+	if !f.IsBookable {
+		return uuid.Nil, apperr.Validation("Fasilitas ini bukan fasilitas yang dapat dibooking")
 	}
 	if sc != nil && f.PropertyID != sc.PropertyID {
 		return uuid.Nil, apperr.NotFound("Facility") // tidak bocor lintas property
@@ -971,7 +1092,7 @@ func (s *Service) TenantFacilities(ctx context.Context) ([]Facility, error) {
 		if err := s.Profile.RequireCapabilityTx(ctx, tx, sc.PropertyID, profile.CapFacilityBooking); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, facSelect+` WHERE f.property_id = $1 AND f.is_active AND f.deleted_at IS NULL ORDER BY f.name`, sc.PropertyID)
+		rows, err := tx.Query(ctx, facSelect+` WHERE f.property_id = $1 AND f.is_active AND f.is_bookable AND f.deleted_at IS NULL ORDER BY f.name`, sc.PropertyID)
 		if err != nil {
 			return err
 		}

@@ -126,3 +126,15 @@ func IsExclusionViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23P01"
 }
+
+// LocationPathFn: loader lazy ltree path lokasi (untuk authctx.HasOnPropertyAt — scope building, PRD P0 v2 §8.4).
+func LocationPathFn(ctx context.Context, q Querier, locationID *uuid.UUID) func() string {
+	return func() string {
+		if locationID == nil {
+			return ""
+		}
+		var path string
+		_ = q.QueryRow(ctx, `SELECT path::text FROM locations WHERE id = $1`, *locationID).Scan(&path)
+		return path
+	}
+}

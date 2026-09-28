@@ -32,6 +32,10 @@ type Service struct {
 	Profile     *profile.Service
 	Attachments *attachments.Service
 	Ops         *operations.Service
+	// Accounts: pembuat akun anggota untuk Tenant Admin (PRD P3 v2.1 P3-ACC-08) — diisi saat wiring (tenantrelation)
+	Accounts AccountCreator
+	// OnUserChanged: invalidasi cache principal IAM setelah status/akses akun anggota berubah
+	OnUserChanged func(uuid.UUID)
 
 	regLimiter *ipLimiter
 }
@@ -92,6 +96,10 @@ type Me struct {
 	} `json:"features"`
 	Capabilities []profile.Capability `json:"capabilities"`
 	LastSeenAt   *time.Time           `json:"last_seen_at"`
+	// PRD P3 v2.1: wajib ganti password (P3-ACC-03), kontak WhatsApp pengelola (P3-WAM-05), pengelolaan anggota (P3-ACC-08)
+	MustChangePassword bool    `json:"must_change_password"`
+	WhatsAppNumber     *string `json:"whatsapp_number"`
+	IsTenantAdmin      bool    `json:"is_tenant_admin"`
 }
 
 func (s *Service) Me(ctx context.Context) (*Me, error) {
@@ -113,10 +121,12 @@ func (s *Service) Me(ctx context.Context) (*Me, error) {
 
 func (s *Service) meTx(ctx context.Context, tx pgx.Tx, sc *Scope) (*Me, error) {
 	m := &Me{ID: sc.UserID, TenantUserID: sc.TenantUserID, Role: sc.Role, AccountStatus: sc.Status, OwnershipStatus: sc.OwnershipStatus, Units: sc.Units, Areas: sc.Areas, PrimaryUnit: sc.PrimaryUnit()}
-	if err := tx.QueryRow(ctx, `SELECT u.full_name, u.email, u.phone, tu.last_seen_at, o.id, o.slug, o.name FROM users u JOIN tenant_users tu ON tu.user_id = u.id JOIN organizations o ON o.id = u.organization_id WHERE u.id = $1`, sc.UserID).
-		Scan(&m.FullName, &m.Email, &m.Phone, &m.LastSeenAt, &m.Organization.ID, &m.Organization.Slug, &m.Organization.Name); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT u.full_name, u.email, u.phone, tu.last_seen_at, o.id, o.slug, o.name, u.must_change_password FROM users u JOIN tenant_users tu ON tu.user_id = u.id JOIN organizations o ON o.id = u.organization_id WHERE u.id = $1`, sc.UserID).
+		Scan(&m.FullName, &m.Email, &m.Phone, &m.LastSeenAt, &m.Organization.ID, &m.Organization.Slug, &m.Organization.Name, &m.MustChangePassword); err != nil {
 		return nil, err
 	}
+	m.IsTenantAdmin = sc.Role == "tenant_admin" && sc.TenantID != nil
+	_ = tx.QueryRow(ctx, `SELECT NULLIF(whatsapp_number,'') FROM properties WHERE location_id = $1`, sc.PropertyID).Scan(&m.WhatsAppNumber)
 	pc, err := s.Profile.ResolveTx(ctx, tx, sc.PropertyID)
 	if err != nil {
 		return nil, err
@@ -160,11 +170,12 @@ func (s *Service) UpdateMe(ctx context.Context, in UpdateMeInput) (*Me, error) {
 		if in.FullName != nil && strings.TrimSpace(*in.FullName) == "" {
 			return apperr.Validation("full_name tidak boleh kosong")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE users SET full_name = COALESCE(NULLIF(TRIM($2),''), full_name), phone = COALESCE(NULLIF(TRIM($3),''), phone) WHERE id = $1`, sc.UserID, deref(in.FullName), deref(in.Phone)); err != nil {
+		// phone: tidak dikirim → tetap; string kosong → dikosongkan (NULL)
+		if _, err := tx.Exec(ctx, `UPDATE users SET full_name = COALESCE(NULLIF(TRIM($2),''), full_name), phone = CASE WHEN $3::text IS NULL THEN phone ELSE NULLIF(TRIM($3),'') END WHERE id = $1`, sc.UserID, deref(in.FullName), in.Phone); err != nil {
 			return err
 		}
 		if sc.OccupantID != nil {
-			_, _ = tx.Exec(ctx, `UPDATE occupants SET full_name = COALESCE(NULLIF(TRIM($2),''), full_name), phone = COALESCE(NULLIF(TRIM($3),''), phone) WHERE id = $1`, *sc.OccupantID, deref(in.FullName), deref(in.Phone))
+			_, _ = tx.Exec(ctx, `UPDATE occupants SET full_name = COALESCE(NULLIF(TRIM($2),''), full_name), phone = CASE WHEN $3::text IS NULL THEN phone ELSE NULLIF(TRIM($3),'') END WHERE id = $1`, *sc.OccupantID, deref(in.FullName), in.Phone)
 		}
 		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditUpdate, EntityType: "tenant_user", EntityID: &sc.TenantUserID, EntityLabel: "profile", After: in})
 		out, err = s.meTx(ctx, tx, sc)
@@ -234,6 +245,7 @@ type Request struct {
 	CategoryCode  string    `json:"category_code"`
 	CategoryName  *string   `json:"category_name"`
 	CategoryIcon  *string   `json:"category_icon"`
+	RequestType   string    `json:"request_type"`  // PRD P1 v2 §27.2
 	Status        string    `json:"status"`        // kanonik (NC §28)
 	TenantStatus  string    `json:"tenant_status"` // tenant-facing (PRD §14)
 	Priority      string    `json:"priority"`
@@ -271,7 +283,7 @@ const reqSelect = `SELECT sr.id, sr.request_number, sr.title, sr.description, sr
 	COALESCE(sr.due_estimate_at, st.resolution_due_at), sr.resolution, sr.reopen_count, sr.contact_preference, sr.preferred_visit_at, sr.additional_note, sr.version, pl.name,
 	(SELECT count(*) FROM service_request_messages m WHERE m.service_request_id = sr.id),
 	(SELECT count(*) FROM service_request_messages m WHERE m.service_request_id = sr.id AND m.author_kind <> 'tenant' AND m.read_by_tenant_at IS NULL),
-	fb.rating, fb.comment, fb.created_at
+	fb.rating, fb.comment, fb.created_at, sr.request_type
 	FROM service_requests sr
 	LEFT JOIN service_request_categories c ON c.id = sr.category_id
 	LEFT JOIN locations l ON l.id = sr.location_id
@@ -290,7 +302,7 @@ func scanReq(row pgx.Row) (*Request, error) {
 	if err := row.Scan(&r.ID, &r.RequestNumber, &r.Title, &r.Description, &r.CategoryCode, &r.CategoryName, &r.CategoryIcon, &status, &r.Priority, &r.AreaScope,
 		&r.Location.ID, &r.Location.Name, &teamID, &r.AssignedTeam, &r.CreatedAt, &r.AcknowledgedAt, &r.ResolvedAt, &r.ClosedAt, &r.CancelledAt, &r.ConfirmedAt,
 		&r.DueEstimateAt, &r.Resolution, &r.ReopenCount, &r.ContactPreference, &r.PreferredVisitAt, &r.AdditionalNote, &r.Version, &r.PropertyName,
-		&r.MessageCount, &r.UnreadMessages, &fbRating, &fbComment, &fbAt); err != nil {
+		&r.MessageCount, &r.UnreadMessages, &fbRating, &fbComment, &fbAt, &r.RequestType); err != nil {
 		return nil, err
 	}
 	r.Status = string(status)
@@ -343,7 +355,21 @@ func (s *Service) finalize(ctx context.Context, tx pgx.Tx, sc *Scope, r *Request
 			return err
 		}
 		s.Attachments.FillURLs(ctx, atts)
+		// lampiran pesan tampil di thread komunikasi, bukan di strip foto masalah
+		inMessages := map[uuid.UUID]bool{}
+		if mrows, err := tx.Query(ctx, `SELECT DISTINCT unnest(attachment_ids) FROM service_request_messages WHERE service_request_id = $1`, r.ID); err == nil {
+			for mrows.Next() {
+				var aid uuid.UUID
+				if mrows.Scan(&aid) == nil {
+					inMessages[aid] = true
+				}
+			}
+			mrows.Close()
+		}
 		for _, a := range atts {
+			if inMessages[a.ID] {
+				continue
+			}
 			kind := ""
 			switch {
 			case a.UploadedBy == sc.UserID:
@@ -425,6 +451,7 @@ func (s *Service) timelineTx(ctx context.Context, tx pgx.Tx, srID uuid.UUID) ([]
 
 type CreateRequestInput struct {
 	CategoryCode      string     `json:"category_code"`
+	RequestType       string     `json:"request_type"` // service_request|complaint|maintenance_request|cleaning_request|facility_issue|other (kosong = default kategori)
 	Title             string     `json:"title"`
 	Description       string     `json:"description"`
 	LocationID        *uuid.UUID `json:"location_id"`
@@ -488,7 +515,7 @@ func (s *Service) CreateRequest(ctx context.Context, in CreateRequestInput) (*Re
 		var fullName, email, phone *string
 		_ = tx.QueryRow(ctx, `SELECT full_name, email, phone FROM users WHERE id = $1`, sc.UserID).Scan(&fullName, &email, &phone)
 		id, err := s.SR.CreateTx(ctx, tx, tenantservice.CreateInput{
-			PropertyID: &sc.PropertyID, CategoryCode: in.CategoryCode, Title: in.Title, Description: &in.Description,
+			PropertyID: &sc.PropertyID, CategoryCode: in.CategoryCode, RequestType: in.RequestType, Title: in.Title, Description: &in.Description,
 			TenantID: sc.TenantID, OccupantID: sc.OccupantID, RequesterName: fullName, RequesterPhone: phone, RequesterEmail: email,
 			LocationID: &locID, Channel: "tenant_app", TenantUserID: &sc.UserID, AreaScope: scope, AsTenant: true,
 		})
@@ -709,13 +736,14 @@ func (s *Service) Feedback(ctx context.Context, id uuid.UUID, in FeedbackInput) 
 // ---------- Messages (ServiceRequestMessage) ----------
 
 type Message struct {
-	ID            uuid.UUID   `json:"id"`
-	AuthorKind    string      `json:"author_kind"`
-	AuthorName    *string     `json:"author_name"`
-	Body          string      `json:"body"`
-	AttachmentIDs []uuid.UUID `json:"attachment_ids"`
-	CreatedAt     time.Time   `json:"created_at"`
-	ReadAt        *time.Time  `json:"read_at"`
+	ID            uuid.UUID           `json:"id"`
+	AuthorKind    string              `json:"author_kind"`
+	AuthorName    *string             `json:"author_name"`
+	Body          string              `json:"body"`
+	AttachmentIDs []uuid.UUID         `json:"attachment_ids"`
+	Attachments   []MessageAttachment `json:"attachments"` // PRD P3 v2.1 P3-SRQ-05
+	CreatedAt     time.Time           `json:"created_at"`
+	ReadAt        *time.Time          `json:"read_at"`
 }
 
 // ListMessagesTx: thread komunikasi (dipakai tenant & staf). forTenant → tandai pesan staf terbaca oleh tenant.
@@ -757,6 +785,7 @@ func (s *Service) ListMessages(ctx context.Context, id uuid.UUID) ([]Message, er
 			return err
 		}
 		out, err = ListMessagesTx(ctx, tx, id, true)
+		FillMessageAttachments(ctx, tx, s.Attachments, out)
 		return err
 	})
 	return out, err
@@ -771,7 +800,8 @@ type MessageInput struct {
 func PostMessageTx(ctx context.Context, tx pgx.Tx, j jobs.Enqueuer, srID uuid.UUID, authorKind string, in MessageInput) (*Message, error) {
 	p := authctx.Must(ctx)
 	body := strings.TrimSpace(in.Body)
-	if body == "" {
+	// pesan foto saja boleh tanpa teks (P3-SRQ-05)
+	if body == "" && len(in.AttachmentIDs) == 0 {
 		return nil, apperr.Validation("body wajib").WithField("body", "wajib")
 	}
 	if len([]rune(body)) > 4000 {
@@ -804,6 +834,9 @@ func PostMessageTx(ctx context.Context, tx pgx.Tx, j jobs.Enqueuer, srID uuid.UU
 	_ = audit.Record(ctx, tx, audit.Entry{ObjectType: operations.ObjServiceRequest, ObjectID: srID, Action: "tenant_message", Payload: map[string]any{"author_kind": authorKind, "message_id": m.ID}})
 	if j != nil {
 		preview := body
+		if preview == "" {
+			preview = "Mengirim foto"
+		}
 		if len([]rune(preview)) > 120 {
 			preview = string([]rune(preview)[:117]) + "…"
 		}
@@ -835,105 +868,14 @@ func (s *Service) PostMessage(ctx context.Context, id uuid.UUID, in MessageInput
 			}
 		}
 		out, err = PostMessageTx(ctx, tx, s.Jobs, id, "tenant", in)
+		if err == nil {
+			list := []Message{*out}
+			FillMessageAttachments(ctx, tx, s.Attachments, list)
+			out = &list[0]
+		}
 		return err
 	})
 	return out, err
-}
-
-// ---------- Announcements (read) ----------
-
-type Announcement struct {
-	ID          uuid.UUID  `json:"id"`
-	Title       string     `json:"title"`
-	Excerpt     *string    `json:"excerpt"`
-	Body        string     `json:"body"`
-	Importance  string     `json:"importance"`
-	PublishedAt *time.Time `json:"published_at"`
-	ExpiresAt   *time.Time `json:"expires_at"`
-	ImageURL    string     `json:"image_url,omitempty"`
-}
-
-// Announcement: satu pengumuman (deep link Inbox → /inbox/announcements/{id}); hanya yang published & dalam scope property.
-func (s *Service) Announcement(ctx context.Context, id uuid.UUID) (*Announcement, error) {
-	var out *Announcement
-	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		sc, err := LoadScopeTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		var a Announcement
-		var img *uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT id, title, excerpt, body, importance, published_at, expires_at, image_attachment_id FROM announcements
-			WHERE id = $2 AND status = 'published' AND audience IN ('tenant','all') AND (property_id IS NULL OR property_id = $1)`, sc.PropertyID, id).
-			Scan(&a.ID, &a.Title, &a.Excerpt, &a.Body, &a.Importance, &a.PublishedAt, &a.ExpiresAt, &img); err != nil {
-			if db.IsNoRows(err) {
-				return apperr.NotFound("Announcement")
-			}
-			return err
-		}
-		if img != nil {
-			if at, err := s.Attachments.GetTx(ctx, tx, *img); err == nil {
-				s.Attachments.FillURLs(ctx, []attachments.Attachment{*at})
-				a.ImageURL = at.URL
-			}
-		}
-		out = &a
-		return nil
-	})
-	return out, err
-}
-
-func (s *Service) Announcements(ctx context.Context, page httpx.Page) ([]Announcement, *string, error) {
-	var out []Announcement
-	var next *string
-	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		sc, err := LoadScopeTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		args := []any{sc.PropertyID}
-		where := ` WHERE status = 'published' AND audience IN ('tenant','all') AND (property_id IS NULL OR property_id = $1) AND (expires_at IS NULL OR expires_at > now())`
-		if page.Cursor != nil {
-			args = append(args, page.Cursor.Value, page.Cursor.ID)
-			where += fmt.Sprintf(" AND (published_at, id) < ($%d::timestamptz, $%d)", len(args)-1, len(args))
-		}
-		rows, err := tx.Query(ctx, `SELECT id, title, excerpt, body, importance, published_at, expires_at, image_attachment_id FROM announcements`+where+fmt.Sprintf(" ORDER BY published_at DESC, id DESC LIMIT %d", page.Limit+1), args...)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		var items []Announcement
-		var imgIDs []*uuid.UUID
-		for rows.Next() {
-			var a Announcement
-			var img *uuid.UUID
-			if err := rows.Scan(&a.ID, &a.Title, &a.Excerpt, &a.Body, &a.Importance, &a.PublishedAt, &a.ExpiresAt, &img); err != nil {
-				return err
-			}
-			items = append(items, a)
-			imgIDs = append(imgIDs, img)
-		}
-		if len(items) > page.Limit {
-			last := items[page.Limit-1]
-			c := httpx.EncodeCursor(last.PublishedAt.UTC().Format(time.RFC3339Nano), last.ID)
-			next = &c
-			items = items[:page.Limit]
-		}
-		for i := range items {
-			if imgIDs[i] != nil {
-				if a, err := s.Attachments.GetTx(ctx, tx, *imgIDs[i]); err == nil {
-					s.Attachments.FillURLs(ctx, []attachments.Attachment{*a})
-					items[i].ImageURL = a.URL
-				}
-			}
-		}
-		out = items
-		return nil
-	})
-	if out == nil {
-		out = []Announcement{}
-	}
-	return out, next, err
 }
 
 func deref(s *string) string {

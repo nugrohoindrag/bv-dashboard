@@ -136,8 +136,12 @@ func domainOf(roleCode string) string {
 		return "tenant" // akun Mobile Tenant (bukan staf)
 	case roleCode == "organization_admin":
 		return "admin"
-	case roleCode == RoleAdminInternal:
+	case roleCode == RoleAdminInternal, roleCode == RolePlatformAdmin:
 		return "internal" // staf internal BuildingVision (Website PRD §18) — hanya organization is_internal
+	case roleCode == RoleVendor:
+		return "vendor" // akun vendor eksternal (PRD P0 v2 §8.2) — resource scope users.vendor_id
+	case roleCode == "supervisor", roleCode == "staff":
+		return "operations"
 	default:
 		return "management"
 	}
@@ -149,6 +153,12 @@ func IsTenantRole(roleCode string) bool { return domainOf(roleCode) == "tenant" 
 // RoleAdminInternal: role internal BuildingVision (Website PRD §18 "admin-internal"; NC snake_case).
 // Tidak di-seed ke organization pelanggan; hanya ke organization dengan organizations.is_internal = true.
 const RoleAdminInternal = "admin_internal"
+
+// RolePlatformAdmin: Platform Admin (PRD P0 v2 §8.2) — mengelola seluruh organization; internal-only seperti admin_internal.
+const RolePlatformAdmin = "platform_admin"
+
+// RoleVendor: akun vendor eksternal; wajib terikat ke users.vendor_id.
+const RoleVendor = "vendor"
 
 // IsInternalRole: role yang hanya boleh ada di organization internal.
 func IsInternalRole(roleCode string) bool { return domainOf(roleCode) == "internal" }

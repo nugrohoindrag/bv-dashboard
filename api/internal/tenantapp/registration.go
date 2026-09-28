@@ -68,6 +68,8 @@ type Option struct {
 	Code     string     `json:"code,omitempty"`
 	ParentID *uuid.UUID `json:"parent_id,omitempty"`
 	Profile  string     `json:"profile,omitempty"`
+	// WhatsAppNumber: nomor pengelola (P3-COM-02) — layar login/daftar di perangkat baru menampilkan tombol hubungi
+	WhatsAppNumber *string `json:"whatsapp_number,omitempty"`
 }
 
 func (s *Service) resolveOrg(ctx context.Context, slug string) (uuid.UUID, error) {
@@ -91,7 +93,7 @@ func (s *Service) RegistrationProperties(ctx context.Context, orgSlug string) ([
 	}
 	out := []Option{}
 	err = s.DB.WithOrgTx(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT l.id, l.name, l.code, p.profile FROM properties p JOIN locations l ON l.id = p.location_id
+		rows, err := tx.Query(ctx, `SELECT l.id, l.name, l.code, p.profile, NULLIF(p.whatsapp_number, '') FROM properties p JOIN locations l ON l.id = p.location_id
 			LEFT JOIN property_profile_configs c ON c.property_id = p.location_id
 			WHERE p.status = 'active' AND l.is_active AND l.deleted_at IS NULL AND COALESCE(c.tenant_self_registration, true) ORDER BY l.name`)
 		if err != nil {
@@ -100,7 +102,7 @@ func (s *Service) RegistrationProperties(ctx context.Context, orgSlug string) ([
 		defer rows.Close()
 		for rows.Next() {
 			var o Option
-			if err := rows.Scan(&o.ID, &o.Name, &o.Code, &o.Profile); err != nil {
+			if err := rows.Scan(&o.ID, &o.Name, &o.Code, &o.Profile, &o.WhatsAppNumber); err != nil {
 				return err
 			}
 			out = append(out, o)

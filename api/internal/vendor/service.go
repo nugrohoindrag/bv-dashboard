@@ -20,6 +20,7 @@ import (
 	"github.com/buildingvision/api/internal/platform/httpx"
 	"github.com/buildingvision/api/internal/platform/ids"
 	"github.com/buildingvision/api/internal/platform/jobs"
+	"github.com/buildingvision/api/internal/searchindex"
 )
 
 const EventWorkOrderVendorAssigned = "work_order.vendor_assigned"
@@ -250,6 +251,7 @@ func (s *Service) Create(ctx context.Context, in Input) (*Vendor, error) {
 			}
 		}
 		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "vendor", EntityID: &id, EntityLabel: code + " " + name})
+		_ = searchindex.IndexTx(ctx, tx, p.OrganizationID, "vendor", id) // PRD P0 v2 §17.1 Vendor Name
 		out, err = s.getTx(ctx, tx, id)
 		return err
 	})
@@ -314,6 +316,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in Input, ifVersion 
 			}
 		}
 		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditUpdate, EntityType: "vendor", EntityID: &id, EntityLabel: v.VendorCode, After: in})
+		_ = searchindex.IndexTx(ctx, tx, p.OrganizationID, "vendor", id)
 		out, err = s.getTx(ctx, tx, id)
 		return err
 	})
@@ -332,6 +335,7 @@ func (s *Service) Deactivate(ctx context.Context, id uuid.UUID) error {
 		}
 		_, err = tx.Exec(ctx, `UPDATE vendors SET status = 'inactive', deleted_at = now(), updated_by = $2 WHERE id = $1`, id, p.UserID)
 		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditDelete, EntityType: "vendor", EntityID: &id, EntityLabel: v.VendorCode})
+		_ = searchindex.IndexTx(ctx, tx, p.OrganizationID, "vendor", id)
 		return err
 	})
 }

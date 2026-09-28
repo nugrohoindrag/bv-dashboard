@@ -23,13 +23,22 @@ type ChecklistTemplateItem struct {
 	SortOrder     int        `json:"sort_order"`
 	Section       *string    `json:"section"`
 	Label         string     `json:"label"`
-	ItemType      string     `json:"item_type"` // ok_notok_na | yes_no | numeric | text | photo
+	ItemType      string     `json:"item_type"` // ok_notok_na | yes_no | pass_fail | numeric | text | photo | selection | signature
 	IsRequired    bool       `json:"is_required"`
 	PhotoRequired bool       `json:"photo_required"`
 	NumericUnit   *string    `json:"numeric_unit"`
 	NumericMin    *float64   `json:"numeric_min"`
 	NumericMax    *float64   `json:"numeric_max"`
-	HelpText      *string    `json:"help_text"`
+	HelpText      *string    `json:"help_text"` // = Description item (PRD P0 v2 §12.2)
+	// PRD P0 v2 §12.2: opsi Selection & expected result (yes|no, pass|fail, nilai selection; CSV = salah satu)
+	Options       []ChecklistOption `json:"options"`
+	ExpectedValue *string           `json:"expected_value"`
+}
+
+// ChecklistOption: pilihan item Selection.
+type ChecklistOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
 }
 
 type ChecklistTemplate struct {
@@ -37,7 +46,8 @@ type ChecklistTemplate struct {
 	Code           string                  `json:"code"`
 	Name           string                  `json:"name"`
 	Description    *string                 `json:"description"`
-	Domain         *string                 `json:"domain"`
+	Domain         *string                 `json:"domain"` // module: engineering | security | housekeeping | general
+	Category       *string                 `json:"category"`
 	AppliesTo      []string                `json:"applies_to"`
 	Status         string                  `json:"status"`
 	CurrentVersion int                     `json:"current_version"`
@@ -51,11 +61,12 @@ type ChecklistTemplateInput struct {
 	Name        *string                  `json:"name"`
 	Description *string                  `json:"description"`
 	Domain      *string                  `json:"domain"`
+	Category    *string                  `json:"category"`
 	AppliesTo   *[]string                `json:"applies_to"`
 	Items       *[]ChecklistTemplateItem `json:"items"`
 }
 
-var itemTypes = map[string]bool{"ok_notok_na": true, "yes_no": true, "numeric": true, "text": true, "photo": true}
+var itemTypes = map[string]bool{"ok_notok_na": true, "yes_no": true, "pass_fail": true, "numeric": true, "text": true, "photo": true, "selection": true, "signature": true}
 
 func (s *Service) CreateChecklistTemplate(ctx context.Context, in ChecklistTemplateInput) (*ChecklistTemplate, error) {
 	var out *ChecklistTemplate
@@ -85,8 +96,8 @@ func (s *Service) CreateChecklistTemplateTx(ctx context.Context, tx pgx.Tx, in C
 		applies = *in.AppliesTo
 	}
 	var id uuid.UUID
-	if err := tx.QueryRow(ctx, `INSERT INTO checklist_templates (organization_id, code, name, description, domain, applies_to, created_by, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$7) RETURNING id`,
-		p.OrganizationID, code, strings.TrimSpace(*in.Name), in.Description, in.Domain, applies, actorOrNil(p)).Scan(&id); err != nil {
+	if err := tx.QueryRow(ctx, `INSERT INTO checklist_templates (organization_id, code, name, description, domain, category, applies_to, created_by, updated_by) VALUES ($1,$2,$3,$4,$5,$8,$6,$7,$7) RETURNING id`,
+		p.OrganizationID, code, strings.TrimSpace(*in.Name), in.Description, in.Domain, applies, actorOrNil(p), in.Category).Scan(&id); err != nil {
 		return uuid.Nil, err
 	}
 	if in.Items != nil {
@@ -113,9 +124,16 @@ func (s *Service) replaceTemplateItems(ctx context.Context, tx pgx.Tx, templateI
 		if it.ItemType == "photo" {
 			it.PhotoRequired = true
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO checklist_template_items (organization_id, template_id, template_version, sort_order, section, label, item_type, is_required, photo_required, numeric_unit, numeric_min, numeric_max, help_text)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-			p.OrganizationID, templateID, version, i, it.Section, strings.TrimSpace(it.Label), it.ItemType, it.IsRequired, it.PhotoRequired, it.NumericUnit, it.NumericMin, it.NumericMax, it.HelpText); err != nil {
+		if err := validateItemSpec(&it); err != nil {
+			return err
+		}
+		var opts any
+		if len(it.Options) > 0 {
+			opts = it.Options
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO checklist_template_items (organization_id, template_id, template_version, sort_order, section, label, item_type, is_required, photo_required, numeric_unit, numeric_min, numeric_max, help_text, options, expected_value)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+			p.OrganizationID, templateID, version, i, it.Section, strings.TrimSpace(it.Label), it.ItemType, it.IsRequired, it.PhotoRequired, it.NumericUnit, it.NumericMin, it.NumericMax, it.HelpText, opts, it.ExpectedValue); err != nil {
 			return err
 		}
 	}
@@ -135,8 +153,8 @@ func (s *Service) UpdateChecklistTemplate(ctx context.Context, id uuid.UUID, in 
 			return apperr.Conflict("TEMPLATE_ARCHIVED", "Template sudah diarsipkan")
 		}
 		applies := in.AppliesTo
-		if _, err := tx.Exec(ctx, `UPDATE checklist_templates SET name = COALESCE(NULLIF($2,''), name), description = COALESCE($3, description), domain = COALESCE($4, domain), applies_to = COALESCE($5, applies_to), updated_by = $6 WHERE id = $1`,
-			id, derefStr(in.Name), in.Description, in.Domain, applies, p.UserID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE checklist_templates SET name = COALESCE(NULLIF($2,''), name), description = COALESCE($3, description), domain = COALESCE($4, domain), applies_to = COALESCE($5, applies_to), category = COALESCE($7, category), updated_by = $6 WHERE id = $1`,
+			id, derefStr(in.Name), in.Description, in.Domain, applies, p.UserID, in.Category); err != nil {
 			return err
 		}
 		if in.Items != nil {
@@ -184,10 +202,10 @@ func (s *Service) SetChecklistTemplateStatus(ctx context.Context, id uuid.UUID, 
 
 func (s *Service) getTemplateTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*ChecklistTemplate, error) {
 	var t ChecklistTemplate
-	if err := tx.QueryRow(ctx, `SELECT id, code, name, description, domain, applies_to, status, current_version, updated_at, version,
+	if err := tx.QueryRow(ctx, `SELECT id, code, name, description, domain, category, applies_to, status, current_version, updated_at, version,
 		(SELECT count(*) FROM checklist_runs r WHERE r.template_id = checklist_templates.id)
 		FROM checklist_templates WHERE id = $1 AND deleted_at IS NULL`, id).
-		Scan(&t.ID, &t.Code, &t.Name, &t.Description, &t.Domain, &t.AppliesTo, &t.Status, &t.CurrentVersion, &t.UpdatedAt, &t.Version, &t.UsageCount); err != nil {
+		Scan(&t.ID, &t.Code, &t.Name, &t.Description, &t.Domain, &t.Category, &t.AppliesTo, &t.Status, &t.CurrentVersion, &t.UpdatedAt, &t.Version, &t.UsageCount); err != nil {
 		if db.IsNoRows(err) {
 			return nil, apperr.NotFound("Checklist template")
 		}
@@ -197,7 +215,7 @@ func (s *Service) getTemplateTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*
 		t.AppliesTo = []string{}
 	}
 	t.Items = []ChecklistTemplateItem{}
-	rows, err := tx.Query(ctx, `SELECT id, sort_order, section, label, item_type, is_required, photo_required, numeric_unit, numeric_min, numeric_max, help_text
+	rows, err := tx.Query(ctx, `SELECT id, sort_order, section, label, item_type, is_required, photo_required, numeric_unit, numeric_min, numeric_max, help_text, COALESCE(options, '[]'::jsonb), expected_value
 		FROM checklist_template_items WHERE template_id = $1 AND template_version = $2 ORDER BY sort_order`, id, t.CurrentVersion)
 	if err != nil {
 		return nil, err
@@ -206,7 +224,7 @@ func (s *Service) getTemplateTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*
 	for rows.Next() {
 		var it ChecklistTemplateItem
 		var iid uuid.UUID
-		if err := rows.Scan(&iid, &it.SortOrder, &it.Section, &it.Label, &it.ItemType, &it.IsRequired, &it.PhotoRequired, &it.NumericUnit, &it.NumericMin, &it.NumericMax, &it.HelpText); err != nil {
+		if err := rows.Scan(&iid, &it.SortOrder, &it.Section, &it.Label, &it.ItemType, &it.IsRequired, &it.PhotoRequired, &it.NumericUnit, &it.NumericMin, &it.NumericMax, &it.HelpText, &it.Options, &it.ExpectedValue); err != nil {
 			return nil, err
 		}
 		it.ID = &iid
@@ -228,7 +246,7 @@ func (s *Service) GetChecklistTemplate(ctx context.Context, id uuid.UUID) (*Chec
 func (s *Service) ListChecklistTemplates(ctx context.Context, status, domain, appliesTo, q string) ([]ChecklistTemplate, error) {
 	var out []ChecklistTemplate
 	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT id FROM checklist_templates WHERE deleted_at IS NULL AND ($1 = '' OR status = $1) AND ($2 = '' OR domain = $2) AND ($3 = '' OR $3 = ANY(applies_to)) AND ($4 = '' OR name ILIKE '%' || $4 || '%' OR code ILIKE '%' || $4 || '%') ORDER BY name`, status, domain, appliesTo, q)
+		rows, err := tx.Query(ctx, `SELECT id FROM checklist_templates WHERE deleted_at IS NULL AND ($1 = '' OR status = $1) AND ($2 = '' OR domain = $2) AND ($3 = '' OR $3 = ANY(applies_to)) AND ($4 = '' OR name ILIKE '%' || $4 || '%' OR code ILIKE '%' || $4 || '%' OR category ILIKE '%' || $4 || '%') ORDER BY name`, status, domain, appliesTo, q)
 		if err != nil {
 			return err
 		}
@@ -281,6 +299,11 @@ type ChecklistRunItem struct {
 	AnsweredSource *string    `json:"answered_source"`
 	FindingID      *uuid.UUID `json:"finding_id"`
 	OutOfRange     bool       `json:"out_of_range"`
+	// PRD P0 v2 §12.2
+	HelpText      *string           `json:"help_text"` // deskripsi item (dari template)
+	Options       []ChecklistOption `json:"options"`
+	ExpectedValue *string           `json:"expected_value"`
+	IsDeviation   *bool             `json:"is_deviation"` // jawaban menyimpang dari expected result
 }
 
 type ChecklistRun struct {
@@ -317,8 +340,8 @@ func (s *Service) startChecklistRunTx(ctx context.Context, tx pgx.Tx, objectType
 		p.OrganizationID, objectType, objectID, templateID, ver, name).Scan(&runID); err != nil {
 		return uuid.Nil, err
 	}
-	tag, err := tx.Exec(ctx, `INSERT INTO checklist_run_items (organization_id, run_id, template_item_id, sort_order, section, label, item_type, is_required, photo_required, numeric_unit, numeric_min, numeric_max)
-		SELECT $1, $2, id, sort_order, section, label, item_type, is_required, photo_required, numeric_unit, numeric_min, numeric_max FROM checklist_template_items WHERE template_id = $3 AND template_version = $4 ORDER BY sort_order`,
+	tag, err := tx.Exec(ctx, `INSERT INTO checklist_run_items (organization_id, run_id, template_item_id, sort_order, section, label, item_type, is_required, photo_required, numeric_unit, numeric_min, numeric_max, options, expected_value)
+		SELECT $1, $2, id, sort_order, section, label, item_type, is_required, photo_required, numeric_unit, numeric_min, numeric_max, options, expected_value FROM checklist_template_items WHERE template_id = $3 AND template_version = $4 ORDER BY sort_order`,
 		p.OrganizationID, runID, templateID, ver)
 	if err != nil {
 		return uuid.Nil, err
@@ -365,8 +388,10 @@ func (s *Service) getRunTx(ctx context.Context, tx pgx.Tx, runID uuid.UUID) (*Ch
 	}
 	r.Items = []ChecklistRunItem{}
 	rows, err := tx.Query(ctx, `SELECT i.id, i.sort_order, i.section, i.label, i.item_type, i.is_required, i.photo_required, i.numeric_unit, i.numeric_min, i.numeric_max,
-		i.result_value, i.result_number, i.result_text, i.attachment_id, i.note, i.answered_by, u.full_name, i.answered_at, i.answered_source, i.finding_id
-		FROM checklist_run_items i LEFT JOIN users u ON u.id = i.answered_by WHERE i.run_id = $1 ORDER BY i.sort_order`, runID)
+		i.result_value, i.result_number, i.result_text, i.attachment_id, i.note, i.answered_by, u.full_name, i.answered_at, i.answered_source, i.finding_id,
+		COALESCE(i.options, '[]'::jsonb), i.expected_value, i.is_deviation, ti.help_text
+		FROM checklist_run_items i LEFT JOIN users u ON u.id = i.answered_by LEFT JOIN checklist_template_items ti ON ti.id = i.template_item_id
+		WHERE i.run_id = $1 ORDER BY i.sort_order`, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -374,7 +399,8 @@ func (s *Service) getRunTx(ctx context.Context, tx pgx.Tx, runID uuid.UUID) (*Ch
 	for rows.Next() {
 		var it ChecklistRunItem
 		if err := rows.Scan(&it.ID, &it.SortOrder, &it.Section, &it.Label, &it.ItemType, &it.IsRequired, &it.PhotoRequired, &it.NumericUnit, &it.NumericMin, &it.NumericMax,
-			&it.ResultValue, &it.ResultNumber, &it.ResultText, &it.AttachmentID, &it.Note, &it.AnsweredBy, &it.AnsweredByName, &it.AnsweredAt, &it.AnsweredSource, &it.FindingID); err != nil {
+			&it.ResultValue, &it.ResultNumber, &it.ResultText, &it.AttachmentID, &it.Note, &it.AnsweredBy, &it.AnsweredByName, &it.AnsweredAt, &it.AnsweredSource, &it.FindingID,
+			&it.Options, &it.ExpectedValue, &it.IsDeviation, &it.HelpText); err != nil {
 			return nil, err
 		}
 		if it.ResultNumber != nil && ((it.NumericMin != nil && *it.ResultNumber < *it.NumericMin) || (it.NumericMax != nil && *it.ResultNumber > *it.NumericMax)) {
@@ -474,9 +500,12 @@ func (s *Service) AnswerItemTx(ctx context.Context, tx pgx.Tx, itemID uuid.UUID,
 	var prevValue, prevText *string
 	var prevNum *float64
 	var propertyID *uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT i.run_id, r.object_type, r.object_id, i.item_type, i.label, i.photo_required, i.result_value, i.result_number, i.result_text
+	var spec ChecklistTemplateItem
+	err := tx.QueryRow(ctx, `SELECT i.run_id, r.object_type, r.object_id, i.item_type, i.label, i.photo_required, i.result_value, i.result_number, i.result_text,
+		COALESCE(i.options, '[]'::jsonb), i.expected_value, i.numeric_min, i.numeric_max
 		FROM checklist_run_items i JOIN checklist_runs r ON r.id = i.run_id WHERE i.id = $1 FOR UPDATE OF i`, itemID).
-		Scan(&runID, &objectType, &objectID, &itemType, &label, &photoRequired, &prevValue, &prevNum, &prevText)
+		Scan(&runID, &objectType, &objectID, &itemType, &label, &photoRequired, &prevValue, &prevNum, &prevText, &spec.Options, &spec.ExpectedValue, &spec.NumericMin, &spec.NumericMax)
+	spec.ItemType = itemType
 	if err != nil {
 		if db.IsNoRows(err) {
 			return uuid.Nil, apperr.NotFound("Checklist item")
@@ -529,7 +558,26 @@ func (s *Service) AnswerItemTx(ctx context.Context, tx pgx.Tx, itemID uuid.UUID,
 		if in.AttachmentID == nil {
 			return uuid.Nil, apperr.Validation("attachment_id wajib untuk item photo")
 		}
+	case "pass_fail":
+		if in.ResultValue == nil || (*in.ResultValue != "pass" && *in.ResultValue != "fail") {
+			return uuid.Nil, apperr.Validation("result_value harus pass|fail")
+		}
+	case "selection":
+		if in.ResultValue == nil || !optionExists(spec.Options, *in.ResultValue) {
+			return uuid.Nil, apperr.Validation("result_value harus salah satu opsi item")
+		}
+	case "signature":
+		// tanda tangan = attachment bertipe signature (PRD P0 v2 §4.4)
+		if in.AttachmentID == nil {
+			return uuid.Nil, apperr.Validation("attachment_id tanda tangan wajib untuk item signature")
+		}
+		var at string
+		_ = tx.QueryRow(ctx, `SELECT attachment_type FROM attachments WHERE id = $1 AND deleted_at IS NULL`, *in.AttachmentID).Scan(&at)
+		if at != "signature" {
+			return uuid.Nil, apperr.Validation("attachment untuk item signature harus bertipe signature")
+		}
 	}
+	deviation := isDeviation(spec, in.ResultValue, in.ResultNumber)
 	if in.AttachmentID != nil {
 		var ok bool
 		_ = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM attachments WHERE id = $1 AND deleted_at IS NULL)`, *in.AttachmentID).Scan(&ok)
@@ -545,21 +593,21 @@ func (s *Service) AnswerItemTx(ctx context.Context, tx pgx.Tx, itemID uuid.UUID,
 		src = "web"
 	}
 	now := time.Now().UTC()
-	if _, err := tx.Exec(ctx, `UPDATE checklist_run_items SET result_value = $2, result_number = $3, result_text = $4, attachment_id = COALESCE($5, attachment_id), note = COALESCE($6, note), answered_by = $7, answered_at = $8, answered_source = $9 WHERE id = $1`,
-		itemID, in.ResultValue, in.ResultNumber, in.ResultText, in.AttachmentID, in.Note, p.UserID, now, src); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE checklist_run_items SET result_value = $2, result_number = $3, result_text = $4, attachment_id = COALESCE($5, attachment_id), note = COALESCE($6, note), answered_by = $7, answered_at = $8, answered_source = $9, is_deviation = $10 WHERE id = $1`,
+		itemID, in.ResultValue, in.ResultNumber, in.ResultText, in.AttachmentID, in.Note, p.UserID, now, src, deviation); err != nil {
 		return uuid.Nil, err
 	}
-	// recompute run counters
+	// recompute run counters (not_ok_items = jumlah jawaban menyimpang dari expected result)
 	if _, err := tx.Exec(ctx, `UPDATE checklist_runs r SET
 		answered_items = (SELECT count(*) FROM checklist_run_items i WHERE i.run_id = r.id AND i.answered_at IS NOT NULL),
-		not_ok_items = (SELECT count(*) FROM checklist_run_items i WHERE i.run_id = r.id AND (i.result_value = 'not_ok' OR i.result_value = 'no')),
+		not_ok_items = (SELECT count(*) FROM checklist_run_items i WHERE i.run_id = r.id AND i.is_deviation),
 		started_at = COALESCE(r.started_at, $2),
 		status = CASE WHEN (SELECT count(*) FROM checklist_run_items i WHERE i.run_id = r.id AND i.answered_at IS NULL AND i.is_required) = 0 THEN 'completed' ELSE 'in_progress' END,
 		completed_at = CASE WHEN (SELECT count(*) FROM checklist_run_items i WHERE i.run_id = r.id AND i.answered_at IS NULL AND i.is_required) = 0 THEN COALESCE(r.completed_at, $2) ELSE NULL END
 		WHERE r.id = $1`, runID, now); err != nil {
 		return uuid.Nil, err
 	}
-	payload := map[string]any{"item_id": itemID, "label": label, "value": in.ResultValue, "number": in.ResultNumber, "text": in.ResultText, "attachment_id": in.AttachmentID}
+	payload := map[string]any{"item_id": itemID, "label": label, "value": in.ResultValue, "number": in.ResultNumber, "text": in.ResultText, "attachment_id": in.AttachmentID, "deviation": deviation}
 	if prevValue != nil || prevNum != nil || prevText != nil {
 		payload["previous"] = map[string]any{"value": prevValue, "number": prevNum, "text": prevText}
 	}
@@ -574,7 +622,7 @@ func (s *Service) AnswerItemTx(ctx context.Context, tx pgx.Tx, itemID uuid.UUID,
 		_ = audit.Record(ctxAct, tx, audit.Entry{ObjectType: objectType, ObjectID: objectID, Action: audit.ActChecklistCompleted, Payload: map[string]any{"run_id": runID}})
 	}
 	// Not OK → Finding (opsional, default: ya untuk inspection/patrol/cleaning)
-	isNotOK := in.ResultValue != nil && (*in.ResultValue == "not_ok" || *in.ResultValue == "no")
+	isNotOK := deviation != nil && *deviation
 	create := isNotOK && ((in.CreateFinding != nil && *in.CreateFinding) || (in.CreateFinding == nil && objectType == ObjTask))
 	if create && propertyID != nil {
 		var existing uuid.UUID
@@ -605,7 +653,7 @@ func (s *Service) AnswerItemTx(ctx context.Context, tx pgx.Tx, itemID uuid.UUID,
 					}
 				}
 			}
-			desc := "Checklist item Not OK: " + label
+			desc := "Checklist item tidak sesuai (Not OK): " + label
 			if in.Note != nil {
 				desc += " — " + *in.Note
 			}
@@ -728,7 +776,7 @@ func (s *Service) ListComments(ctx context.Context, objectType string, objectID 
 
 // ---------- Object links (FR-TSK-013; SR ↔ WO bidirectional PRD §16.3) ----------
 
-var linkTypes = map[string]bool{"generated_from": true, "related_to": true, "rework_of": true, "escalated_to": true}
+var linkTypes = map[string]bool{"generated_from": true, "related_to": true, "rework_of": true, "escalated_to": true, "follow_up_of": true} // follow_up_of: PRD P1 v2.1 P1-XMW-03
 
 func (s *Service) Link(ctx context.Context, fromType string, fromID uuid.UUID, toType string, toID uuid.UUID, linkType string) ([]ObjectLink, error) {
 	var out []ObjectLink
@@ -828,6 +876,10 @@ func describeObject(ctx context.Context, tx pgx.Tx, objectType string, id uuid.U
 		ObjInspection:          `SELECT i.inspection_number, t.title, t.status FROM inspections i JOIN tasks t ON t.id = i.task_id WHERE i.task_id = $1`,
 		ObjAsset:               `SELECT asset_code, name, status FROM assets WHERE id = $1`,
 		ObjMaintenanceSchedule: `SELECT p.plan_code || ' ' || ms.due_date::text, p.name, ms.status FROM maintenance_schedules ms JOIN maintenance_plans p ON p.id = ms.plan_id WHERE ms.id = $1`,
+		// PRD P2 v2.1 §7.3: sumber cleaning task dari route run
+		"cleaning_route_run": `SELECT r.route_code || ' ' || rr.run_date::text, r.name, rr.status FROM cleaning_route_runs rr JOIN cleaning_routes r ON r.id = rr.route_id WHERE rr.id = $1`,
+		"cleaning_schedule":  `SELECT name, name, CASE WHEN is_active THEN 'active' ELSE 'inactive' END FROM cleaning_schedules WHERE id = $1`,
+		"inventory_item":     `SELECT item_code, name, CASE WHEN is_active THEN 'active' ELSE 'inactive' END FROM inventory_items WHERE id = $1`,
 	}[objectType]
 	if q == "" {
 		return objectType, "", ""
@@ -844,4 +896,126 @@ func DescribeObject(ctx context.Context, tx pgx.Tx, objectType string, id uuid.U
 // ListLinksTx diekspor untuk modul domain.
 func (s *Service) ListLinksTx(ctx context.Context, tx pgx.Tx, objectType string, objectID uuid.UUID) ([]ObjectLink, error) {
 	return s.listLinksTx(ctx, tx, objectType, objectID)
+}
+
+// ---------- Expected result (PRD P0 v2 §12.2) ----------
+
+// validateItemSpec: opsi wajib untuk selection; expected_value harus konsisten dengan tipe item.
+func validateItemSpec(it *ChecklistTemplateItem) error {
+	if it.ExpectedValue != nil && strings.TrimSpace(*it.ExpectedValue) == "" {
+		it.ExpectedValue = nil
+	}
+	switch it.ItemType {
+	case "selection":
+		if len(it.Options) < 2 {
+			return apperr.Validation("item selection memerlukan minimal 2 opsi: " + it.Label)
+		}
+		seen := map[string]bool{}
+		for i := range it.Options {
+			it.Options[i].Value = strings.TrimSpace(it.Options[i].Value)
+			if it.Options[i].Value == "" || seen[it.Options[i].Value] {
+				return apperr.Validation("nilai opsi selection wajib unik: " + it.Label)
+			}
+			if strings.TrimSpace(it.Options[i].Label) == "" {
+				it.Options[i].Label = it.Options[i].Value
+			}
+			seen[it.Options[i].Value] = true
+		}
+		if it.ExpectedValue != nil {
+			for _, v := range strings.Split(*it.ExpectedValue, ",") {
+				if !seen[strings.TrimSpace(v)] {
+					return apperr.Validation("expected_value harus nilai opsi: " + it.Label)
+				}
+			}
+		}
+	case "yes_no":
+		if it.ExpectedValue != nil && *it.ExpectedValue != "yes" && *it.ExpectedValue != "no" {
+			return apperr.Validation("expected_value yes_no harus yes|no")
+		}
+		it.Options = nil
+	case "pass_fail":
+		if it.ExpectedValue != nil && *it.ExpectedValue != "pass" && *it.ExpectedValue != "fail" {
+			return apperr.Validation("expected_value pass_fail harus pass|fail")
+		}
+		it.Options = nil
+	case "ok_notok_na":
+		if it.ExpectedValue != nil && *it.ExpectedValue != "ok" {
+			return apperr.Validation("expected_value ok_notok_na hanya ok")
+		}
+		it.Options = nil
+	default:
+		// numeric memakai numeric_min/max; text/photo/signature tanpa expected result
+		it.ExpectedValue = nil
+		it.Options = nil
+	}
+	if it.NumericMin != nil && it.NumericMax != nil && *it.NumericMin > *it.NumericMax {
+		return apperr.Validation("numeric_min tidak boleh lebih besar dari numeric_max: " + it.Label)
+	}
+	return nil
+}
+
+func optionExists(opts []ChecklistOption, v string) bool {
+	for _, o := range opts {
+		if o.Value == v {
+			return true
+		}
+	}
+	return false
+}
+
+// isDeviation: nil = tidak dievaluasi (text/photo/signature). Default expected: ok, pass, yes (legacy: "no" = Not OK).
+func isDeviation(spec ChecklistTemplateItem, value *string, number *float64) *bool {
+	b := func(v bool) *bool { return &v }
+	switch spec.ItemType {
+	case "ok_notok_na":
+		return b(value != nil && *value == "not_ok")
+	case "yes_no":
+		exp := "yes"
+		if spec.ExpectedValue != nil {
+			exp = *spec.ExpectedValue
+		}
+		return b(value != nil && *value != exp)
+	case "pass_fail":
+		exp := "pass"
+		if spec.ExpectedValue != nil {
+			exp = *spec.ExpectedValue
+		}
+		return b(value != nil && *value != exp)
+	case "selection":
+		if spec.ExpectedValue == nil || value == nil {
+			return b(false)
+		}
+		for _, v := range strings.Split(*spec.ExpectedValue, ",") {
+			if strings.TrimSpace(v) == *value {
+				return b(false)
+			}
+		}
+		return b(true)
+	case "numeric":
+		if number == nil {
+			return nil
+		}
+		return b((spec.NumericMin != nil && *number < *spec.NumericMin) || (spec.NumericMax != nil && *number > *spec.NumericMax))
+	}
+	return nil
+}
+
+// RecomputeDeviationTx: hitung ulang is_deviation satu item + penghitung run (dipakai jalur sync preserve-evidence
+// yang menyimpan jawaban langsung tanpa AnswerItemTx).
+func RecomputeDeviationTx(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) error {
+	var spec ChecklistTemplateItem
+	var runID uuid.UUID
+	var value *string
+	var number *float64
+	if err := tx.QueryRow(ctx, `SELECT run_id, item_type, COALESCE(options, '[]'::jsonb), expected_value, numeric_min, numeric_max, result_value, result_number
+		FROM checklist_run_items WHERE id = $1`, itemID).Scan(&runID, &spec.ItemType, &spec.Options, &spec.ExpectedValue, &spec.NumericMin, &spec.NumericMax, &value, &number); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE checklist_run_items SET is_deviation = $2 WHERE id = $1`, itemID, isDeviation(spec, value, number)); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `UPDATE checklist_runs r SET
+		answered_items = (SELECT count(*) FROM checklist_run_items i WHERE i.run_id = r.id AND i.answered_at IS NOT NULL),
+		not_ok_items = (SELECT count(*) FROM checklist_run_items i WHERE i.run_id = r.id AND i.is_deviation) WHERE r.id = $1`, runID)
+	return err
 }

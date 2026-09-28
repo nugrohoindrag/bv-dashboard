@@ -33,6 +33,10 @@ func (h *Handler) Mount(r chi.Router) {
 	r.With(req("operations.tasks.update")).Patch("/tasks/{id}", h.update(ObjTask))
 	r.With(req("operations.tasks.assign")).Post("/tasks/{id}/assign", h.assign(ObjTask))
 	r.With(req("operations.tasks.view")).Get("/tasks/{id}/assignments", h.assignments(ObjTask))
+	r.With(req("operations.tasks.delete")).Delete("/tasks/{id}", h.deleteItem(ObjTask))
+	r.With(req("operations.work_orders.create")).Post("/tasks/{id}/work-orders", h.woFromTask)
+	r.With(req("operations.tasks.escalate")).Post("/tasks/{id}/escalate", h.escalate(ObjTask))
+	r.With(req("operations.tasks.view")).Get("/task-categories", h.taskCategories)
 	h.mountTransitions(r, "/tasks", ObjTask)
 	h.mountSub(r, "/tasks", ObjTask)
 
@@ -45,6 +49,11 @@ func (h *Handler) Mount(r chi.Router) {
 	r.With(req("operations.work_orders.update")).Patch("/work-orders/{id}", h.update(ObjWorkOrder))
 	r.With(req("operations.work_orders.assign")).Post("/work-orders/{id}/assign", h.assign(ObjWorkOrder))
 	r.With(req("operations.work_orders.view")).Get("/work-orders/{id}/assignments", h.assignments(ObjWorkOrder))
+	r.With(req("operations.work_orders.delete")).Delete("/work-orders/{id}", h.deleteItem(ObjWorkOrder))
+	r.With(req("operations.work_orders.escalate")).Post("/work-orders/{id}/escalate", h.escalate(ObjWorkOrder))
+	r.With(req("operations.work_orders.create")).Post("/work-orders/{id}/submit", h.transition(ObjWorkOrder, workflow.ActSubmit))
+	// PRD P1 v2.1 P1-XMW-03 / P2 v2.1 P2-XTW-01: Task tindak lanjut lintas tim dari WO yang sudah selesai
+	r.With(req("operations.tasks.create")).Post("/work-orders/{id}/tasks", h.followUpFromWO)
 	h.mountTransitions(r, "/work-orders", ObjWorkOrder)
 	h.mountSub(r, "/work-orders", ObjWorkOrder)
 
@@ -59,6 +68,12 @@ func (h *Handler) Mount(r chi.Router) {
 		r.Post("/incidents/{id}/"+a, h.incidentTransition(a))
 	}
 	r.With(req("operations.work_orders.create")).Post("/incidents/{id}/work-orders", h.woFromIncident)
+	// PRD P2 v2.1 §6.3: eskalasi incident & people involved (data pribadi: security.incident_people.*)
+	r.With(h.IAM.RequireAny("operations.incidents.escalate", "operations.incidents.manage")).Post("/incidents/{id}/escalate", h.escalateIncident)
+	r.With(req("security.incident_people.view")).Get("/incidents/{id}/people", h.listIncidentPeople)
+	r.With(req("security.incident_people.manage")).Post("/incidents/{id}/people", h.saveIncidentPerson(false))
+	r.With(req("security.incident_people.manage")).Patch("/incident-people/{id}", h.saveIncidentPerson(true))
+	r.With(req("security.incident_people.manage")).Delete("/incident-people/{id}", h.deleteIncidentPerson)
 	h.mountSub(r, "/incidents", ObjIncident)
 
 	// ----- Findings -----
@@ -133,7 +148,13 @@ func parseListFilter(r *http.Request) (ListFilter, error) {
 	f.Types = httpx.QueryCSV(r, "type")
 	f.Statuses = httpx.QueryCSV(r, "status")
 	f.Priorities = httpx.QueryCSV(r, "priority")
-	if f.LocationID, err = httpx.QueryUUID(r, "location_id"); err != nil {
+	if f.LocationID, err = httpx.QueryLocation(r); err != nil {
+		return f, err
+	}
+	if f.EquipmentID, err = httpx.QueryUUID(r, "equipment_id"); err != nil {
+		return f, err
+	}
+	if f.VendorID, err = httpx.QueryUUID(r, "vendor_id"); err != nil {
 		return f, err
 	}
 	if f.AssigneeID, err = httpx.QueryUUID(r, "assignee_id"); err != nil {
@@ -162,6 +183,12 @@ func parseListFilter(r *http.Request) (ListFilter, error) {
 		b := v == "true"
 		f.Undated = &b
 	}
+	f.InspectionResults = httpx.QueryCSV(r, "result")
+	for _, v := range f.InspectionResults {
+		if v != "pass" && v != "fail" && v != "partial" {
+			return f, apperr.Validation("result harus pass|fail|partial").WithField("result", "tidak valid")
+		}
+	}
 	if v := q.Get("open"); v != "" {
 		b := v == "true"
 		f.Open = &b
@@ -181,8 +208,36 @@ func parseListFilter(r *http.Request) (ListFilter, error) {
 	if f.ScheduledOn, err = httpx.QueryTime(r, "scheduled_on"); err != nil {
 		return f, err
 	}
+	// PRD P1 v2 §38–§39: Due Today, Completed, SLA, Category, Escalated
+	f.DueToday = q.Get("due_today") == "true"
+	f.CompletedToday = q.Get("completed_today") == "true"
+	if f.CompletedFrom, err = httpx.QueryTime(r, "completed_from"); err != nil {
+		return f, err
+	}
+	if f.CompletedTo, err = httpx.QueryTime(r, "completed_to"); err != nil {
+		return f, err
+	}
+	f.SLAStatus = httpx.QueryCSV(r, "sla_status")
+	for _, st := range f.SLAStatus {
+		if !SLAStatuses[st] {
+			return f, apperr.Validation("sla_status tidak dikenal: "+st).WithField("sla_status", "on_track|at_risk|breached|completed")
+		}
+	}
+	f.Categories = httpx.QueryCSV(r, "category")
+	f.Unassigned = q.Get("unassigned") == "true"
+	if v := q.Get("escalated"); v != "" {
+		b := v == "true"
+		f.Escalated = &b
+	}
 	f.Q = q.Get("q")
 	f.Sort = q.Get("sort")
+	if s := strings.TrimPrefix(f.Sort, "-"); s != "" {
+		switch s {
+		case "due_at", "priority", "created_at", "updated_at", "status", "title":
+		default:
+			return f, apperr.Validation("sort tidak dikenal: "+s).WithField("sort", "due_at|priority|created_at|updated_at|status|title")
+		}
+	}
 	return f, nil
 }
 
@@ -338,6 +393,35 @@ func (h *Handler) assignments(objectType string) http.HandlerFunc {
 		}
 		httpx.WriteJSON(w, http.StatusOK, httpx.NewList(items, nil))
 	}
+}
+
+func (h *Handler) escalate(objectType string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := pathID(w, r)
+		if !ok {
+			return
+		}
+		var in EscalateInput
+		if err := httpx.Decode(r, &in); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		item, err := h.Svc.Escalate(r.Context(), objectType, id, in)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, item)
+	}
+}
+
+func (h *Handler) taskCategories(w http.ResponseWriter, r *http.Request) {
+	out, err := h.Svc.TaskCategories(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
 }
 
 func (h *Handler) transition(objectType, action string) http.HandlerFunc {
@@ -597,16 +681,31 @@ func (h *Handler) listIncidents(w http.ResponseWriter, r *http.Request) {
 	f.Statuses = httpx.QueryCSV(r, "status")
 	f.Severities = httpx.QueryCSV(r, "severity")
 	f.Categories = httpx.QueryCSV(r, "category")
-	f.LocationID, _ = httpx.QueryUUID(r, "location_id")
-	f.AssigneeID, _ = httpx.QueryUUID(r, "assignee_id")
-	f.TeamID, _ = httpx.QueryUUID(r, "team_id")
+	f.SLAStatus = httpx.QueryCSV(r, "sla_status")
 	if v := r.URL.Query().Get("open"); v != "" {
 		b := v == "true"
 		f.Open = &b
 	}
-	f.From, _ = httpx.QueryTime(r, "created_from")
-	f.To, _ = httpx.QueryTime(r, "created_to")
 	f.Q = r.URL.Query().Get("q")
+	// filter tidak valid → 400 (bukan diabaikan)
+	if f.LocationID, err = httpx.QueryLocation(r); err == nil {
+		if f.AssigneeID, err = httpx.QueryUUID(r, "assignee_id"); err == nil {
+			if f.TeamID, err = httpx.QueryUUID(r, "team_id"); err == nil {
+				if f.From, err = httpx.QueryTime(r, "created_from"); err == nil {
+					f.To, err = httpx.QueryTime(r, "created_to")
+				}
+			}
+		}
+	}
+	if err == nil {
+		var s httpx.Sort
+		s, f.SortCol, err = ParseSortCols(r, IncidentSortCols, httpx.Sort{Field: "created_at", Desc: true})
+		f.SortDesc = s.Desc
+	}
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	items, next, err := h.Svc.ListIncidents(r.Context(), f, page)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -736,11 +835,32 @@ func (h *Handler) listFindings(w http.ResponseWriter, r *http.Request) {
 	f.Statuses = httpx.QueryCSV(r, "status")
 	f.Severities = httpx.QueryCSV(r, "severity")
 	f.Types = httpx.QueryCSV(r, "type")
-	f.LocationID, _ = httpx.QueryUUID(r, "location_id")
 	f.SourceType = r.URL.Query().Get("source_type")
-	f.SourceID, _ = httpx.QueryUUID(r, "source_id")
 	f.Unresolved = r.URL.Query().Get("unresolved") == "true"
 	f.Q = r.URL.Query().Get("q")
+	if f.LocationID, err = httpx.QueryLocation(r); err == nil {
+		f.SourceID, err = httpx.QueryUUID(r, "source_id")
+	}
+	if err == nil {
+		f.CheckpointID, err = httpx.QueryUUID(r, "checkpoint_id")
+	}
+	if err == nil {
+		f.AssetID, err = httpx.QueryUUID(r, "asset_id")
+	}
+	if err == nil {
+		if f.CreatedFrom, err = httpx.QueryTime(r, "created_from"); err == nil {
+			f.CreatedTo, err = httpx.QueryTime(r, "created_to")
+		}
+	}
+	if err == nil {
+		var s httpx.Sort
+		s, f.SortCol, err = ParseSortCols(r, FindingSortCols, httpx.Sort{Field: "created_at", Desc: true})
+		f.SortDesc = s.Desc
+	}
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	items, next, err := h.Svc.ListFindings(r.Context(), f, page)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -979,4 +1099,145 @@ func (h *Handler) GetHandler(objectType string) http.HandlerFunc  { return h.get
 // MountSubResources diekspor untuk modul lain (service-requests).
 func (h *Handler) MountSubResources(r chi.Router, base, objectType string) {
 	h.mountSub(r, base, objectType)
+}
+
+// deleteItem: hapus draft Task/WO (PRD P0 v2 §8.3) — reason via body {"reason"} atau ?reason=.
+func (h *Handler) deleteItem(objectType string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := pathID(w, r)
+		if !ok {
+			return
+		}
+		var req struct {
+			Reason string `json:"reason"`
+		}
+		if r.ContentLength > 0 {
+			if err := httpx.Decode(r, &req); err != nil {
+				httpx.WriteError(w, r, err)
+				return
+			}
+		}
+		if req.Reason == "" {
+			req.Reason = r.URL.Query().Get("reason")
+		}
+		if err := h.Svc.Delete(r.Context(), objectType, id, req.Reason); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// woFromTask: Work Order dari Task (link generated_from) — PRD P0 v2 §11.
+func (h *Handler) escalateIncident(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var in IncidentEscalateInput
+	if err := httpx.Decode(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	inc, err := h.Svc.EscalateIncident(r.Context(), id, in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, inc)
+}
+
+func (h *Handler) listIncidentPeople(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	items, err := h.Svc.ListIncidentPeople(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, httpx.NewList(items, nil))
+}
+
+func (h *Handler) saveIncidentPerson(update bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := pathID(w, r)
+		if !ok {
+			return
+		}
+		var in IncidentPersonInput
+		if err := httpx.Decode(r, &in); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		var out *IncidentPerson
+		var err error
+		if update {
+			out, err = h.Svc.SaveIncidentPerson(r.Context(), uuid.Nil, &id, in)
+		} else {
+			out, err = h.Svc.SaveIncidentPerson(r.Context(), id, nil, in)
+		}
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		st := http.StatusCreated
+		if update {
+			st = http.StatusOK
+		}
+		httpx.WriteJSON(w, st, out)
+	}
+}
+
+func (h *Handler) deleteIncidentPerson(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if err := h.Svc.DeleteIncidentPerson(r.Context(), id); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) followUpFromWO(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var in FollowUpTaskInput
+	if r.ContentLength > 0 {
+		if err := httpx.Decode(r, &in); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
+	item, err := h.Svc.CreateFollowUpTask(r.Context(), id, in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, item)
+}
+
+func (h *Handler) woFromTask(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var in CreateWorkOrderInput
+	if r.ContentLength > 0 {
+		if err := httpx.Decode(r, &in); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
+	item, err := h.Svc.CreateWorkOrderFromTask(r.Context(), id, in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, item)
 }

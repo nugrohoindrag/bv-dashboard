@@ -37,6 +37,21 @@ type Service struct {
 	Jobs        jobs.Enqueuer
 	Attachments *attachments.Service
 	hooks       map[string][]ExecutionHook
+	// listener rantai SR lintas tim (PRD P1 v2.1 §5.15) — didaftarkan tenantservice
+	chainListeners []ChainListener
+	// akses lampiran untuk object domain lain (PRD P2 v2.1: emergency_alert, parking_violation, lost_found_item, …)
+	objectAccessors map[string]ObjectAccessor
+}
+
+// ObjectAccessor: validasi akses object domain (dipakai lampiran/evidence) — didaftarkan modul pemilik object.
+type ObjectAccessor func(ctx context.Context, tx pgx.Tx, objectID uuid.UUID, write bool) error
+
+// RegisterObjectAccess mendaftarkan validator akses untuk object_type milik modul domain.
+func (s *Service) RegisterObjectAccess(objectType string, fn ObjectAccessor) {
+	if s.objectAccessors == nil {
+		s.objectAccessors = map[string]ObjectAccessor{}
+	}
+	s.objectAccessors[objectType] = fn
 }
 
 func NewService(d *db.DB, j jobs.Enqueuer, att *attachments.Service) *Service {
@@ -88,29 +103,41 @@ const workItemSelect = `
 	  %[1]s.is_overdue, %[1]s.sla_risk_at, %[1]s.sla_breached_at, %[1]s.evidence_incomplete,
 	  %[1]s.assignee_user_id, au.full_name, %[1]s.assignee_team_id, at.name,
 	  %[1]s.source_type, %[1]s.source_id, %[1]s.created_at, %[1]s.created_by, cu.full_name, %[1]s.updated_at, %[1]s.version,
-	  %[5]s
+	  %[5]s,
+	  %[1]s.last_reopened_at, %[1]s.reopen_count, %[6]s, a.equipment_id, COALESCE(eq.type_name, eq.category_name),
+	  %[1]s.escalated_at, %[1]s.escalation_level, %[7]s,
+	  %[1]s.origin_service_request_id, (SELECT osr.request_number FROM service_requests osr WHERE osr.id = %[1]s.origin_service_request_id), %[8]s
 	FROM %[1]s
 	LEFT JOIN locations l ON l.id = %[1]s.location_id
 	LEFT JOIN assets a ON a.id = %[1]s.asset_id
+	LEFT JOIN equipment eq ON eq.id = a.equipment_id
 	LEFT JOIN users au ON au.id = %[1]s.assignee_user_id
 	LEFT JOIN teams at ON at.id = %[1]s.assignee_team_id
 	LEFT JOIN users cu ON cu.id = %[1]s.created_by`
 
 func selectFor(t tableInfo) string {
 	evidenceCol := "tasks.requires_photo"
-	woCols := "NULL::text, NULL::bigint, NULL::bigint, NULL::char(3), NULL::text, NULL::text, NULL::int, NULL::uuid, NULL::uuid, NULL::uuid, NULL::text, NULL::text"
+	woCols := "NULL::text, NULL::bigint, NULL::bigint, NULL::char(3), NULL::text, NULL::text, NULL::uuid, NULL::uuid, NULL::uuid, NULL::text, NULL::text"
+	notesCol := "NULL::text"
+	// PRD P1 v2: category (task) · parts/service/other cost + submitted_at (WO)
+	p1Cols := "tasks.category, NULL::bigint, NULL::bigint, NULL::bigint, NULL::timestamptz"
+	// PRD P1 v2.1 §5.15: tujuan Task tindak lanjut (inspeksi akhir / re-clean / verifikasi security)
+	followUpCol := "tasks.follow_up_purpose"
 	if t.table == "work_orders" {
+		followUpCol = "NULL::text"
+		p1Cols = "NULL::text, work_orders.parts_cost_amount, work_orders.service_cost_amount, work_orders.other_cost_amount, work_orders.submitted_at"
 		evidenceCol = "work_orders.requires_evidence"
 		// P1: vendor_id/vendor_name/vendor_notes (Vendor Work Order, NC §37)
-		woCols = "work_orders.resolution, work_orders.estimated_cost_amount, work_orders.actual_cost_amount, work_orders.currency_code, work_orders.parts_usage, work_orders.vendor_reference, work_orders.reopen_count, work_orders.requester_user_id, work_orders.maintenance_schedule_id, work_orders.vendor_id, (SELECT name FROM vendors vd WHERE vd.id = work_orders.vendor_id), work_orders.vendor_notes"
+		woCols = "work_orders.resolution, work_orders.estimated_cost_amount, work_orders.actual_cost_amount, work_orders.currency_code, work_orders.parts_usage, work_orders.vendor_reference, work_orders.requester_user_id, work_orders.maintenance_schedule_id, work_orders.vendor_id, (SELECT name FROM vendors vd WHERE vd.id = work_orders.vendor_id), work_orders.vendor_notes"
+		notesCol = "work_orders.notes"
 	}
-	return fmt.Sprintf(workItemSelect, t.table, t.numberCol, t.typeCol, evidenceCol, woCols)
+	return fmt.Sprintf(workItemSelect, t.table, t.numberCol, t.typeCol, evidenceCol, woCols, notesCol, p1Cols, followUpCol)
 }
 
 func scanWorkItem(row pgx.Row, objectType string) (*WorkItem, error) {
 	var w WorkItem
 	w.ObjectType = objectType
-	var estAmt, actAmt *int64
+	var estAmt, actAmt, partsAmt, svcAmt, otherAmt *int64
 	var cur *string
 	if err := row.Scan(&w.ID, &w.PropertyID, &w.Number, &w.Type, &w.Title, &w.Description,
 		&w.Location.ID, &w.Location.Name, &w.Asset.ID, &w.Asset.AssetCode, &w.Asset.Name, &w.Asset.Status,
@@ -119,8 +146,11 @@ func scanWorkItem(row pgx.Row, objectType string) (*WorkItem, error) {
 		&w.IsOverdue, &w.SLARiskAt, &w.SLABreachedAt, &w.EvidenceIncomplete,
 		&w.Assignee.UserID, &w.Assignee.UserName, &w.Assignee.TeamID, &w.Assignee.TeamName,
 		&w.SourceType, &w.SourceID, &w.CreatedAt, &w.CreatedBy, &w.CreatedByName, &w.UpdatedAt, &w.Version,
-		&w.Resolution, &estAmt, &actAmt, &cur, &w.PartsUsage, &w.VendorReference, &w.ReopenCount, &w.RequesterUserID, &w.MaintenanceScheduleID,
+		&w.Resolution, &estAmt, &actAmt, &cur, &w.PartsUsage, &w.VendorReference, &w.RequesterUserID, &w.MaintenanceScheduleID,
 		&w.VendorID, &w.VendorName, &w.VendorNotes,
+		&w.LastReopenedAt, &w.ReopenCount, &w.Notes, &w.Asset.EquipmentID, &w.Asset.EquipmentName,
+		&w.EscalatedAt, &w.EscalationLevel, &w.Category, &partsAmt, &svcAmt, &otherAmt, &w.SubmittedAt,
+		&w.OriginServiceRequestID, &w.OriginServiceRequestNumber, &w.FollowUpPurpose,
 	); err != nil {
 		return nil, err
 	}
@@ -133,6 +163,15 @@ func scanWorkItem(row pgx.Row, objectType string) (*WorkItem, error) {
 	}
 	if actAmt != nil {
 		w.ActualCost = &Money{CurrencyCode: c, Amount: *actAmt}
+	}
+	if partsAmt != nil {
+		w.PartsCost = &Money{CurrencyCode: c, Amount: *partsAmt}
+	}
+	if svcAmt != nil {
+		w.ServiceCost = &Money{CurrencyCode: c, Amount: *svcAmt}
+	}
+	if otherAmt != nil {
+		w.OtherCost = &Money{CurrencyCode: c, Amount: *otherAmt}
 	}
 	// flag dihitung ulang saat read (TAD §5.12)
 	if !w.IsOverdue && w.DueAt != nil && w.DueAt.Before(time.Now()) && w.Status != workflow.Completed && w.Status != workflow.Closed && w.Status != workflow.Cancelled {
@@ -150,8 +189,74 @@ func scanWorkItem(row pgx.Row, objectType string) (*WorkItem, error) {
 	if w.EvidenceIncomplete {
 		w.Flags = append(w.Flags, "evidence_incomplete")
 	}
+	// PRD P0 v2 §10.4/§20.2: Reopened & Critical sebagai flag status umum
+	if w.ReopenCount != nil && *w.ReopenCount > 0 {
+		w.Flags = append(w.Flags, "reopened")
+	}
+	if w.Priority == "critical" && w.Status != workflow.Closed && w.Status != workflow.Cancelled {
+		w.Flags = append(w.Flags, "critical")
+	}
+	// PRD P1 v2 §52 Escalation
+	if w.EscalationLevel > 0 && !isDoneStatus(string(w.Status)) {
+		w.Flags = append(w.Flags, "escalated")
+	}
+	w.SLAStatus = DeriveSLAStatus(string(w.Status), w.SLARiskAt, w.SLABreachedAt, w.DueAt != nil)
 	w.AllowedActions = []string{}
 	return &w, nil
+}
+
+func isDoneStatus(st string) bool {
+	switch st {
+	case "completed", "closed", "cancelled", "resolved":
+		return true
+	}
+	return false
+}
+
+// DeriveSLAStatus (PRD P1 v2 §21.3): On Track / At Risk / Breached / Completed. hasTarget=false dan belum selesai → ""
+// (object tanpa SLA/due date tidak punya status SLA).
+func DeriveSLAStatus(status string, riskAt, breachedAt *time.Time, hasTarget bool) string {
+	switch {
+	case status == "cancelled" || status == "draft":
+		return ""
+	case isDoneStatus(status):
+		return SLACompleted
+	case breachedAt != nil:
+		return SLABreached
+	case riskAt != nil:
+		return SLAAtRisk
+	case hasTarget:
+		return SLAOnTrack
+	}
+	return ""
+}
+
+// SLAStatusSQL: predikat SQL filter sla_status untuk tabel dengan kolom status/sla_risk_at/sla_breached_at.
+// doneStatuses: status "selesai" object (task/WO: 'completed','closed'; SR/incident: 'resolved','closed').
+// hasDue: tabel memiliki kolom due_at.
+func SLAStatusSQL(tb string, statuses []string, doneStatuses string, hasDue bool) string {
+	var parts []string
+	open := tb + ".status NOT IN (" + doneStatuses + ",'cancelled','draft')"
+	target := "EXISTS (SELECT 1 FROM sla_tracking st WHERE st.object_id = " + tb + ".id)"
+	if hasDue {
+		target = "(" + tb + ".due_at IS NOT NULL OR " + target + ")"
+	}
+	for _, st := range statuses {
+		switch st {
+		case SLABreached:
+			parts = append(parts, "("+open+" AND "+tb+".sla_breached_at IS NOT NULL)")
+		case SLAAtRisk:
+			parts = append(parts, "("+open+" AND "+tb+".sla_breached_at IS NULL AND "+tb+".sla_risk_at IS NOT NULL)")
+		case SLAOnTrack:
+			parts = append(parts, "("+open+" AND "+tb+".sla_breached_at IS NULL AND "+tb+".sla_risk_at IS NULL AND "+target+")")
+		case SLACompleted:
+			parts = append(parts, tb+".status IN ("+doneStatuses+")")
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " AND (" + strings.Join(parts, " OR ") + ")"
 }
 
 // loadTx memuat work item (FOR UPDATE opsional) + cek scope property view.
@@ -203,8 +308,8 @@ func (s *Service) enrich(ctx context.Context, tx pgx.Tx, w *WorkItem, t tableInf
 	}
 	// SLA
 	var sla SLAInfo
-	err := tx.QueryRow(ctx, `SELECT policy_id, response_due_at, resolution_due_at, responded_at, resolved_at, sla_risk_at, sla_breached_at, escalated_at, started_at FROM sla_tracking WHERE object_type = $1 AND object_id = $2`, w.ObjectType, w.ID).
-		Scan(&sla.PolicyID, &sla.ResponseDueAt, &sla.ResolutionDueAt, &sla.RespondedAt, &sla.ResolvedAt, &sla.RiskAt, &sla.BreachedAt, &sla.EscalatedAt, new(time.Time))
+	err := tx.QueryRow(ctx, `SELECT policy_id, response_due_at, resolution_due_at, responded_at, resolved_at, sla_risk_at, sla_breached_at, escalated_at, started_at, response_breached_at FROM sla_tracking WHERE object_type = $1 AND object_id = $2`, w.ObjectType, w.ID).
+		Scan(&sla.PolicyID, &sla.ResponseDueAt, &sla.ResolutionDueAt, &sla.RespondedAt, &sla.ResolvedAt, &sla.RiskAt, &sla.BreachedAt, &sla.EscalatedAt, new(time.Time), &sla.ResponseBreachedAt)
 	if err == nil {
 		if sla.ResolutionDueAt != nil {
 			var started time.Time
@@ -221,7 +326,11 @@ func (s *Service) enrich(ctx context.Context, tx pgx.Tx, w *WorkItem, t tableInf
 			rem := int(sla.ResolutionDueAt.Sub(ref).Minutes())
 			sla.RemainingMinutes = &rem
 		}
+		FillSLAStatus(&sla, string(w.Status))
 		w.SLA = &sla
+		if w.SLAStatus == "" && sla.Status != "" {
+			w.SLAStatus = sla.Status
+		}
 	}
 	// allowed actions
 	w.AllowedActions = s.allowedActions(ctx, tx, w, t)
@@ -251,7 +360,11 @@ func (s *Service) enrich(ctx context.Context, tx pgx.Tx, w *WorkItem, t tableInf
 		case "patrol":
 			_ = tx.QueryRow(ctx, `SELECT to_jsonb(pt) - 'task_id' - 'organization_id' || jsonb_build_object('route_name', r.name) FROM patrol_tasks pt JOIN patrol_routes r ON r.id = pt.route_id WHERE pt.task_id = $1`, w.ID).Scan(&ext)
 		case "cleaning":
-			_ = tx.QueryRow(ctx, `SELECT to_jsonb(ct) - 'task_id' - 'organization_id' FROM cleaning_tasks ct WHERE ct.task_id = $1`, w.ID).Scan(&ext)
+			// PRD P2 v2.1 P2-RTE-02/03: posisi stop & progres route run
+			_ = tx.QueryRow(ctx, `SELECT to_jsonb(ct) - 'task_id' - 'organization_id' || COALESCE((SELECT jsonb_build_object('route_id', r.id, 'route_code', r.route_code, 'route_name', r.name,
+				'route_total_stops', rr.total_stops, 'route_completed_stops', rr.completed_stops, 'route_run_status', rr.status)
+				FROM cleaning_route_runs rr JOIN cleaning_routes r ON r.id = rr.route_id WHERE rr.id = ct.route_run_id), '{}'::jsonb)
+				FROM cleaning_tasks ct WHERE ct.task_id = $1`, w.ID).Scan(&ext)
 		case "inspection":
 			_ = tx.QueryRow(ctx, `SELECT COALESCE(to_jsonb(i) - 'task_id' - 'organization_id', '{}'::jsonb) || COALESCE(to_jsonb(hi) - 'task_id' - 'organization_id', '{}'::jsonb) FROM tasks t LEFT JOIN inspections i ON i.task_id = t.id LEFT JOIN housekeeping_inspections hi ON hi.task_id = t.id WHERE t.id = $1`, w.ID).Scan(&ext)
 		}
@@ -263,17 +376,44 @@ func (s *Service) enrich(ctx context.Context, tx pgx.Tx, w *WorkItem, t tableInf
 	return nil
 }
 
+// FillSLAStatus melengkapi status resolusi & respons SLA (PRD P1 v2 §21.2–21.3).
+func FillSLAStatus(sla *SLAInfo, status string) {
+	sla.Status = DeriveSLAStatus(status, sla.RiskAt, sla.BreachedAt, sla.ResolutionDueAt != nil)
+	if sla.ResolvedAt != nil && sla.ResolutionDueAt != nil {
+		met := !sla.ResolvedAt.After(*sla.ResolutionDueAt) && sla.BreachedAt == nil
+		sla.Met = &met
+	}
+	switch {
+	case sla.ResponseDueAt == nil:
+		sla.ResponseStatus = ""
+	case sla.RespondedAt != nil:
+		if sla.RespondedAt.After(*sla.ResponseDueAt) {
+			sla.ResponseStatus = "breached"
+		} else {
+			sla.ResponseStatus = "met"
+		}
+	case sla.ResponseBreachedAt != nil || time.Now().After(*sla.ResponseDueAt):
+		sla.ResponseStatus = "breached"
+	default:
+		sla.ResponseStatus = "pending"
+	}
+}
+
 // guardInput menghitung fakta untuk guard state machine.
 func (s *Service) guardInput(ctx context.Context, tx pgx.Tx, w *WorkItem, t tableInfo, fromSync bool) workflow.GuardInput {
 	p := authctx.Must(ctx)
-	gi := workflow.GuardInput{HasAssignee: w.Assignee.UserID != nil || w.Assignee.TeamID != nil}
+	gi := workflow.GuardInput{HasAssignee: w.Assignee.UserID != nil || w.Assignee.TeamID != nil || w.VendorID != nil}
 	if w.Assignee.UserID != nil && *w.Assignee.UserID == p.UserID {
 		gi.IsAssignee = true
 	}
 	if w.Assignee.TeamID != nil && p.IsMemberOfTeam(*w.Assignee.TeamID) {
 		gi.IsAssignee = true
 	}
-	gi.HasManage = p.HasOnProperty(t.perm("manage"), w.PropertyID)
+	// akun Vendor mengerjakan WO yang ditugaskan ke vendor-nya (PRD P0 v2 §8.4)
+	if p.VendorID != nil && w.VendorID != nil && *p.VendorID == *w.VendorID {
+		gi.IsAssignee = true
+	}
+	gi.HasManage = canWI(ctx, tx, t.perm("manage"), w)
 	gi.EvidenceSatisfied, gi.EvidenceReason = s.evidenceSatisfied(ctx, tx, w, fromSync)
 	return gi
 }
@@ -312,11 +452,10 @@ func (s *Service) evidenceSatisfied(ctx context.Context, tx pgx.Tx, w *WorkItem,
 
 // allowedActions: CTA ditentukan server (TAD §5.16).
 func (s *Service) allowedActions(ctx context.Context, tx pgx.Tx, w *WorkItem, t tableInfo) []string {
-	p := authctx.Must(ctx)
 	var gi *workflow.GuardInput
 	out := []string{}
 	for _, tr := range t.wf.ActionsFrom(w.Status) {
-		if tr.Perm != "" && !p.HasOnProperty(tr.Perm, w.PropertyID) {
+		if tr.Perm != "" && !canWI(ctx, tx, tr.Perm, w) {
 			continue
 		}
 		if tr.Guard != nil {
@@ -333,14 +472,28 @@ func (s *Service) allowedActions(ctx context.Context, tx pgx.Tx, w *WorkItem, t 
 		}
 		out = append(out, tr.Action)
 	}
-	if p.HasOnProperty(t.perm("update"), w.PropertyID) && !t.wf.IsTerminal(w.Status) {
+	if canWI(ctx, tx, t.perm("update"), w) && !t.wf.IsTerminal(w.Status) {
 		out = append(out, "update")
 	}
-	if p.HasOnProperty("operations.comments.create", w.PropertyID) {
+	if canWI(ctx, tx, "operations.comments.create", w) {
 		out = append(out, "comment")
 	}
-	if p.HasOnProperty("operations.attachments.create", w.PropertyID) && !t.wf.IsTerminal(w.Status) {
+	if canWI(ctx, tx, "operations.attachments.create", w) && !t.wf.IsTerminal(w.Status) {
 		out = append(out, "attach")
+	}
+	if deletable(w) && canWI(ctx, tx, t.perm("delete"), w) {
+		out = append(out, "delete")
+	}
+	if w.ObjectType == ObjTask && !t.wf.IsTerminal(w.Status) && canAt(ctx, tx, "operations.work_orders.create", w.PropertyID, w.Location.ID) {
+		out = append(out, "create_work_order")
+	}
+	if escalatable(w.Status) && canWI(ctx, tx, t.perm("escalate"), w) {
+		out = append(out, "escalate")
+	}
+	// PRD P1 v2.1 P1-XMW-03: WO selesai → Task tindak lanjut untuk team lain (inspeksi akhir, re-clean, verifikasi)
+	if w.ObjectType == ObjWorkOrder && (w.Status == workflow.Completed || w.Status == workflow.Closed) && canAt(ctx, tx, "operations.tasks.create", w.PropertyID, w.Location.ID) &&
+		(authctx.Must(ctx).VendorID == nil || authctx.Must(ctx).IsSystem) {
+		out = append(out, "create_follow_up_task")
 	}
 	out = append(out, "view")
 	return out
@@ -350,6 +503,7 @@ func (s *Service) allowedActions(ctx context.Context, tx pgx.Tx, w *WorkItem, t 
 func (s *Service) ObjectAccess(ctx context.Context, tx pgx.Tx, objectType string, objectID uuid.UUID, write bool) error {
 	p := authctx.Must(ctx)
 	var propertyID uuid.UUID
+	var locationID *uuid.UUID
 	var permObj string
 	switch objectType {
 	case ObjTask, ObjWorkOrder:
@@ -357,23 +511,25 @@ func (s *Service) ObjectAccess(ctx context.Context, tx pgx.Tx, objectType string
 		if err != nil {
 			return err
 		}
-		propertyID = w.PropertyID
-		permObj = t.permObj
-		if write && t.wf.IsTerminal(w.Status) && !p.HasOnProperty(t.perm("manage"), propertyID) {
+		if !canWI(ctx, tx, t.perm("view"), w) {
+			return apperr.Forbidden("")
+		}
+		if write && t.wf.IsTerminal(w.Status) && !canWI(ctx, tx, t.perm("manage"), w) {
 			return apperr.Conflict("OBJECT_TERMINAL", objectLabel(objectType)+" sudah "+workflow.Label(w.Status))
 		}
+		return nil
 	case ObjIncident:
-		if err := tx.QueryRow(ctx, `SELECT property_id FROM incidents WHERE id = $1`, objectID).Scan(&propertyID); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT property_id, location_id FROM incidents WHERE id = $1`, objectID).Scan(&propertyID, &locationID); err != nil {
 			return apperr.NotFound("Incident")
 		}
 		permObj = "incidents"
 	case ObjFinding:
-		if err := tx.QueryRow(ctx, `SELECT property_id FROM findings WHERE id = $1`, objectID).Scan(&propertyID); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT property_id, location_id FROM findings WHERE id = $1`, objectID).Scan(&propertyID, &locationID); err != nil {
 			return apperr.NotFound("Finding")
 		}
 		permObj = "findings"
 	case ObjServiceRequest:
-		if err := tx.QueryRow(ctx, `SELECT property_id FROM service_requests WHERE id = $1`, objectID).Scan(&propertyID); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT property_id, location_id FROM service_requests WHERE id = $1`, objectID).Scan(&propertyID, &locationID); err != nil {
 			return apperr.NotFound("Service Request")
 		}
 		if p.IsTenant {
@@ -390,15 +546,52 @@ func (s *Service) ObjectAccess(ctx context.Context, tx pgx.Tx, objectType string
 			}
 			return nil
 		}
-		if !p.HasOnProperty("tenant.service_requests.view", propertyID) {
+		if p.VendorID != nil || !canAt(ctx, tx, "tenant.service_requests.view", propertyID, locationID) {
 			return apperr.Forbidden("")
 		}
 		return nil
 	case ObjAsset:
-		if err := tx.QueryRow(ctx, `SELECT property_id FROM assets WHERE id = $1`, objectID).Scan(&propertyID); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT property_id, location_id FROM assets WHERE id = $1`, objectID).Scan(&propertyID, &locationID); err != nil {
 			return apperr.NotFound("Asset")
 		}
-		if !p.HasOnProperty("engineering.assets.view", propertyID) {
+		if p.VendorID != nil || !canAt(ctx, tx, "engineering.assets.view", propertyID, locationID) {
+			return apperr.Forbidden("")
+		}
+		return nil
+	// PRD P1 v2 §6.3/§7: foto lokasi & facility, gambar denah (floor plan)
+	case "location":
+		if err := tx.QueryRow(ctx, `SELECT property_id FROM locations WHERE id = $1 AND deleted_at IS NULL`, objectID).Scan(&propertyID); err != nil {
+			return apperr.NotFound("Location")
+		}
+		perm := "property.locations.view"
+		if write {
+			perm = "property.locations.update"
+		}
+		if p.VendorID != nil || !canAt(ctx, tx, perm, propertyID, &objectID) {
+			return apperr.Forbidden("")
+		}
+		return nil
+	case "facility":
+		if err := tx.QueryRow(ctx, `SELECT property_id, location_id FROM facilities WHERE id = $1 AND deleted_at IS NULL`, objectID).Scan(&propertyID, &locationID); err != nil {
+			return apperr.NotFound("Facility")
+		}
+		act := "view"
+		if write {
+			act = "update"
+		}
+		if p.VendorID != nil || !(canAt(ctx, tx, "property.facilities."+act, propertyID, locationID) || canAt(ctx, tx, "booking.facilities."+act, propertyID, locationID)) {
+			return apperr.Forbidden("")
+		}
+		return nil
+	case "floor_plan":
+		if err := tx.QueryRow(ctx, `SELECT property_id, location_id FROM floor_plans WHERE id = $1 AND deleted_at IS NULL`, objectID).Scan(&propertyID, &locationID); err != nil {
+			return apperr.NotFound("Floor plan")
+		}
+		perm := "property.floor_plans.view"
+		if write {
+			perm = "property.floor_plans.update"
+		}
+		if p.VendorID != nil || !canAt(ctx, tx, perm, propertyID, locationID) {
 			return apperr.Forbidden("")
 		}
 		return nil
@@ -410,9 +603,12 @@ func (s *Service) ObjectAccess(ctx context.Context, tx pgx.Tx, objectType string
 		}
 		return s.ObjectAccess(ctx, tx, ot, oid, write)
 	default:
+		if fn, ok := s.objectAccessors[objectType]; ok {
+			return fn(ctx, tx, objectID, write)
+		}
 		return apperr.Validation("object_type tidak dikenal: " + objectType)
 	}
-	if !p.HasOnProperty("operations."+permObj+".view", propertyID) {
+	if p.VendorID != nil || !canAt(ctx, tx, "operations."+permObj+".view", propertyID, locationID) {
 		return apperr.Forbidden("")
 	}
 	return nil
@@ -426,7 +622,7 @@ func (s *Service) Get(ctx context.Context, objectType string, id uuid.UUID) (*Wo
 		if err != nil {
 			return err
 		}
-		if !authctx.Must(ctx).HasOnProperty(t.perm("view"), w.PropertyID) {
+		if !canWI(ctx, tx, t.perm("view"), w) {
 			return apperr.Forbidden("")
 		}
 		out = w
@@ -466,12 +662,19 @@ func (s *Service) List(ctx context.Context, objectType string, f ListFilter, pag
 		add := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
 		where := " WHERE 1=1"
 		if f.PropertyID != nil {
-			if !p.HasOnProperty(t.perm("view"), *f.PropertyID) {
+			if !p.HasAnyOnProperty(t.perm("view"), *f.PropertyID) {
 				return apperr.Forbidden("")
 			}
 			where += " AND " + tb + ".property_id = " + add(*f.PropertyID)
-		} else if pids, all := p.PropertyIDsFor(t.perm("view")); !all {
-			where += " AND " + tb + ".property_id = ANY(" + add(pids) + "::uuid[])"
+		}
+		// scope property-wide / building (PRD P0 v2 §8.4) + resource scope vendor
+		where += " AND " + p.ScopeSQL(t.perm("view"), tb+".property_id", "(SELECT sl.path FROM locations sl WHERE sl.id = "+tb+".location_id)", add)
+		where += vendorScopeSQL(p, objectType, tb, add)
+		if f.EquipmentID != nil {
+			where += " AND " + tb + ".asset_id IN (SELECT ea.id FROM assets ea WHERE ea.equipment_id = " + add(*f.EquipmentID) + ")"
+		}
+		if f.VendorID != nil && objectType == ObjWorkOrder {
+			where += " AND " + tb + ".vendor_id = " + add(*f.VendorID)
 		}
 		if len(f.Types) > 0 {
 			where += " AND " + tb + "." + t.typeCol + " = ANY(" + add(f.Types) + ")"
@@ -484,7 +687,8 @@ func (s *Service) List(ctx context.Context, objectType string, f ListFilter, pag
 		}
 		if f.Open != nil {
 			if *f.Open {
-				where += " AND " + tb + ".status NOT IN ('closed','cancelled')"
+				// Draft WO belum menjadi pekerjaan operasional (PRD P1 v2 §23)
+				where += " AND " + tb + ".status NOT IN ('closed','cancelled','draft')"
 			} else {
 				where += " AND " + tb + ".status IN ('closed','cancelled')"
 			}
@@ -527,8 +731,46 @@ func (s *Service) List(ctx context.Context, objectType string, f ListFilter, pag
 			d := add(f.ScheduledOn.Format("2006-01-02"))
 			where += " AND ((COALESCE(" + tb + ".scheduled_start_at, " + tb + ".due_at) AT TIME ZONE COALESCE((SELECT timezone FROM properties WHERE location_id = " + tb + ".property_id), 'Asia/Jakarta'))::date = " + d + "::date)"
 		}
+		tzExpr := "COALESCE((SELECT timezone FROM properties WHERE location_id = " + tb + ".property_id), 'Asia/Jakarta')"
+		if f.DueToday {
+			where += " AND " + tb + ".status NOT IN ('completed','closed','cancelled','draft') AND (" + tb + ".due_at AT TIME ZONE " + tzExpr + ")::date = (now() AT TIME ZONE " + tzExpr + ")::date"
+		}
+		if f.CompletedToday {
+			where += " AND " + tb + ".completed_at IS NOT NULL AND (" + tb + ".completed_at AT TIME ZONE " + tzExpr + ")::date = (now() AT TIME ZONE " + tzExpr + ")::date"
+		}
+		if f.CompletedFrom != nil {
+			where += " AND " + tb + ".completed_at >= " + add(*f.CompletedFrom)
+		}
+		if f.CompletedTo != nil {
+			where += " AND " + tb + ".completed_at <= " + add(*f.CompletedTo)
+		}
+		if len(f.SLAStatus) > 0 {
+			where += SLAStatusSQL(tb, f.SLAStatus, "'completed','closed'", true)
+		}
+		if len(f.Categories) > 0 && objectType == ObjTask {
+			where += " AND " + tb + ".category = ANY(" + add(f.Categories) + ")"
+		}
+		if f.Unassigned {
+			where += " AND " + tb + ".assignee_user_id IS NULL AND " + tb + ".assignee_team_id IS NULL"
+			if objectType == ObjWorkOrder {
+				where += " AND " + tb + ".vendor_id IS NULL"
+			}
+		}
+		if f.Escalated != nil {
+			if *f.Escalated {
+				where += " AND " + tb + ".escalation_level > 0 AND " + tb + ".status NOT IN ('completed','closed','cancelled')"
+			} else {
+				where += " AND " + tb + ".escalation_level = 0"
+			}
+		}
 		if f.Undated != nil && *f.Undated {
 			where += " AND " + tb + ".scheduled_start_at IS NULL AND " + tb + ".due_at IS NULL"
+		}
+		if f.Unscheduled != nil && *f.Unscheduled {
+			where += " AND " + tb + ".scheduled_start_at IS NULL"
+		}
+		if len(f.InspectionResults) > 0 && objectType == ObjTask {
+			where += " AND EXISTS (SELECT 1 FROM inspections ir WHERE ir.task_id = " + tb + ".id AND ir.result = ANY(" + add(f.InspectionResults) + "))"
 		}
 		if f.AssetID != nil {
 			where += " AND " + tb + ".asset_id = " + add(*f.AssetID)
@@ -541,7 +783,9 @@ func (s *Service) List(ctx context.Context, objectType string, f ListFilter, pag
 		}
 		if f.Q != "" {
 			q := add("%" + f.Q + "%")
-			where += " AND (" + tb + "." + t.numberCol + " ILIKE " + q + " OR " + tb + ".title ILIKE " + q + ")"
+			// PRD P1 v2 §40: Task ID/Title/Assignee · WO ID/Title/Asset
+			where += " AND (" + tb + "." + t.numberCol + " ILIKE " + q + " OR " + tb + ".title ILIKE " + q +
+				" OR au.full_name ILIKE " + q + " OR at.name ILIKE " + q + " OR a.asset_code ILIKE " + q + " OR a.name ILIKE " + q + ")"
 		}
 		// sort & cursor
 		sortCol, dir := "created_at", "DESC"

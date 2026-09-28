@@ -15,6 +15,7 @@ import (
 
 	"github.com/buildingvision/api/internal/audit"
 	"github.com/buildingvision/api/internal/iam"
+	"github.com/buildingvision/api/internal/metering"
 	"github.com/buildingvision/api/internal/platform/apperr"
 	"github.com/buildingvision/api/internal/platform/authctx"
 	"github.com/buildingvision/api/internal/platform/db"
@@ -43,574 +44,68 @@ type Service struct {
 	Jobs      jobs.Enqueuer
 	Profile   *profile.Service
 	PublicURL string
+	// Metering: pemakaian meter untuk billing rule meter_usage (P4-UTL-05).
+	Metering *metering.Service
+	// DocumentSecret: kunci HMAC tautan dokumen publik (PDF invoice/kuitansi/statement).
+	DocumentSecret []byte
 }
 
 func New(d *db.DB, j jobs.Enqueuer, prof *profile.Service, publicURL string) *Service {
 	return &Service{DB: d, Jobs: j, Profile: prof, PublicURL: publicURL}
 }
 
-// ---------- Invoice ----------
-
-type Item struct {
-	ID          uuid.UUID `json:"id,omitempty"`
-	Description string    `json:"description"`
-	Quantity    float64   `json:"quantity"`
-	Unit        *string   `json:"unit"`
-	UnitPrice   int64     `json:"unit_price"`
-	Amount      int64     `json:"amount"`
-}
-
-type Invoice struct {
-	ID             uuid.UUID  `json:"id"`
-	InvoiceNumber  string     `json:"invoice_number"`
-	PropertyID     uuid.UUID  `json:"property_id"`
-	TenantID       *uuid.UUID `json:"tenant_id"`
-	TenantName     *string    `json:"tenant_name"`
-	UnitLocationID *uuid.UUID `json:"unit_location_id"`
-	UnitLabel      *string    `json:"unit_label"`
-	InvoiceType    string     `json:"invoice_type"`
-	PeriodStart    *time.Time `json:"period_start"`
-	PeriodEnd      *time.Time `json:"period_end"`
-	Description    *string    `json:"description"`
-	CurrencyCode   string     `json:"currency_code"`
-	SubtotalAmount int64      `json:"subtotal_amount"`
-	TaxAmount      int64      `json:"tax_amount"`
-	TotalAmount    int64      `json:"total_amount"`
-	PaidAmount     int64      `json:"paid_amount"`
-	OutstandingAmt int64      `json:"outstanding_amount"`
-	IssuedAt       *time.Time `json:"issued_at"`
-	DueAt          time.Time  `json:"due_at"`
-	PaidAt         *time.Time `json:"paid_at"`
-	Status         string     `json:"status"`
-	Source         string     `json:"source"`
-	ExternalRef    *string    `json:"external_ref"`
-	Notes          *string    `json:"notes"`
-	CancelReason   *string    `json:"cancel_reason"`
-	Items          []Item     `json:"items"`
-	PaymentCount   int        `json:"payment_count"`
-	CreatedAt      time.Time  `json:"created_at"`
-	CreatedByName  *string    `json:"created_by_name"`
-	AllowedActions []string   `json:"allowed_actions"`
-	Version        int        `json:"version"`
-}
-
-const invSelect = `SELECT i.id, i.invoice_number, i.property_id, i.tenant_id, t.name, i.unit_location_id, COALESCE('Unit ' || u.unit_number, l.name), i.invoice_type, i.period_start, i.period_end, i.description,
-	i.currency_code, i.subtotal_amount, i.tax_amount, i.total_amount, i.paid_amount, i.issued_at, i.due_at, i.paid_at, i.status, i.source, i.external_ref, i.notes, i.cancel_reason,
-	(SELECT count(*) FROM payments p WHERE p.invoice_id = i.id AND p.status = 'paid'), i.created_at, cb.full_name, i.version
-	FROM invoices i LEFT JOIN tenants t ON t.id = i.tenant_id LEFT JOIN locations l ON l.id = i.unit_location_id LEFT JOIN units u ON u.location_id = l.id LEFT JOIN users cb ON cb.id = i.created_by`
-
-func scanInvoice(row pgx.Row) (*Invoice, error) {
-	var v Invoice
-	if err := row.Scan(&v.ID, &v.InvoiceNumber, &v.PropertyID, &v.TenantID, &v.TenantName, &v.UnitLocationID, &v.UnitLabel, &v.InvoiceType, &v.PeriodStart, &v.PeriodEnd, &v.Description,
-		&v.CurrencyCode, &v.SubtotalAmount, &v.TaxAmount, &v.TotalAmount, &v.PaidAmount, &v.IssuedAt, &v.DueAt, &v.PaidAt, &v.Status, &v.Source, &v.ExternalRef, &v.Notes, &v.CancelReason,
-		&v.PaymentCount, &v.CreatedAt, &v.CreatedByName, &v.Version); err != nil {
-		return nil, err
-	}
-	v.CurrencyCode = strings.TrimSpace(v.CurrencyCode)
-	v.OutstandingAmt = v.TotalAmount - v.PaidAmount
-	v.Items = []Item{}
-	return &v, nil
-}
-
-func loadItems(ctx context.Context, tx pgx.Tx, inv *Invoice) error {
-	rows, err := tx.Query(ctx, `SELECT id, description, quantity, unit, unit_price, amount FROM invoice_items WHERE invoice_id = $1 ORDER BY sort_order`, inv.ID)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var it Item
-		if err := rows.Scan(&it.ID, &it.Description, &it.Quantity, &it.Unit, &it.UnitPrice, &it.Amount); err != nil {
-			return err
-		}
-		inv.Items = append(inv.Items, it)
-	}
-	return rows.Err()
-}
-
-func (s *Service) staffActions(ctx context.Context, inv *Invoice) {
-	p := authctx.Must(ctx)
-	can := func(perm string) bool { return p.HasOnProperty(perm, inv.PropertyID) }
-	inv.AllowedActions = []string{"view"}
-	switch inv.Status {
-	case "draft":
-		if can("billing.invoices.update") {
-			inv.AllowedActions = append(inv.AllowedActions, "update")
-		}
-		if can("billing.invoices.issue") {
-			inv.AllowedActions = append(inv.AllowedActions, "issue")
-		}
-		if can("billing.invoices.cancel") {
-			inv.AllowedActions = append(inv.AllowedActions, "cancel")
-		}
-	case "issued", "partially_paid", "overdue":
-		if can("billing.payments.create") {
-			inv.AllowedActions = append(inv.AllowedActions, "record_payment")
-		}
-		if can("billing.invoices.cancel") && inv.PaidAmount == 0 {
-			inv.AllowedActions = append(inv.AllowedActions, "cancel")
-		}
-	}
-}
-
-func tenantInvoiceActions(inv *Invoice) {
-	inv.AllowedActions = []string{"view"}
-	if (inv.Status == "issued" || inv.Status == "partially_paid" || inv.Status == "overdue") && inv.OutstandingAmt > 0 {
-		inv.AllowedActions = append(inv.AllowedActions, "pay")
-	}
-}
-
-type InvoiceInput struct {
-	PropertyID     *uuid.UUID `json:"property_id"`
-	TenantID       *uuid.UUID `json:"tenant_id"`
-	UnitLocationID *uuid.UUID `json:"unit_location_id"`
-	InvoiceType    *string    `json:"invoice_type"`
-	PeriodStart    *string    `json:"period_start"` // YYYY-MM-DD
-	PeriodEnd      *string    `json:"period_end"`
-	Description    *string    `json:"description"`
-	TaxAmount      *int64     `json:"tax_amount"`
-	DueAt          *time.Time `json:"due_at"`
-	ExternalRef    *string    `json:"external_ref"`
-	Notes          *string    `json:"notes"`
-	Items          *[]Item    `json:"items"`
-	IssueNow       bool       `json:"issue_now"`
-}
-
-var invoiceTypes = map[string]bool{"service_charge": true, "utility": true, "rental": true, "facility": true, "deposit": true, "other": true}
-
-func parseDate(v *string) (*time.Time, error) {
-	if v == nil || *v == "" {
-		return nil, nil
-	}
-	t, err := time.Parse("2006-01-02", *v)
-	if err != nil {
-		return nil, apperr.Validation("tanggal harus YYYY-MM-DD")
-	}
-	return &t, nil
-}
-
-func sumItems(items []Item) (int64, error) {
-	var sub int64
-	for i := range items {
-		if strings.TrimSpace(items[i].Description) == "" {
-			return 0, apperr.Validation("item.description wajib")
-		}
-		if items[i].Quantity <= 0 {
-			items[i].Quantity = 1
-		}
-		if items[i].Amount == 0 {
-			items[i].Amount = int64(items[i].Quantity * float64(items[i].UnitPrice))
-		}
-		if items[i].Amount < 0 {
-			return 0, apperr.Validation("item.amount tidak boleh negatif")
-		}
-		sub += items[i].Amount
-	}
-	return sub, nil
-}
-
-// CreateTx: dipakai staf & modul komersial (rental/hotel) — invoice draft atau langsung issued.
-func (s *Service) CreateTx(ctx context.Context, tx pgx.Tx, in InvoiceInput, source string, sourceID *uuid.UUID) (uuid.UUID, error) {
-	p := authctx.Must(ctx)
-	if in.PropertyID == nil {
-		return uuid.Nil, apperr.Validation("property_id wajib")
-	}
-	if err := s.Profile.RequireCapabilityTx(ctx, tx, *in.PropertyID, profile.CapBilling); err != nil {
-		return uuid.Nil, err
-	}
-	it := deref(in.InvoiceType)
-	if it == "" {
-		it = "service_charge"
-	}
-	if !invoiceTypes[it] {
-		return uuid.Nil, apperr.Validation("invoice_type tidak valid")
-	}
-	if in.DueAt == nil {
-		return uuid.Nil, apperr.Validation("due_at wajib").WithField("due_at", "wajib")
-	}
-	if in.TenantID == nil && in.UnitLocationID == nil {
-		return uuid.Nil, apperr.Validation("tenant_id atau unit_location_id wajib")
-	}
-	if in.TenantID != nil {
-		var tpid uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT property_id FROM tenants WHERE id = $1 AND deleted_at IS NULL`, *in.TenantID).Scan(&tpid); err != nil || tpid != *in.PropertyID {
-			return uuid.Nil, apperr.Validation("tenant_id tidak ditemukan di property ini")
-		}
-	}
-	if in.UnitLocationID != nil {
-		pid, err := property.ResolvePropertyOfLocation(ctx, tx, *in.UnitLocationID)
-		if err != nil || pid != *in.PropertyID {
-			return uuid.Nil, apperr.Validation("unit_location_id tidak berada di property ini")
-		}
-	}
-	var items []Item
-	if in.Items != nil {
-		items = *in.Items
-	}
-	if len(items) == 0 {
-		return uuid.Nil, apperr.Validation("items minimal satu").WithField("items", "wajib")
-	}
-	sub, err := sumItems(items)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	tax := int64(0)
-	if in.TaxAmount != nil {
-		tax = *in.TaxAmount
-	}
-	if tax < 0 {
-		return uuid.Nil, apperr.Validation("tax_amount tidak boleh negatif")
-	}
-	ps, err := parseDate(in.PeriodStart)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	pe, err := parseDate(in.PeriodEnd)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if source == "" {
-		source = "manual"
-	}
-	loc := property.PropertyTimezone(ctx, tx, *in.PropertyID)
-	number, err := ids.NextYearly(ctx, tx, p.OrganizationID, ids.PrefixInvoice, time.Now(), loc)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	status := "draft"
-	var issuedAt *time.Time
-	if in.IssueNow {
-		status = "issued"
-		now := time.Now().UTC()
-		issuedAt = &now
-	}
-	var id uuid.UUID
-	if err := tx.QueryRow(ctx, `INSERT INTO invoices (organization_id, property_id, invoice_number, tenant_id, unit_location_id, invoice_type, period_start, period_end, description, subtotal_amount, tax_amount, total_amount, issued_at, due_at, status, source, source_id, external_ref, notes, created_by, updated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$20) RETURNING id`,
-		p.OrganizationID, *in.PropertyID, number, in.TenantID, in.UnitLocationID, it, ps, pe, in.Description, sub, tax, sub+tax, issuedAt, *in.DueAt, status, source, sourceID, in.ExternalRef, in.Notes, actorOrNil(p)).Scan(&id); err != nil {
-		return uuid.Nil, err
-	}
-	for i, x := range items {
-		if _, err := tx.Exec(ctx, `INSERT INTO invoice_items (organization_id, invoice_id, sort_order, description, quantity, unit, unit_price, amount) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, p.OrganizationID, id, i, strings.TrimSpace(x.Description), x.Quantity, x.Unit, x.UnitPrice, x.Amount); err != nil {
-			return uuid.Nil, err
-		}
-	}
-	_ = audit.Record(ctx, tx, audit.Entry{ObjectType: "invoice", ObjectID: id, Action: audit.ActCreated, Payload: map[string]any{"number": number, "total": sub + tax, "status": status, "source": source}})
-	_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "invoice", EntityID: &id, EntityLabel: number})
-	if status == "issued" {
-		s.emitInvoice(ctx, tx, id, number, *in.PropertyID, EventInvoiceIssued, nil)
-	}
-	return id, nil
-}
-
-func (s *Service) emitInvoice(ctx context.Context, tx pgx.Tx, id uuid.UUID, number string, propertyID uuid.UUID, evType string, extra map[string]any) {
-	if s.Jobs == nil {
-		return
-	}
-	p := authctx.Must(ctx)
-	payload := map[string]any{"domain": "finance"}
-	for k, v := range extra {
-		payload[k] = v
-	}
-	_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: evType, OrganizationID: p.OrganizationID, PropertyID: &propertyID, ObjectType: "invoice", ObjectID: id, ObjectLabel: number, ActorUserID: actorOrNil(p), Payload: payload})
-}
-
-func (s *Service) getTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*Invoice, error) {
-	inv, err := scanInvoice(tx.QueryRow(ctx, invSelect+` WHERE i.id = $1`, id))
-	if err != nil {
-		if db.IsNoRows(err) {
-			return nil, apperr.NotFound("Invoice")
-		}
-		return nil, err
-	}
-	return inv, loadItems(ctx, tx, inv)
-}
-
-type Filter struct {
-	PropertyID *uuid.UUID
-	TenantID   *uuid.UUID
-	Statuses   []string
-	Type       string
-	Q          string
-	Overdue    bool
-}
-
-func (s *Service) List(ctx context.Context, f Filter, page httpx.Page) ([]Invoice, *string, error) {
-	p := authctx.Must(ctx)
-	var out []Invoice
-	var next *string
-	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		where := " WHERE true"
-		var args []any
-		if f.PropertyID != nil {
-			if err := iam.CanOnProperty(ctx, "billing.invoices.view", *f.PropertyID); err != nil {
-				return err
-			}
-			args = append(args, *f.PropertyID)
-			where += fmt.Sprintf(" AND i.property_id = $%d", len(args))
-		} else if pids, all := p.PropertyIDsFor("billing.invoices.view"); !all {
-			args = append(args, pids)
-			where += fmt.Sprintf(" AND i.property_id = ANY($%d)", len(args))
-		}
-		if f.TenantID != nil {
-			args = append(args, *f.TenantID)
-			where += fmt.Sprintf(" AND i.tenant_id = $%d", len(args))
-		}
-		if len(f.Statuses) > 0 {
-			args = append(args, f.Statuses)
-			where += fmt.Sprintf(" AND i.status = ANY($%d)", len(args))
-		}
-		if f.Type != "" {
-			args = append(args, f.Type)
-			where += fmt.Sprintf(" AND i.invoice_type = $%d", len(args))
-		}
-		if f.Overdue {
-			where += " AND i.status = 'overdue'"
-		}
-		if q := strings.TrimSpace(f.Q); q != "" {
-			args = append(args, "%"+q+"%")
-			where += fmt.Sprintf(" AND (i.invoice_number ILIKE $%d OR t.name ILIKE $%d OR i.description ILIKE $%d OR i.external_ref ILIKE $%d)", len(args), len(args), len(args), len(args))
-		}
-		if page.Cursor != nil {
-			args = append(args, page.Cursor.Value, page.Cursor.ID)
-			where += fmt.Sprintf(" AND (i.created_at, i.id) < ($%d::timestamptz, $%d)", len(args)-1, len(args))
-		}
-		rows, err := tx.Query(ctx, invSelect+where+fmt.Sprintf(" ORDER BY i.created_at DESC, i.id DESC LIMIT %d", page.Limit+1), args...)
-		if err != nil {
-			return err
-		}
-		var items []Invoice
-		for rows.Next() {
-			v, err := scanInvoice(rows)
-			if err != nil {
-				rows.Close()
-				return err
-			}
-			items = append(items, *v)
-		}
-		rows.Close()
-		if len(items) > page.Limit {
-			last := items[page.Limit-1]
-			c := httpx.EncodeCursor(last.CreatedAt.UTC().Format(time.RFC3339Nano), last.ID)
-			next = &c
-			items = items[:page.Limit]
-		}
-		for i := range items {
-			s.staffActions(ctx, &items[i])
-		}
-		out = items
-		return nil
-	})
-	if out == nil {
-		out = []Invoice{}
-	}
-	return out, next, err
-}
-
-func (s *Service) Get(ctx context.Context, id uuid.UUID) (*Invoice, error) {
-	var out *Invoice
-	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		inv, err := s.getTx(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		if err := iam.CanOnProperty(ctx, "billing.invoices.view", inv.PropertyID); err != nil {
-			return err
-		}
-		s.staffActions(ctx, inv)
-		out = inv
-		return nil
-	})
-	return out, err
-}
-
-func (s *Service) Create(ctx context.Context, in InvoiceInput) (*Invoice, error) {
-	if in.PropertyID == nil {
-		return nil, apperr.Validation("property_id wajib")
-	}
-	if err := iam.CanOnProperty(ctx, "billing.invoices.create", *in.PropertyID); err != nil {
-		return nil, err
-	}
-	if in.IssueNow {
-		if err := iam.CanOnProperty(ctx, "billing.invoices.issue", *in.PropertyID); err != nil {
-			return nil, err
-		}
-	}
-	var out *Invoice
-	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		id, err := s.CreateTx(ctx, tx, in, "manual", nil)
-		if err != nil {
-			return err
-		}
-		out, err = s.getTx(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		s.staffActions(ctx, out)
-		return nil
-	})
-	return out, err
-}
-
-// Update: hanya draft.
-func (s *Service) Update(ctx context.Context, id uuid.UUID, in InvoiceInput, ifVersion *int) (*Invoice, error) {
-	p := authctx.Must(ctx)
-	var out *Invoice
-	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		inv, err := s.getTx(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		if err := iam.CanOnProperty(ctx, "billing.invoices.update", inv.PropertyID); err != nil {
-			return err
-		}
-		if inv.Status != "draft" {
-			return apperr.Conflict("INVOICE_NOT_DRAFT", "Hanya invoice draft yang dapat diubah")
-		}
-		if ifVersion != nil && *ifVersion != inv.Version {
-			return apperr.StaleVersion()
-		}
-		sub, tax := inv.SubtotalAmount, inv.TaxAmount
-		if in.Items != nil {
-			items := *in.Items
-			if len(items) == 0 {
-				return apperr.Validation("items minimal satu")
-			}
-			sub, err = sumItems(items)
-			if err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx, `DELETE FROM invoice_items WHERE invoice_id = $1`, id); err != nil {
-				return err
-			}
-			for i, x := range items {
-				if _, err := tx.Exec(ctx, `INSERT INTO invoice_items (organization_id, invoice_id, sort_order, description, quantity, unit, unit_price, amount) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, p.OrganizationID, id, i, strings.TrimSpace(x.Description), x.Quantity, x.Unit, x.UnitPrice, x.Amount); err != nil {
-					return err
-				}
-			}
-		}
-		if in.TaxAmount != nil {
-			tax = *in.TaxAmount
-		}
-		ps, err := parseDate(in.PeriodStart)
-		if err != nil {
-			return err
-		}
-		pe, err := parseDate(in.PeriodEnd)
-		if err != nil {
-			return err
-		}
-		if in.InvoiceType != nil && !invoiceTypes[*in.InvoiceType] {
-			return apperr.Validation("invoice_type tidak valid")
-		}
-		if _, err := tx.Exec(ctx, `UPDATE invoices SET tenant_id = COALESCE($2, tenant_id), unit_location_id = COALESCE($3, unit_location_id), invoice_type = COALESCE($4, invoice_type), period_start = COALESCE($5, period_start), period_end = COALESCE($6, period_end),
-			description = COALESCE($7, description), subtotal_amount = $8, tax_amount = $9, total_amount = $8 + $9, due_at = COALESCE($10, due_at), external_ref = COALESCE($11, external_ref), notes = COALESCE($12, notes), updated_by = $13 WHERE id = $1`,
-			id, in.TenantID, in.UnitLocationID, in.InvoiceType, ps, pe, in.Description, sub, tax, in.DueAt, in.ExternalRef, in.Notes, p.UserID); err != nil {
-			return err
-		}
-		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditUpdate, EntityType: "invoice", EntityID: &id, EntityLabel: inv.InvoiceNumber, After: in})
-		out, err = s.getTx(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		s.staffActions(ctx, out)
-		return nil
-	})
-	return out, err
-}
-
-type ActionInput struct {
-	Reason string `json:"reason"`
-}
-
-// Act: issue | cancel.
-func (s *Service) Act(ctx context.Context, id uuid.UUID, action string, in ActionInput) (*Invoice, error) {
-	p := authctx.Must(ctx)
-	var out *Invoice
-	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		inv, err := s.getTx(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		if err := iam.CanOnProperty(ctx, "billing.invoices.view", inv.PropertyID); err != nil {
-			return err
-		}
-		s.staffActions(ctx, inv)
-		if !has(inv.AllowedActions, action) {
-			return apperr.InvalidTransition(fmt.Sprintf("Aksi %s tidak tersedia untuk invoice berstatus %s", action, inv.Status))
-		}
-		switch action {
-		case "issue":
-			if inv.TotalAmount <= 0 {
-				return apperr.Validation("Total invoice harus > 0")
-			}
-			if _, err := tx.Exec(ctx, `UPDATE invoices SET status = 'issued', issued_at = now(), updated_by = $2 WHERE id = $1`, id, p.UserID); err != nil {
-				return err
-			}
-			s.emitInvoice(ctx, tx, id, inv.InvoiceNumber, inv.PropertyID, EventInvoiceIssued, map[string]any{"total": inv.TotalAmount, "due_at": inv.DueAt})
-		case "cancel":
-			reason := strings.TrimSpace(in.Reason)
-			if reason == "" {
-				return apperr.Validation("reason wajib").WithField("reason", "wajib")
-			}
-			if _, err := tx.Exec(ctx, `UPDATE invoices SET status = 'cancelled', cancelled_at = now(), cancel_reason = $2, updated_by = $3 WHERE id = $1`, id, reason, p.UserID); err != nil {
-				return err
-			}
-			_, _ = tx.Exec(ctx, `UPDATE payments SET status = 'cancelled', updated_by = $2 WHERE invoice_id = $1 AND status IN ('initiated','pending')`, id, p.UserID)
-			s.emitInvoice(ctx, tx, id, inv.InvoiceNumber, inv.PropertyID, EventInvoiceCancelled, map[string]any{"reason": reason})
-		}
-		_ = audit.Record(ctx, tx, audit.Entry{ObjectType: "invoice", ObjectID: id, Action: audit.ActStatusChanged, From: inv.Status, To: map[string]string{"issue": "issued", "cancel": "cancelled"}[action], Payload: map[string]any{"action": action, "reason": in.Reason}})
-		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditStatusChange, EntityType: "invoice", EntityID: &id, EntityLabel: inv.InvoiceNumber, Before: map[string]any{"status": inv.Status}, After: map[string]any{"action": action}})
-		out, err = s.getTx(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		s.staffActions(ctx, out)
-		return nil
-	})
-	return out, err
-}
-
 // ---------- Payment ----------
 
 type Payment struct {
-	ID             uuid.UUID  `json:"id"`
-	PaymentNumber  string     `json:"payment_number"`
-	PropertyID     uuid.UUID  `json:"property_id"`
-	InvoiceID      uuid.UUID  `json:"invoice_id"`
-	InvoiceNumber  string     `json:"invoice_number"`
-	TenantName     *string    `json:"tenant_name"`
-	Amount         int64      `json:"amount"`
-	CurrencyCode   string     `json:"currency_code"`
-	ProviderCode   string     `json:"provider_code"`
-	Method         string     `json:"method"`
-	Status         string     `json:"status"`
-	ProviderRef    *string    `json:"provider_ref"`
-	CheckoutURL    *string    `json:"checkout_url"`
-	VANumber       *string    `json:"va_number"`
-	QRString       *string    `json:"qr_string"`
-	Instructions   *string    `json:"instructions"`
-	ExpiresAt      *time.Time `json:"expires_at"`
-	PaidAt         *time.Time `json:"paid_at"`
-	VerifiedAt     *time.Time `json:"verified_at"`
-	Verification   *string    `json:"verification"`
-	VerifiedBy     *string    `json:"verified_by_name"`
-	ReceiptNumber  *string    `json:"receipt_number"`
-	FailureReason  *string    `json:"failure_reason"`
-	Notes          *string    `json:"notes"`
+	ID            uuid.UUID  `json:"id"`
+	PaymentNumber string     `json:"payment_number"`
+	PropertyID    uuid.UUID  `json:"property_id"`
+	InvoiceID     uuid.UUID  `json:"invoice_id"`
+	InvoiceNumber string     `json:"invoice_number"`
+	TenantName    *string    `json:"tenant_name"`
+	Amount        int64      `json:"amount"`
+	CurrencyCode  string     `json:"currency_code"`
+	ProviderCode  string     `json:"provider_code"`
+	Method        string     `json:"method"`
+	Status        string     `json:"status"`
+	ProviderRef   *string    `json:"provider_ref"`
+	CheckoutURL   *string    `json:"checkout_url"`
+	VANumber      *string    `json:"va_number"`
+	QRString      *string    `json:"qr_string"`
+	Instructions  *string    `json:"instructions"`
+	ExpiresAt     *time.Time `json:"expires_at"`
+	PaidAt        *time.Time `json:"paid_at"`
+	VerifiedAt    *time.Time `json:"verified_at"`
+	Verification  *string    `json:"verification"`
+	VerifiedBy    *string    `json:"verified_by_name"`
+	ReceiptNumber *string    `json:"receipt_number"`
+	FailureReason *string    `json:"failure_reason"`
+	Notes         *string    `json:"notes"`
+	// PRD P4 v2.1: referensi bank, nomor dokumen akuntansi (P4-INT-03), grup penerimaan (P4-PAY-05), refund (P4-PAY-06), bukti transfer (P4-VRF-02)
+	Reference      *string    `json:"reference"`
+	ExternalRef    *string    `json:"external_ref"`
+	ReceiptGroup   *string    `json:"receipt_group"`
+	RefundedAt     *time.Time `json:"refunded_at"`
+	RefundReason   *string    `json:"refund_reason"`
+	ProofCount     int        `json:"proof_count"`
+	TenantUserName *string    `json:"tenant_user_name"`
+	TenantUserID   *uuid.UUID `json:"-"`
 	CreatedAt      time.Time  `json:"created_at"`
 	AllowedActions []string   `json:"allowed_actions"`
 	Version        int        `json:"version"`
 }
 
-const paySelect = `SELECT p.id, p.payment_number, p.property_id, p.invoice_id, i.invoice_number, t.name, p.amount, p.currency_code, p.provider_code, p.method, p.status, p.provider_ref, p.checkout_url, p.va_number, p.qr_string, p.instructions,
-	p.expires_at, p.paid_at, p.verified_at, p.verification, vb.full_name, p.receipt_number, p.failure_reason, p.notes, p.created_at, p.version
-	FROM payments p JOIN invoices i ON i.id = p.invoice_id LEFT JOIN tenants t ON t.id = i.tenant_id LEFT JOIN users vb ON vb.id = p.verified_by`
+const paySelect = `SELECT p.id, p.payment_number, p.property_id, p.invoice_id, COALESCE(i.invoice_number, 'Draft'), t.name, p.amount, p.currency_code, p.provider_code, p.method, p.status, p.provider_ref, p.checkout_url, p.va_number, p.qr_string, p.instructions,
+	p.expires_at, p.paid_at, p.verified_at, p.verification, vb.full_name, p.receipt_number, p.failure_reason, p.notes,
+	p.reference, p.external_ref, p.receipt_group, p.refunded_at, p.refund_reason,
+	(SELECT count(*) FROM attachments a WHERE a.object_type = 'payment' AND a.object_id = p.id AND a.deleted_at IS NULL), tu.full_name, p.tenant_user_id, p.created_at, p.version
+	FROM payments p JOIN invoices i ON i.id = p.invoice_id LEFT JOIN tenants t ON t.id = i.tenant_id LEFT JOIN users vb ON vb.id = p.verified_by LEFT JOIN users tu ON tu.id = p.tenant_user_id`
 
 func scanPayment(row pgx.Row) (*Payment, error) {
 	var v Payment
 	if err := row.Scan(&v.ID, &v.PaymentNumber, &v.PropertyID, &v.InvoiceID, &v.InvoiceNumber, &v.TenantName, &v.Amount, &v.CurrencyCode, &v.ProviderCode, &v.Method, &v.Status, &v.ProviderRef, &v.CheckoutURL, &v.VANumber, &v.QRString, &v.Instructions,
-		&v.ExpiresAt, &v.PaidAt, &v.VerifiedAt, &v.Verification, &v.VerifiedBy, &v.ReceiptNumber, &v.FailureReason, &v.Notes, &v.CreatedAt, &v.Version); err != nil {
+		&v.ExpiresAt, &v.PaidAt, &v.VerifiedAt, &v.Verification, &v.VerifiedBy, &v.ReceiptNumber, &v.FailureReason, &v.Notes,
+		&v.Reference, &v.ExternalRef, &v.ReceiptGroup, &v.RefundedAt, &v.RefundReason, &v.ProofCount, &v.TenantUserName, &v.TenantUserID, &v.CreatedAt, &v.Version); err != nil {
 		return nil, err
 	}
 	v.CurrencyCode = strings.TrimSpace(v.CurrencyCode)
@@ -665,11 +160,23 @@ type ProviderInput struct {
 	WebhookSecret *string         `json:"webhook_secret"`
 }
 
-// UpsertProvider: konfigurasi provider (platform.organizations.update). Secret tidak pernah dikembalikan.
+// UpsertProvider: konfigurasi provider (billing.settings.manage tingkat organization, B-15). Secret tidak pernah dikembalikan.
+// Provider tanpa adapter (midtrans/xendit — online payment HOLD, P4-ONL-03) tidak dapat diaktifkan.
 func (s *Service) UpsertProvider(ctx context.Context, code string, in ProviderInput) (*ProviderInfo, error) {
 	p := authctx.Must(ctx)
-	if _, ok := Get(code); !ok && code != "midtrans" && code != "xendit" {
+	if _, all := p.PropertyIDsFor("billing.settings.manage"); !all {
+		return nil, apperr.Forbidden("Memerlukan billing.settings.manage tingkat organization")
+	}
+	_, hasAdapter := Get(code)
+	if !hasAdapter && code != "midtrans" && code != "xendit" {
 		return nil, apperr.Validation("provider tidak dikenal")
+	}
+	if !hasAdapter && in.IsActive != nil && *in.IsActive {
+		return nil, apperr.Conflict("PROVIDER_NOT_AVAILABLE", "Provider "+code+" belum tersedia (pembayaran online sedang ditunda)")
+	}
+	if !hasAdapter && in.IsActive == nil {
+		f := false
+		in.IsActive = &f
 	}
 	var out *ProviderInfo
 	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
@@ -752,6 +259,11 @@ func (s *Service) initiateTx(ctx context.Context, tx pgx.Tx, inv *Invoice, in In
 	}
 	config := map[string]any{}
 	_ = json.Unmarshal(cfg, &config)
+	if _, ok := config["bank_account"]; !ok && code == "manual" {
+		if acct := s.bankAccountText(ctx, tx, inv.PropertyID); acct != "" {
+			config["bank_account"] = acct
+		}
+	}
 	loc := property.PropertyTimezone(ctx, tx, inv.PropertyID)
 	number, err := ids.NextYearly(ctx, tx, p.OrganizationID, ids.PrefixPayment, time.Now(), loc)
 	if err != nil {
@@ -764,7 +276,7 @@ func (s *Service) initiateTx(ctx context.Context, tx pgx.Tx, inv *Invoice, in In
 		_ = tx.QueryRow(ctx, `SELECT full_name, COALESCE(email,'') FROM users WHERE id = $1`, sc.UserID).Scan(&payer, &payerEmail)
 	}
 	id := uuid.Must(uuid.NewV7())
-	res, err := prov.CreateCheckout(ctx, CheckoutRequest{PaymentID: id, PaymentNumber: number, InvoiceNumber: inv.InvoiceNumber, Amount: amount, Currency: inv.CurrencyCode, Method: method, PayerName: payer, PayerEmail: payerEmail, Config: config, PublicURL: s.PublicURL})
+	res, err := prov.CreateCheckout(ctx, CheckoutRequest{PaymentID: id, PaymentNumber: number, InvoiceNumber: inv.DisplayNumber, Amount: amount, Currency: inv.CurrencyCode, Method: method, PayerName: payer, PayerEmail: payerEmail, Config: config, PublicURL: s.PublicURL})
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -787,148 +299,6 @@ func (s *Service) initiateTx(ctx context.Context, tx pgx.Tx, inv *Invoice, in In
 		_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: EventPaymentInitiated, OrganizationID: p.OrganizationID, PropertyID: &inv.PropertyID, ObjectType: "payment", ObjectID: id, ObjectLabel: number, ActorUserID: actorOrNil(p), Payload: payload})
 	}
 	return id, nil
-}
-
-// settleTx: tandai payment paid + update invoice (paid_amount, status) + event. verification: gateway_callback | staff_manual.
-func (s *Service) settleTx(ctx context.Context, tx pgx.Tx, paymentID uuid.UUID, paidAt time.Time, verification string, verifiedBy *uuid.UUID, callback []byte) error {
-	p := authctx.Must(ctx)
-	var invID uuid.UUID
-	var amount int64
-	var status, number string
-	var propertyID uuid.UUID
-	var tenantUser *uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT invoice_id, amount, status, payment_number, property_id, tenant_user_id FROM payments WHERE id = $1 FOR UPDATE`, paymentID).Scan(&invID, &amount, &status, &number, &propertyID, &tenantUser); err != nil {
-		return apperr.NotFound("Payment")
-	}
-	if status == "paid" {
-		return nil // idempotent
-	}
-	if status != "initiated" && status != "pending" {
-		return apperr.Conflict("PAYMENT_NOT_SETTLEABLE", "Payment berstatus "+status)
-	}
-	if _, err := tx.Exec(ctx, `UPDATE payments SET status = 'paid', paid_at = $2, verified_at = now(), verification = $3, verified_by = $4, receipt_number = payment_number, callback_payload = COALESCE($5::jsonb, callback_payload), updated_by = $6 WHERE id = $1`,
-		paymentID, paidAt, verification, verifiedBy, nullJSON(callback), actorOrNil(p)); err != nil {
-		return err
-	}
-	var total, paid int64
-	var invNumber string
-	if err := tx.QueryRow(ctx, `UPDATE invoices SET paid_amount = LEAST(total_amount, paid_amount + $2), updated_by = $3 WHERE id = $1 RETURNING total_amount, paid_amount, invoice_number`, invID, amount, actorOrNil(p)).Scan(&total, &paid, &invNumber); err != nil {
-		return err
-	}
-	newStatus := "partially_paid"
-	if paid >= total {
-		newStatus = "paid"
-	}
-	if _, err := tx.Exec(ctx, `UPDATE invoices SET status = $2, paid_at = CASE WHEN $2 = 'paid' THEN $3 ELSE paid_at END WHERE id = $1`, invID, newStatus, paidAt); err != nil {
-		return err
-	}
-	_ = audit.Record(ctx, tx, audit.Entry{ObjectType: "payment", ObjectID: paymentID, Action: audit.ActStatusChanged, From: status, To: "paid", Payload: map[string]any{"verification": verification}})
-	_ = audit.Record(ctx, tx, audit.Entry{ObjectType: "invoice", ObjectID: invID, Action: "payment_received", Payload: map[string]any{"payment": number, "amount": amount, "status": newStatus}})
-	_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditStatusChange, EntityType: "payment", EntityID: &paymentID, EntityLabel: number, After: map[string]any{"status": "paid", "verification": verification}})
-	if s.Jobs != nil {
-		payload := map[string]any{"amount": amount, "domain": "finance", "invoice_number": invNumber, "receipt_number": number}
-		if tenantUser != nil {
-			payload["tenant_user_id"] = *tenantUser
-		}
-		_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: EventPaymentPaid, OrganizationID: p.OrganizationID, PropertyID: &propertyID, ObjectType: "payment", ObjectID: paymentID, ObjectLabel: number, ActorUserID: actorOrNil(p), Payload: payload})
-		if newStatus == "paid" {
-			_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: EventInvoicePaid, OrganizationID: p.OrganizationID, PropertyID: &propertyID, ObjectType: "invoice", ObjectID: invID, ObjectLabel: invNumber, ActorUserID: actorOrNil(p), Payload: payload})
-		}
-	}
-	return nil
-}
-
-func nullJSON(b []byte) any {
-	if len(b) == 0 {
-		return nil
-	}
-	return b
-}
-
-// RecordManual: staf mencatat pembayaran tunai/transfer yang sudah diterima (verifikasi langsung).
-type RecordInput struct {
-	Amount int64      `json:"amount"`
-	Method string     `json:"method"`
-	PaidAt *time.Time `json:"paid_at"`
-	Notes  *string    `json:"notes"`
-}
-
-func (s *Service) RecordManual(ctx context.Context, invoiceID uuid.UUID, in RecordInput) (*Payment, error) {
-	p := authctx.Must(ctx)
-	var out *Payment
-	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		inv, err := s.getTx(ctx, tx, invoiceID)
-		if err != nil {
-			return err
-		}
-		if err := iam.CanOnProperty(ctx, "billing.payments.create", inv.PropertyID); err != nil {
-			return err
-		}
-		if err := iam.CanOnProperty(ctx, "billing.payments.verify", inv.PropertyID); err != nil {
-			return err
-		}
-		if inv.OutstandingAmt <= 0 || !(inv.Status == "issued" || inv.Status == "partially_paid" || inv.Status == "overdue") {
-			return apperr.Conflict("INVOICE_NOT_PAYABLE", "Invoice tidak dapat dibayar")
-		}
-		if in.Amount <= 0 || in.Amount > inv.OutstandingAmt {
-			return apperr.Validation(fmt.Sprintf("amount harus 1..%d", inv.OutstandingAmt))
-		}
-		method := in.Method
-		if method == "" {
-			method = "transfer"
-		}
-		loc := property.PropertyTimezone(ctx, tx, inv.PropertyID)
-		number, err := ids.NextYearly(ctx, tx, p.OrganizationID, ids.PrefixPayment, time.Now(), loc)
-		if err != nil {
-			return err
-		}
-		id := uuid.Must(uuid.NewV7())
-		if _, err := tx.Exec(ctx, `INSERT INTO payments (id, organization_id, property_id, payment_number, invoice_id, amount, currency_code, provider_code, method, status, notes, created_by, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,'manual',$8,'pending',$9,$10,$10)`,
-			id, p.OrganizationID, inv.PropertyID, number, inv.ID, in.Amount, inv.CurrencyCode, method, in.Notes, p.UserID); err != nil {
-			return err
-		}
-		paidAt := time.Now().UTC()
-		if in.PaidAt != nil {
-			paidAt = *in.PaidAt
-		}
-		if err := s.settleTx(ctx, tx, id, paidAt, "staff_manual", &p.UserID, nil); err != nil {
-			return err
-		}
-		out, err = s.getPaymentTx(ctx, tx, id)
-		return err
-	})
-	return out, err
-}
-
-// VerifyPending: staf memverifikasi pembayaran manual yang diinisiasi tenant (bukti transfer diterima).
-func (s *Service) VerifyPending(ctx context.Context, paymentID uuid.UUID, in RecordInput) (*Payment, error) {
-	p := authctx.Must(ctx)
-	var out *Payment
-	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		pay, err := s.getPaymentTx(ctx, tx, paymentID)
-		if err != nil {
-			return err
-		}
-		if err := iam.CanOnProperty(ctx, "billing.payments.verify", pay.PropertyID); err != nil {
-			return err
-		}
-		if pay.ProviderCode != "manual" {
-			return apperr.Conflict("GATEWAY_PAYMENT", "Pembayaran gateway hanya diverifikasi melalui callback provider")
-		}
-		paidAt := time.Now().UTC()
-		if in.PaidAt != nil {
-			paidAt = *in.PaidAt
-		}
-		if err := s.settleTx(ctx, tx, paymentID, paidAt, "staff_manual", &p.UserID, nil); err != nil {
-			return err
-		}
-		if in.Notes != nil {
-			_, _ = tx.Exec(ctx, `UPDATE payments SET notes = $2 WHERE id = $1`, paymentID, *in.Notes)
-		}
-		out, err = s.getPaymentTx(ctx, tx, paymentID)
-		return err
-	})
-	return out, err
 }
 
 // FailPayment: staf menandai pembayaran manual gagal/kedaluwarsa (mis. bukti tidak valid).
@@ -969,16 +339,43 @@ func (s *Service) getPaymentTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*P
 
 func (s *Service) paymentActions(ctx context.Context, pay *Payment) {
 	p := authctx.Must(ctx)
-	if (pay.Status == "pending" || pay.Status == "initiated") && pay.ProviderCode == "manual" && p.HasOnProperty("billing.payments.verify", pay.PropertyID) {
-		pay.AllowedActions = append(pay.AllowedActions, "verify", "fail")
+	pay.AllowedActions = []string{"view"}
+	// B-09: pending yang kedaluwarsa tetap dapat diverifikasi
+	if (pay.Status == "pending" || pay.Status == "initiated" || pay.Status == "expired") && pay.ProviderCode == "manual" && p.HasOnProperty("billing.payments.verify", pay.PropertyID) {
+		pay.AllowedActions = append(pay.AllowedActions, "verify")
+		if pay.Status != "expired" {
+			pay.AllowedActions = append(pay.AllowedActions, "fail")
+		}
+	}
+	if pay.Status == "refunded" {
+		pay.AllowedActions = append(pay.AllowedActions, "download_receipt") // kwitansi tetap tersedia (renderReceiptTx)
+	}
+	if pay.Status == "paid" {
+		pay.AllowedActions = append(pay.AllowedActions, "download_receipt")
+		if p.HasOnProperty("billing.payments.refund", pay.PropertyID) && pay.Method != "credit" && pay.Method != "deposit" {
+			pay.AllowedActions = append(pay.AllowedActions, "refund")
+		}
+		if p.HasOnProperty("billing.payments.create", pay.PropertyID) {
+			pay.AllowedActions = append(pay.AllowedActions, "update")
+		}
 	}
 }
 
 type PaymentFilter struct {
-	PropertyID *uuid.UUID
-	InvoiceID  *uuid.UUID
-	Statuses   []string
-	Provider   string
+	PropertyID   *uuid.UUID
+	InvoiceID    *uuid.UUID
+	TenantID     *uuid.UUID
+	Statuses     []string
+	Provider     string
+	Method       string
+	ReceiptGroup string
+	PaidFrom     *time.Time
+	PaidTo       *time.Time
+	Q            string
+
+	// tanggal kalender property (YYYY-MM-DD, inklusif)
+	PaidFromDate *string
+	PaidToDate   *string
 }
 
 func (s *Service) ListPayments(ctx context.Context, f PaymentFilter, page httpx.Page) ([]Payment, *string, error) {
@@ -988,16 +385,15 @@ func (s *Service) ListPayments(ctx context.Context, f PaymentFilter, page httpx.
 	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		where := " WHERE true"
 		var args []any
+		add := func(v any) string { args = append(args, v); return fmt.Sprintf("$%d", len(args)) }
 		if f.PropertyID != nil {
-			if err := iam.CanOnProperty(ctx, "billing.payments.view", *f.PropertyID); err != nil {
-				return err
+			if !p.HasAnyOnProperty("billing.payments.view", *f.PropertyID) {
+				return apperr.Forbidden("Tidak memiliki billing.payments.view pada property ini")
 			}
-			args = append(args, *f.PropertyID)
-			where += fmt.Sprintf(" AND p.property_id = $%d", len(args))
-		} else if pids, all := p.PropertyIDsFor("billing.payments.view"); !all {
-			args = append(args, pids)
-			where += fmt.Sprintf(" AND p.property_id = ANY($%d)", len(args))
+			where += " AND p.property_id = " + add(*f.PropertyID)
 		}
+		// P4-ACL-04: grant ber-scope Building/Tower melihat pembayaran invoice unit di subtree-nya
+		where += " AND " + p.ScopeSQL("billing.payments.view", "p.property_id", "(SELECT sl.path FROM invoices si JOIN locations sl ON sl.id = si.unit_location_id WHERE si.id = p.invoice_id)", add)
 		if f.InvoiceID != nil {
 			args = append(args, *f.InvoiceID)
 			where += fmt.Sprintf(" AND p.invoice_id = $%d", len(args))
@@ -1009,6 +405,37 @@ func (s *Service) ListPayments(ctx context.Context, f PaymentFilter, page httpx.
 		if f.Provider != "" {
 			args = append(args, f.Provider)
 			where += fmt.Sprintf(" AND p.provider_code = $%d", len(args))
+		}
+		if f.TenantID != nil {
+			args = append(args, *f.TenantID)
+			where += fmt.Sprintf(" AND i.tenant_id = $%d", len(args))
+		}
+		if f.Method != "" {
+			args = append(args, f.Method)
+			where += fmt.Sprintf(" AND p.method = $%d", len(args))
+		}
+		if f.ReceiptGroup != "" {
+			args = append(args, f.ReceiptGroup)
+			where += fmt.Sprintf(" AND p.receipt_group = $%d", len(args))
+		}
+		if f.PaidFrom != nil {
+			args = append(args, *f.PaidFrom)
+			where += fmt.Sprintf(" AND p.paid_at >= $%d", len(args))
+		}
+		if f.PaidTo != nil {
+			args = append(args, *f.PaidTo)
+			where += fmt.Sprintf(" AND p.paid_at <= $%d", len(args))
+		}
+		localPaid := "(p.paid_at AT TIME ZONE (SELECT pz.timezone FROM properties pz WHERE pz.location_id = p.property_id))::date"
+		if f.PaidFromDate != nil {
+			where += " AND " + localPaid + " >= " + add(*f.PaidFromDate) + "::date"
+		}
+		if f.PaidToDate != nil {
+			where += " AND " + localPaid + " <= " + add(*f.PaidToDate) + "::date"
+		}
+		if q := strings.TrimSpace(f.Q); q != "" {
+			args = append(args, "%"+q+"%")
+			where += fmt.Sprintf(" AND (p.payment_number ILIKE $%[1]d OR i.invoice_number ILIKE $%[1]d OR t.name ILIKE $%[1]d OR p.reference ILIKE $%[1]d OR p.external_ref ILIKE $%[1]d OR p.receipt_group ILIKE $%[1]d)", len(args))
 		}
 		if page.Cursor != nil {
 			args = append(args, page.Cursor.Value, page.Cursor.ID)
@@ -1050,7 +477,7 @@ func (s *Service) GetPayment(ctx context.Context, id uuid.UUID) (*Payment, error
 		if err != nil {
 			return err
 		}
-		if err := iam.CanOnProperty(ctx, "billing.payments.view", pay.PropertyID); err != nil {
+		if err := canViewAt(ctx, tx, "billing.payments.view", pay.PropertyID, invoiceUnitTx(ctx, tx, pay.InvoiceID)); err != nil {
 			return err
 		}
 		s.paymentActions(ctx, pay)
@@ -1095,6 +522,7 @@ func (s *Service) HandleWebhook(ctx context.Context, providerCode string, r *htt
 	}
 	ev, verr := prov.VerifyWebhook(r, body, deref(secret))
 	out := &WebhookResult{PaymentID: paymentID}
+	var sigErr error
 	ctx = authctx.With(ctx, authctx.System(orgID))
 	err := s.DB.WithOrgTx(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
 		extID := probe.ProviderRef
@@ -1115,7 +543,9 @@ func (s *Service) HandleWebhook(ctx context.Context, providerCode string, r *htt
 		}
 		if verr != nil {
 			_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditAccessDenied, EntityType: "payment_webhook", EntityID: &paymentID, EntityLabel: providerCode, After: map[string]any{"error": verr.Error()}})
-			return verr
+			_, _ = tx.Exec(ctx, `UPDATE payment_webhook_events SET processed_at = now(), result = 'signature_invalid' WHERE provider_code = $1 AND external_id = $2`, providerCode, extID)
+			sigErr = verr
+			return nil // B-11: commit agar jejak event bertanda tangan invalid tidak hilang; error dikembalikan setelah commit
 		}
 		var amount int64
 		_ = tx.QueryRow(ctx, `SELECT amount FROM payments WHERE id = $1`, paymentID).Scan(&amount)
@@ -1132,10 +562,16 @@ func (s *Service) HandleWebhook(ctx context.Context, providerCode string, r *htt
 			if ev.PaidAt != nil {
 				paidAt = *ev.PaidAt
 			}
-			if err := s.settleTx(ctx, tx, paymentID, paidAt, "gateway_callback", nil, rawJSON); err != nil {
+			if _, err := s.settleTx(ctx, tx, paymentID, paidAt, "gateway_callback", nil, rawJSON, nil); err != nil {
 				return err
 			}
 			result, out.Status = "paid", "paid"
+		case "refunded", "refund":
+			// B-12: refund dari gateway → status refunded + koreksi invoice (alur sama dengan refund staf)
+			if err := s.refundTx(ctx, tx, paymentID, "Refund dari provider: "+ev.Status, false); err != nil {
+				return err
+			}
+			result, out.Status = "refunded", "refunded"
 		case "failed", "expired", "cancelled", "deny", "cancel", "expire":
 			st := map[string]string{"failed": "failed", "deny": "failed", "expired": "expired", "expire": "expired", "cancelled": "cancelled", "cancel": "cancelled"}[ev.Status]
 			_, _ = tx.Exec(ctx, `UPDATE payments SET status = $2, failure_reason = COALESCE(failure_reason, $3), callback_payload = $4 WHERE id = $1 AND status IN ('initiated','pending')`, paymentID, st, "Callback provider: "+ev.Status, rawJSON)
@@ -1159,6 +595,9 @@ func (s *Service) HandleWebhook(ctx context.Context, providerCode string, r *htt
 	})
 	if err != nil {
 		return nil, err
+	}
+	if sigErr != nil {
+		return nil, sigErr
 	}
 	return out, nil
 }
@@ -1201,7 +640,7 @@ func (s *Service) TenantSummary(ctx context.Context) (*Summary, error) {
 		}
 		where, args := tenantInvoiceWhere(sc, 1)
 		out.CurrencyCode = "IDR"
-		return tx.QueryRow(ctx, `SELECT COALESCE(sum(i.total_amount - i.paid_amount),0), count(*), count(*) FILTER (WHERE i.status = 'overdue'), min(i.due_at) FROM invoices i WHERE `+where+` AND i.status IN ('issued','partially_paid','overdue')`, args...).
+		return tx.QueryRow(ctx, `SELECT COALESCE(sum(i.total_amount - i.paid_amount - i.credited_amount),0), count(*), count(*) FILTER (WHERE i.status = 'overdue'), min(i.due_at) FROM invoices i WHERE `+where+` AND i.status IN ('issued','partially_paid','overdue')`, args...).
 			Scan(&out.OutstandingAmount, &out.UnpaidCount, &out.OverdueCount, &out.NextDueAt)
 	})
 	return &out, err
@@ -1317,12 +756,16 @@ func (s *Service) TenantPay(ctx context.Context, invoiceID uuid.UUID, in Initiat
 			return err
 		}
 		out, err = s.getPaymentTx(ctx, tx, id)
-		return err
+		if err != nil {
+			return err
+		}
+		tenantPaymentActions(out, sc.UserID)
+		return nil
 	})
 	return out, err
 }
 
-func (s *Service) TenantPayments(ctx context.Context, page httpx.Page) ([]Payment, *string, error) {
+func (s *Service) TenantPayments(ctx context.Context, invoiceID *uuid.UUID, page httpx.Page) ([]Payment, *string, error) {
 	var out []Payment
 	var next *string
 	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
@@ -1332,6 +775,11 @@ func (s *Service) TenantPayments(ctx context.Context, page httpx.Page) ([]Paymen
 		}
 		where, args := tenantInvoiceWhere(sc, 1)
 		where = " WHERE " + where
+		if invoiceID != nil {
+			// B-14: seluruh pembayaran satu invoice difilter server (bukan 50 baris pertama di browser)
+			args = append(args, *invoiceID)
+			where += fmt.Sprintf(" AND p.invoice_id = $%d", len(args))
+		}
 		if page.Cursor != nil {
 			args = append(args, page.Cursor.Value, page.Cursor.ID)
 			where += fmt.Sprintf(" AND (p.created_at, p.id) < ($%d::timestamptz, $%d)", len(args)-1, len(args))
@@ -1347,6 +795,7 @@ func (s *Service) TenantPayments(ctx context.Context, page httpx.Page) ([]Paymen
 			if err != nil {
 				return err
 			}
+			tenantPaymentActions(v, sc.UserID)
 			items = append(items, *v)
 		}
 		if len(items) > page.Limit {
@@ -1364,6 +813,17 @@ func (s *Service) TenantPayments(ctx context.Context, page httpx.Page) ([]Paymen
 	return out, next, err
 }
 
+// tenantPaymentActions: kwitansi untuk pembayaran lunas; unggah bukti transfer untuk pembayaran manual milik sendiri yang menunggu (P4-VRF-02).
+func tenantPaymentActions(v *Payment, userID uuid.UUID) {
+	v.AllowedActions = []string{"view"}
+	if v.Status == "paid" || v.Status == "refunded" {
+		v.AllowedActions = append(v.AllowedActions, "download_receipt")
+	}
+	if (v.Status == "pending" || v.Status == "initiated") && v.ProviderCode == "manual" && v.TenantUserID != nil && *v.TenantUserID == userID {
+		v.AllowedActions = append(v.AllowedActions, "upload_proof")
+	}
+}
+
 func (s *Service) TenantPayment(ctx context.Context, id uuid.UUID) (*Payment, error) {
 	var out *Payment
 	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
@@ -1379,56 +839,11 @@ func (s *Service) TenantPayment(ctx context.Context, id uuid.UUID) (*Payment, er
 			}
 			return err
 		}
+		tenantPaymentActions(pay, sc.UserID)
 		out = pay
 		return nil
 	})
 	return out, err
-}
-
-// ---------- Sweep (worker): due soon H-3, overdue, payment expired ----------
-
-func (s *Service) Sweep(ctx context.Context, orgID uuid.UUID) error {
-	ctx = authctx.With(ctx, authctx.System(orgID))
-	return s.DB.WithOrgTx(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `UPDATE invoices SET status = 'overdue', overdue_notified_at = now() WHERE status IN ('issued','partially_paid') AND due_at < now() RETURNING id, invoice_number, property_id`)
-		if err != nil {
-			return err
-		}
-		type ref struct {
-			id  uuid.UUID
-			num string
-			pid uuid.UUID
-		}
-		var overdue, dueSoon []ref
-		for rows.Next() {
-			var r ref
-			if rows.Scan(&r.id, &r.num, &r.pid) == nil {
-				overdue = append(overdue, r)
-			}
-		}
-		rows.Close()
-		rows, err = tx.Query(ctx, `UPDATE invoices SET due_soon_notified_at = now() WHERE status IN ('issued','partially_paid') AND due_soon_notified_at IS NULL AND due_at BETWEEN now() AND now() + interval '3 days' RETURNING id, invoice_number, property_id`)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var r ref
-			if rows.Scan(&r.id, &r.num, &r.pid) == nil {
-				dueSoon = append(dueSoon, r)
-			}
-		}
-		rows.Close()
-		_, _ = tx.Exec(ctx, `UPDATE payments SET status = 'expired', failure_reason = 'Batas waktu pembayaran habis' WHERE status IN ('initiated','pending') AND expires_at IS NOT NULL AND expires_at < now()`)
-		if s.Jobs != nil {
-			for _, r := range overdue {
-				_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: EventInvoiceOverdue, OrganizationID: orgID, PropertyID: &r.pid, ObjectType: "invoice", ObjectID: r.id, ObjectLabel: r.num, Payload: map[string]any{"domain": "finance"}})
-			}
-			for _, r := range dueSoon {
-				_ = s.Jobs.EnqueueEventTx(ctx, tx, events.Event{Type: EventInvoiceDueSoon, OrganizationID: orgID, PropertyID: &r.pid, ObjectType: "invoice", ObjectID: r.id, ObjectLabel: r.num, Payload: map[string]any{"domain": "finance"}})
-			}
-		}
-		return nil
-	})
 }
 
 func has(xs []string, x string) bool {

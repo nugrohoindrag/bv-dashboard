@@ -20,6 +20,14 @@ func (h *Handler) Mount(r chi.Router) {
 	r.With(req("platform.organizations.view")).Get("/organizations/me", h.getOrg)
 	r.With(req("platform.organizations.update")).Patch("/organizations/me", h.updateOrg)
 
+	// Portfolio (PRD P0 v2 §4.1)
+	r.With(req("property.portfolios.view")).Get("/portfolios", h.listPortfolios)
+	r.With(req("property.portfolios.create")).Post("/portfolios", h.createPortfolio)
+	r.With(req("property.portfolios.view")).Get("/portfolios/{id}", h.getPortfolio)
+	r.With(req("property.portfolios.update")).Patch("/portfolios/{id}", h.updatePortfolio)
+	r.With(req("property.portfolios.delete")).Delete("/portfolios/{id}", h.deletePortfolio)
+	r.With(req("property.portfolios.view")).Get("/portfolios/{id}/properties", h.portfolioProperties)
+
 	// Generic location endpoints
 	r.With(req("property.locations.view")).Get("/locations", h.listLocations)
 	r.With(req("property.locations.view")).Get("/locations/tree", h.tree)
@@ -28,6 +36,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.With(h.IAM.RequireAny("property.locations.create", "property.properties.create")).Post("/locations", h.createLocation)
 	r.With(req("property.locations.update")).Patch("/locations/{id}", h.updateLocation)
 	r.With(req("property.locations.delete")).Delete("/locations/{id}", h.deleteLocation)
+	r.With(h.IAM.RequireAny("property.locations.update", "property.properties.update")).Post("/locations/{id}/activate", h.setActive(true))
+	r.With(h.IAM.RequireAny("property.locations.update", "property.properties.update")).Post("/locations/{id}/deactivate", h.setActive(false))
 
 	// Typed aliases (Naming Convention §47): /properties /buildings /towers /floors /areas /spaces /units
 	for _, lt := range []LocationType{LTProperty, LTBuilding, LTTower, LTFloor, LTArea, LTSpace, LTUnit} {
@@ -37,8 +47,16 @@ func (h *Handler) Mount(r chi.Router) {
 		r.With(h.IAM.RequireAny("property.locations.create", "property.properties.create")).Post(path, h.createTyped(lt))
 		r.With(req("property.locations.view")).Get(path+"/{id}", h.getLocation)
 		r.With(req("property.locations.update")).Patch(path+"/{id}", h.updateLocation)
+		r.With(h.IAM.RequireAny("property.locations.update", "property.properties.update")).Post(path+"/{id}/activate", h.setActive(true))
+		r.With(h.IAM.RequireAny("property.locations.update", "property.properties.update")).Post(path+"/{id}/deactivate", h.setActive(false))
+		if lt != LTProperty {
+			r.With(req("property.locations.delete")).Delete(path+"/{id}", h.deleteLocation)
+		}
 	}
-	r.With(req("property.locations.view")).Get("/buildings/{id}/floors", h.childrenOf(LTFloor))
+	// floor di building mencakup floor di bawah tower (subtree), bukan hanya anak langsung
+	r.With(req("property.locations.view")).Get("/buildings/{id}/floors", h.descendantsOf(LTFloor))
+	r.With(req("property.locations.view")).Get("/buildings/{id}/towers", h.childrenOf(LTTower))
+	r.With(req("property.locations.view")).Get("/towers/{id}/floors", h.childrenOf(LTFloor))
 	r.With(req("property.locations.view")).Get("/floors/{id}/areas", h.childrenOf(LTArea))
 	r.With(req("property.locations.view")).Get("/floors/{id}/units", h.childrenOf(LTUnit))
 
@@ -71,15 +89,12 @@ func (h *Handler) getOrg(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) updateOrg(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Name     *string        `json:"name"`
-		Settings map[string]any `json:"settings"`
-	}
+	var in OrganizationInput
 	if err := httpx.Decode(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	o, err := h.Svc.UpdateOrganization(r.Context(), in.Name, in.Settings)
+	o, err := h.Svc.UpdateOrganization(r.Context(), in, httpx.IfMatchVersion(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -94,6 +109,12 @@ func (h *Handler) parseFilter(r *http.Request) (LocationFilter, error) {
 		return f, err
 	}
 	if f.ParentID, err = httpx.QueryUUID(r, "parent_id"); err != nil {
+		return f, err
+	}
+	if f.AncestorID, err = httpx.QueryUUID(r, "ancestor_id"); err != nil {
+		return f, err
+	}
+	if f.PortfolioID, err = httpx.QueryUUID(r, "portfolio_id"); err != nil {
 		return f, err
 	}
 	f.LocationType = LocationType(r.URL.Query().Get("location_type"))
@@ -389,3 +410,129 @@ func errOr(err error, msg string) error {
 }
 
 func httpxValidation(msg string) error { return apperr.Validation(msg) }
+
+func (h *Handler) descendantsOf(lt LocationType) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := httpx.PathUUID(r, chi.URLParam, "id")
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		items, err := h.Svc.ListLocations(r.Context(), LocationFilter{AncestorID: &id, LocationType: lt})
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, httpx.NewList(items, nil))
+	}
+}
+
+func (h *Handler) setActive(active bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := httpx.PathUUID(r, chi.URLParam, "id")
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		var req struct {
+			Reason string `json:"reason"`
+		}
+		if r.ContentLength > 0 {
+			if err := httpx.Decode(r, &req); err != nil {
+				httpx.WriteError(w, r, err)
+				return
+			}
+		}
+		l, err := h.Svc.SetLocationActive(r.Context(), id, active, req.Reason)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, l)
+	}
+}
+
+// ----- portfolios -----
+
+func (h *Handler) listPortfolios(w http.ResponseWriter, r *http.Request) {
+	items, err := h.Svc.ListPortfolios(r.Context(), r.URL.Query().Get("include_inactive") == "true")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, httpx.NewList(items, nil))
+}
+
+func (h *Handler) getPortfolio(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	pf, err := h.Svc.GetPortfolio(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, pf)
+}
+
+func (h *Handler) createPortfolio(w http.ResponseWriter, r *http.Request) {
+	var in PortfolioInput
+	if err := httpx.Decode(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	pf, err := h.Svc.CreatePortfolio(r.Context(), in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, pf)
+}
+
+func (h *Handler) updatePortfolio(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in PortfolioInput
+	if err := httpx.Decode(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	pf, err := h.Svc.UpdatePortfolio(r.Context(), id, in, httpx.IfMatchVersion(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, pf)
+}
+
+func (h *Handler) deletePortfolio(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Svc.DeletePortfolio(r.Context(), id); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) portfolioProperties(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, chi.URLParam, "id")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	items, err := h.Svc.ListLocations(r.Context(), LocationFilter{PortfolioID: &id, LocationType: LTProperty, IncludeInactive: true})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, httpx.NewList(items, nil))
+}

@@ -855,7 +855,8 @@ func (s *Service) afterReserveTx(ctx context.Context, tx pgx.Tx, p *authctx.Prin
 			periodLabel := map[string]string{"daily": "hari", "weekly": "minggu", "monthly": "bulan"}[x.RentalPeriod]
 			items := []billing.Item{{Description: fmt.Sprintf("Sewa unit %s · %d %s (%s – %s)", x.UnitNumber, x.PeriodCount, periodLabel, x.StartDate.Format("02 Jan 2006"), x.EndDate.AddDate(0, 0, -1).Format("02 Jan 2006")), Quantity: float64(x.PeriodCount), Unit: strPtr(periodLabel), UnitPrice: x.RateAmount, Amount: x.TotalAmount}}
 			if x.DepositAmount > 0 {
-				items = append(items, billing.Item{Description: "Deposit sewa unit " + x.UnitNumber, Quantity: 1, UnitPrice: x.DepositAmount, Amount: x.DepositAmount})
+				// charge_type deposit → saat dibayar tercatat di ledger deposit (PRD P4 v2.1 P4-PND-03)
+				items = append(items, billing.Item{Description: "Deposit sewa unit " + x.UnitNumber, Quantity: 1, UnitPrice: x.DepositAmount, Amount: x.DepositAmount, ChargeType: strPtr("deposit")})
 			}
 			due := x.StartDate
 			if due.Before(time.Now()) {

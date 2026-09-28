@@ -30,12 +30,63 @@ type Service struct {
 	// MissedPolicy (TD-007): "auto" = checkpoint pending otomatis ditandai missed saat complete; "manual" = officer wajib menandai.
 	MissedPolicy string
 	HorizonDays  int
+	// EmergencyAckTimeout (PRD P2 v2.1 P2-EMG-04): Emergency Alert belum di-acknowledge selama ini → eskalasi per kelipatan.
+	EmergencyAckTimeout time.Duration
 }
 
 func New(d *db.DB, j jobs.Enqueuer, ops *operations.Service) *Service {
-	s := &Service{DB: d, Jobs: j, Ops: ops, MissedPolicy: "auto", HorizonDays: 7}
+	s := &Service{DB: d, Jobs: j, Ops: ops, MissedPolicy: "auto", HorizonDays: 7, EmergencyAckTimeout: 3 * time.Minute}
 	ops.RegisterHook("task:patrol", patrolHook{s: s})
+	// lampiran/evidence object Security P2 (foto emergency, pelanggaran parkir, barang temuan, tanda tangan serah terima)
+	ops.RegisterObjectAccess("emergency_alert", s.emergencyAccess)
+	ops.RegisterObjectAccess("parking_violation", s.violationAccess)
+	ops.RegisterObjectAccess("lost_found_item", s.lostFoundAccess)
 	return s
+}
+
+func (s *Service) emergencyAccess(ctx context.Context, tx pgx.Tx, id uuid.UUID, write bool) error {
+	p := authctx.Must(ctx)
+	var pid uuid.UUID
+	var raisedBy *uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT property_id, raised_by FROM emergency_alerts WHERE id = $1`, id).Scan(&pid, &raisedBy); err != nil {
+		return apperr.NotFound("Emergency Alert")
+	}
+	own := raisedBy != nil && *raisedBy == p.UserID
+	if write {
+		if own || p.HasAnyOnProperty("security.emergency_alerts.respond", pid) {
+			return nil
+		}
+	} else if own || p.HasAnyOnProperty("security.emergency_alerts.view", pid) {
+		return nil
+	}
+	return apperr.Forbidden("")
+}
+
+func (s *Service) violationAccess(ctx context.Context, tx pgx.Tx, id uuid.UUID, write bool) error {
+	var pid uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT property_id FROM parking_violations WHERE id = $1`, id).Scan(&pid); err != nil {
+		return apperr.NotFound("Parking violation")
+	}
+	act := "view"
+	if write {
+		act = "record"
+	}
+	return parkingPerm(ctx, act, pid)
+}
+
+func (s *Service) lostFoundAccess(ctx context.Context, tx pgx.Tx, id uuid.UUID, write bool) error {
+	p := authctx.Must(ctx)
+	var pid uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT property_id FROM lost_found_items WHERE id = $1`, id).Scan(&pid); err != nil {
+		return apperr.NotFound("Lost & Found item")
+	}
+	if write && (p.HasAnyOnProperty("security.lost_found.create", pid) || p.HasAnyOnProperty("security.lost_found.manage", pid)) {
+		return nil
+	}
+	if !write && p.HasAnyOnProperty("security.lost_found.view", pid) {
+		return nil
+	}
+	return apperr.Forbidden("")
 }
 
 // ---------- Patrol Route & Checkpoint ----------
@@ -416,7 +467,10 @@ type PatrolSchedule struct {
 	IsActive              bool       `json:"is_active"`
 	ValidFrom             *string    `json:"valid_from"`
 	ValidUntil            *string    `json:"valid_until"`
-	Version               int        `json:"version"`
+	// PRD P2 v2.1 P2-SHF-04: jadwal patroli dapat dikaitkan ke shift Security
+	ShiftID   *uuid.UUID `json:"shift_id"`
+	ShiftName *string    `json:"shift_name"`
+	Version   int        `json:"version"`
 }
 
 type ScheduleInput struct {
@@ -431,6 +485,22 @@ type ScheduleInput struct {
 	IsActive              *bool      `json:"is_active"`
 	ValidFrom             *string    `json:"valid_from"`
 	ValidUntil            *string    `json:"valid_until"`
+	ShiftID               *uuid.UUID `json:"shift_id"` // start_time default = jam mulai shift; UUID nol = lepas shift
+	IfVersion             *int       `json:"-"`        // If-Match (PATCH)
+}
+
+// shiftStartFor: shift wajib domain security di property yang sama (D-P2-05 shift per domain).
+func shiftStartFor(ctx context.Context, tx pgx.Tx, shiftID, propertyID uuid.UUID) (string, error) {
+	var pid uuid.UUID
+	var domain string
+	var start time.Time
+	if err := tx.QueryRow(ctx, `SELECT property_id, domain, start_time FROM shift_definitions WHERE id = $1 AND is_active`, shiftID).Scan(&pid, &domain, &start); err != nil {
+		return "", apperr.Validation("shift_id tidak ditemukan").WithField("shift_id", "tidak valid")
+	}
+	if pid != propertyID || domain != "security" {
+		return "", apperr.Validation("shift_id harus shift Security di property yang sama").WithField("shift_id", "tidak valid")
+	}
+	return start.Format("15:04"), nil
 }
 
 func parseHHMM(s string) (time.Time, error) {
@@ -457,12 +527,8 @@ func (s *Service) CreateSchedule(ctx context.Context, in ScheduleInput) (*Patrol
 // CreateScheduleTx: di dalam transaksi (seed / import); langsung generate patrol task horizon.
 func (s *Service) CreateScheduleTx(ctx context.Context, tx pgx.Tx, in ScheduleInput) (uuid.UUID, error) {
 	p := authctx.Must(ctx)
-	if in.RouteID == nil || in.Name == nil || in.StartTime == nil {
-		return uuid.Nil, apperr.Validation("route_id, name, start_time wajib")
-	}
-	st, err := parseHHMM(*in.StartTime)
-	if err != nil {
-		return uuid.Nil, err
+	if in.RouteID == nil || in.Name == nil || (in.StartTime == nil && in.ShiftID == nil) {
+		return uuid.Nil, apperr.Validation("route_id, name, start_time (atau shift_id) wajib")
 	}
 	dur := 60
 	if in.DurationMinutes != nil && *in.DurationMinutes > 0 {
@@ -486,10 +552,23 @@ func (s *Service) CreateScheduleTx(ctx context.Context, tx pgx.Tx, in ScheduleIn
 	if !p.HasOnProperty("security.patrol.manage", route.PropertyID) {
 		return uuid.Nil, apperr.Forbidden("")
 	}
+	startStr := ""
+	if in.ShiftID != nil {
+		if startStr, err = shiftStartFor(ctx, tx, *in.ShiftID, route.PropertyID); err != nil {
+			return uuid.Nil, err
+		}
+	}
+	if in.StartTime != nil && *in.StartTime != "" {
+		startStr = *in.StartTime
+	}
+	st, err := parseHHMM(startStr)
+	if err != nil {
+		return uuid.Nil, err
+	}
 	var id uuid.UUID
-	if err := tx.QueryRow(ctx, `INSERT INTO patrol_schedules (organization_id, property_id, route_id, name, start_time, duration_minutes, weekdays, responsible_team_id, default_assignee_user_id, priority, valid_from, valid_until, created_by, updated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::date,$12::date,$13,$13) RETURNING id`,
-		p.OrganizationID, route.PropertyID, *in.RouteID, *in.Name, st.Format("15:04:05"), dur, wd, in.ResponsibleTeamID, in.DefaultAssigneeUserID, prio, nilIfEmpty(in.ValidFrom), nilIfEmpty(in.ValidUntil), actorOrNil(p)).Scan(&id); err != nil {
+	if err := tx.QueryRow(ctx, `INSERT INTO patrol_schedules (organization_id, property_id, route_id, name, start_time, duration_minutes, weekdays, responsible_team_id, default_assignee_user_id, priority, valid_from, valid_until, created_by, updated_by, shift_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::date,$12::date,$13,$13,$14) RETURNING id`,
+		p.OrganizationID, route.PropertyID, *in.RouteID, *in.Name, st.Format("15:04:05"), dur, wd, in.ResponsibleTeamID, in.DefaultAssigneeUserID, prio, nilIfEmpty(in.ValidFrom), nilIfEmpty(in.ValidUntil), actorOrNil(p), in.ShiftID).Scan(&id); err != nil {
 		return uuid.Nil, err
 	}
 	_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditCreate, EntityType: "patrol_schedule", EntityID: &id, EntityLabel: *in.Name, After: in})
@@ -517,6 +596,9 @@ func (s *Service) UpdateSchedule(ctx context.Context, id uuid.UUID, in ScheduleI
 		if !p.HasOnProperty("security.patrol.manage", before.PropertyID) {
 			return apperr.Forbidden("")
 		}
+		if in.IfVersion != nil && *in.IfVersion != before.Version {
+			return apperr.StaleVersion()
+		}
 		var startStr *string
 		if in.StartTime != nil {
 			st, err := parseHHMM(*in.StartTime)
@@ -526,10 +608,21 @@ func (s *Service) UpdateSchedule(ctx context.Context, id uuid.UUID, in ScheduleI
 			v := st.Format("15:04:05")
 			startStr = &v
 		}
+		if in.ShiftID != nil && *in.ShiftID != uuid.Nil {
+			shiftStart, err := shiftStartFor(ctx, tx, *in.ShiftID, before.PropertyID)
+			if err != nil {
+				return err
+			}
+			if startStr == nil {
+				v := shiftStart + ":00"
+				startStr = &v
+			}
+		}
 		if _, err := tx.Exec(ctx, `UPDATE patrol_schedules SET route_id = COALESCE($2, route_id), name = COALESCE(NULLIF($3,''), name), start_time = COALESCE($4::time, start_time), duration_minutes = COALESCE($5, duration_minutes),
 			weekdays = COALESCE($6, weekdays), responsible_team_id = COALESCE($7, responsible_team_id), default_assignee_user_id = COALESCE($8, default_assignee_user_id), priority = COALESCE(NULLIF($9,''), priority),
-			is_active = COALESCE($10, is_active), valid_from = COALESCE($11::date, valid_from), valid_until = COALESCE($12::date, valid_until), updated_by = $13 WHERE id = $1`,
-			id, in.RouteID, deref(in.Name), startStr, in.DurationMinutes, in.Weekdays, in.ResponsibleTeamID, in.DefaultAssigneeUserID, deref(in.Priority), in.IsActive, nilIfEmpty(in.ValidFrom), nilIfEmpty(in.ValidUntil), p.UserID); err != nil {
+			is_active = COALESCE($10, is_active), valid_from = COALESCE($11::date, valid_from), valid_until = COALESCE($12::date, valid_until), updated_by = $13,
+			shift_id = CASE WHEN $14::uuid IS NULL THEN shift_id WHEN $14::uuid = '00000000-0000-0000-0000-000000000000'::uuid THEN NULL ELSE $14::uuid END WHERE id = $1`,
+			id, in.RouteID, deref(in.Name), startStr, in.DurationMinutes, in.Weekdays, in.ResponsibleTeamID, in.DefaultAssigneeUserID, deref(in.Priority), in.IsActive, nilIfEmpty(in.ValidFrom), nilIfEmpty(in.ValidUntil), p.UserID, in.ShiftID); err != nil {
 			return err
 		}
 		_ = audit.Log(ctx, tx, audit.AuditEntry{Action: audit.AuditUpdate, EntityType: "patrol_schedule", EntityID: &id, EntityLabel: before.Name, Before: before, After: in})
@@ -549,9 +642,11 @@ func (s *Service) getScheduleTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*
 	var sc PatrolSchedule
 	var st time.Time
 	var vf, vu *time.Time
-	if err := tx.QueryRow(ctx, `SELECT ps.id, ps.property_id, ps.route_id, r.name, ps.name, ps.start_time, ps.duration_minutes, ps.weekdays, ps.responsible_team_id, ps.default_assignee_user_id, ps.priority, ps.is_active, ps.valid_from, ps.valid_until, ps.version
-		FROM patrol_schedules ps JOIN patrol_routes r ON r.id = ps.route_id WHERE ps.id = $1`, id).
-		Scan(&sc.ID, &sc.PropertyID, &sc.RouteID, &sc.RouteName, &sc.Name, &st, &sc.DurationMinutes, &sc.Weekdays, &sc.ResponsibleTeamID, &sc.DefaultAssigneeUserID, &sc.Priority, &sc.IsActive, &vf, &vu, &sc.Version); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT ps.id, ps.property_id, ps.route_id, r.name, ps.name, ps.start_time, ps.duration_minutes, ps.weekdays, ps.responsible_team_id, ps.default_assignee_user_id, ps.priority, ps.is_active, ps.valid_from, ps.valid_until, ps.version,
+		ps.shift_id, sd.name
+		FROM patrol_schedules ps JOIN patrol_routes r ON r.id = ps.route_id LEFT JOIN shift_definitions sd ON sd.id = ps.shift_id WHERE ps.id = $1`, id).
+		Scan(&sc.ID, &sc.PropertyID, &sc.RouteID, &sc.RouteName, &sc.Name, &st, &sc.DurationMinutes, &sc.Weekdays, &sc.ResponsibleTeamID, &sc.DefaultAssigneeUserID, &sc.Priority, &sc.IsActive, &vf, &vu, &sc.Version,
+			&sc.ShiftID, &sc.ShiftName); err != nil {
 		if db.IsNoRows(err) {
 			return nil, apperr.NotFound("Patrol Schedule")
 		}

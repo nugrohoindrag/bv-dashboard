@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/buildingvision/api/internal/attachments"
 	"github.com/buildingvision/api/internal/audit"
 	"github.com/buildingvision/api/internal/iam"
 	"github.com/buildingvision/api/internal/platform/apperr"
@@ -28,6 +29,8 @@ type Service struct {
 	DB   *db.DB
 	Jobs jobs.Enqueuer
 	IAM  *iam.Service
+	// Attachments: URL lampiran pesan SR sisi staf (PRD P3 v2.1 P3-SRQ-05) — diisi saat wiring
+	Attachments *attachments.Service
 }
 
 func New(d *db.DB, j jobs.Enqueuer, iamSvc *iam.Service) *Service {
@@ -236,7 +239,7 @@ type CreateInput struct {
 	OwnershipStatus string      `json:"ownership_status"`
 	UnitIDs         []uuid.UUID `json:"unit_ids"`
 	Password        string      `json:"password"` // opsional; kosong → dibuat sementara dan dikembalikan sekali
-	Source          string      `json:"-"`        // staff | rental_onboarding | hotel_checkin
+	Source          string      `json:"-"`        // staff | rental_onboarding | hotel_checkin | tenant_admin
 }
 
 type CreateResult struct {
@@ -262,6 +265,13 @@ func (s *Service) CreateTx(ctx context.Context, tx pgx.Tx, in CreateInput) (*Cre
 			return nil, err
 		}
 	}
+	return s.createAccountTx(ctx, tx, in)
+}
+
+// createAccountTx: inti pembuatan akun Tenant App (tanpa cek permission staf) — dipakai staf, onboarding sewa/hotel, dan
+// Tenant Admin (CreateMemberTx). Password sementara → wajib ganti saat login pertama (PRD P3 v2.1 P3-ACC-03).
+func (s *Service) createAccountTx(ctx context.Context, tx pgx.Tx, in CreateInput) (*CreateResult, error) {
+	p := authctx.Must(ctx)
 	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
 	in.FullName = strings.TrimSpace(in.FullName)
 	if in.Email == "" || !strings.Contains(in.Email, "@") {
@@ -310,11 +320,10 @@ func (s *Service) CreateTx(ctx context.Context, tx pgx.Tx, in CreateInput) (*Cre
 	}
 	pw, temp := in.Password, ""
 	if pw == "" {
-		raw, _, err := iam.NewRefreshToken()
-		if err != nil {
+		var err error
+		if pw, err = newTemporaryPassword(); err != nil {
 			return nil, err
 		}
-		pw = "Bv" + raw[:8] + "1!"
 		temp = pw
 	}
 	hash, err := iam.HashPassword(pw)
@@ -326,8 +335,8 @@ func (s *Service) CreateTx(ctx context.Context, tx pgx.Tx, in CreateInput) (*Cre
 		return nil, err
 	}
 	var userID uuid.UUID
-	if err := tx.QueryRow(ctx, `INSERT INTO users (organization_id, user_code, email, full_name, phone, password_hash, is_active, created_by) VALUES ($1,$2,$3,$4,NULLIF($5,''),$6,true,$7) RETURNING id`,
-		p.OrganizationID, code, in.Email, in.FullName, strings.TrimSpace(in.Phone), hash, actorOrNil(p)).Scan(&userID); err != nil {
+	if err := tx.QueryRow(ctx, `INSERT INTO users (organization_id, user_code, email, full_name, phone, password_hash, is_active, must_change_password, created_by) VALUES ($1,$2,$3,$4,NULLIF($5,''),$6,true,$7,$8) RETURNING id`,
+		p.OrganizationID, code, in.Email, in.FullName, strings.TrimSpace(in.Phone), hash, temp != "", actorOrNil(p)).Scan(&userID); err != nil {
 		if db.IsUniqueViolation(err) {
 			return nil, apperr.Conflict("EMAIL_TAKEN", "Email sudah terdaftar")
 		}
@@ -572,75 +581,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*Te
 	return out, err
 }
 
-// ---------- Feedback / metrics (PRD §28 dashboard Tenant Relation) ----------
-
-type Metrics struct {
-	OpenTickets      int      `json:"open_tickets"`
-	SLARisk          int      `json:"sla_risk"`
-	Overdue          int      `json:"overdue"`
-	ResolvedToday    int      `json:"resolved_today"`
-	Reopened30d      int      `json:"reopened_30d"`
-	WaitingForTenant int      `json:"waiting_for_tenant"`
-	WaitingForStaff  int      `json:"waiting_for_staff"` // pesan tenant belum dibaca staf
-	PendingAccounts  int      `json:"pending_accounts"`
-	CSAT             *float64 `json:"csat"`
-	CSATCount        int      `json:"csat_count"`
-	ReopenRatePct    *float64 `json:"reopen_rate_pct"`
-	TenantAppTickets int      `json:"tenant_app_tickets_30d"`
-}
-
-func (s *Service) Metrics(ctx context.Context, propertyID *uuid.UUID) (*Metrics, error) {
-	p := authctx.Must(ctx)
-	var m Metrics
-	err := s.DB.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		var pids []uuid.UUID
-		all := true
-		if propertyID != nil {
-			if err := iam.CanOnProperty(ctx, "tenant.service_requests.view", *propertyID); err != nil {
-				return err
-			}
-			pids, all = []uuid.UUID{*propertyID}, false
-		} else {
-			pids, all = p.PropertyIDsFor("tenant.service_requests.view")
-		}
-		scope := func(col string) string {
-			if all {
-				return "true"
-			}
-			return col + " = ANY($1)"
-		}
-		args := []any{}
-		if !all {
-			args = append(args, pids)
-		}
-		q := `SELECT
-			count(*) FILTER (WHERE status NOT IN ('closed','cancelled')),
-			count(*) FILTER (WHERE sla_risk_at IS NOT NULL AND sla_breached_at IS NULL AND status NOT IN ('resolved','closed','cancelled')),
-			count(*) FILTER (WHERE sla_breached_at IS NOT NULL AND status NOT IN ('resolved','closed','cancelled')),
-			count(*) FILTER (WHERE resolved_at >= date_trunc('day', now())),
-			count(*) FILTER (WHERE reopen_count > 0 AND updated_at >= now() - interval '30 days'),
-			count(*) FILTER (WHERE status = 'waiting_for_tenant'),
-			count(*) FILTER (WHERE channel = 'tenant_app' AND created_at >= now() - interval '30 days'),
-			count(*) FILTER (WHERE closed_at >= now() - interval '30 days'),
-			count(*) FILTER (WHERE closed_at >= now() - interval '30 days' AND reopen_count > 0)
-			FROM service_requests sr WHERE ` + scope("sr.property_id")
-		var closed30, reopened30 int
-		if err := tx.QueryRow(ctx, q, args...).Scan(&m.OpenTickets, &m.SLARisk, &m.Overdue, &m.ResolvedToday, &m.Reopened30d, &m.WaitingForTenant, &m.TenantAppTickets, &closed30, &reopened30); err != nil {
-			return err
-		}
-		if closed30 > 0 {
-			r := float64(reopened30) * 100 / float64(closed30)
-			m.ReopenRatePct = &r
-		}
-		_ = tx.QueryRow(ctx, `SELECT count(DISTINCT m.service_request_id) FROM service_request_messages m JOIN service_requests sr ON sr.id = m.service_request_id WHERE m.author_kind = 'tenant' AND m.read_by_staff_at IS NULL AND `+scope("sr.property_id"), args...).Scan(&m.WaitingForStaff)
-		_ = tx.QueryRow(ctx, `SELECT count(*) FROM tenant_users tu WHERE tu.status = 'pending_validation' AND `+scope("tu.property_id"), args...).Scan(&m.PendingAccounts)
-		var avg *float64
-		_ = tx.QueryRow(ctx, `SELECT avg(rating)::float8, count(*) FROM service_request_feedback fb WHERE fb.created_at >= now() - interval '90 days' AND `+scope("fb.property_id"), args...).Scan(&avg, &m.CSATCount)
-		m.CSAT = avg
-		return nil
-	})
-	return &m, err
-}
+// ---------- Feedback CSAT (PRD §28 dashboard Tenant Relation) — metrik: metrics.go ----------
 
 type FeedbackRow struct {
 	ServiceRequestID uuid.UUID `json:"service_request_id"`

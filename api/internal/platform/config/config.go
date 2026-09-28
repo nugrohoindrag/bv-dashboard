@@ -10,9 +10,11 @@ import (
 )
 
 type Config struct {
-	Env               string // local | staging | production
-	HTTPAddr          string
-	PublicURL         string // https://app.buildingvision.id
+	Env       string // local | staging | production
+	HTTPAddr  string
+	PublicURL string // https://app.buildingvision.id
+	// TenantAppURL: URL Tenant PWA untuk tautan di pesan WhatsApp manual (PRD P3 v2.1 P3-WAM-02); kosong = PublicURL
+	TenantAppURL      string
 	DatabaseURL       string
 	WorkerDatabaseURL string
 
@@ -40,6 +42,7 @@ type Config struct {
 	PresignDownloadTTL time.Duration
 	MaxUploadBytes     int64
 	MaxImageBytes      int64 // batas foto (image/*) semua kanal; dokumen/PDF memakai MaxUploadBytes
+	MaxVideoBytes      int64 // batas video evidence (PRD P2 v2.1 P2-SIN-04)
 
 	// Push
 	FCMProjectID          string
@@ -50,6 +53,10 @@ type Config struct {
 	VAPIDSubject    string
 	// Demo Seed Database (§39): tooling demo aktif di local/staging/test; production butuh BV_DEMO_ENABLED=true
 	DemoEnabled bool
+
+	// Observability (PRD P0 v2 §24.4): error tracking Sentry/GlitchTip — kosong = nonaktif
+	SentryDSN string
+	Release   string
 
 	// Misc
 	LogLevel            string
@@ -105,8 +112,10 @@ func Load() (Config, error) {
 		PresignDownloadTTL:    getdur("BV_PRESIGN_DOWNLOAD_TTL", 10*time.Minute),
 		MaxUploadBytes:        getint64("BV_MAX_UPLOAD_BYTES", 10*1024*1024),
 		MaxImageBytes:         getint64("BV_MAX_IMAGE_BYTES", 500*1024),
+		MaxVideoBytes:         getint64("BV_MAX_VIDEO_BYTES", 50*1024*1024),
 		FCMProjectID:          getenv("BV_FCM_PROJECT_ID", ""),
 		FCMServiceAccountJSON: getenv("BV_FCM_SERVICE_ACCOUNT", ""),
+		TenantAppURL:          getenv("BV_TENANT_APP_URL", ""),
 		VAPIDPublicKey:        getenv("BV_VAPID_PUBLIC_KEY", ""),
 		VAPIDPrivateKey:       getenv("BV_VAPID_PRIVATE_KEY", ""),
 		VAPIDSubject:          getenv("BV_VAPID_SUBJECT", "mailto:ops@buildingvision.id"),
@@ -116,6 +125,8 @@ func Load() (Config, error) {
 		OverviewCacheTTL:      getdur("BV_OVERVIEW_CACHE_TTL", 30*time.Second),
 		DueSoonWindow:         getdur("BV_DUE_SOON_WINDOW", 60*time.Minute),
 		MinMobileAppVersion:   getenv("BV_MIN_MOBILE_APP_VERSION", "0.1.0"),
+		SentryDSN:             getenv("BV_SENTRY_DSN", ""),
+		Release:               getenv("BV_RELEASE", "dev"),
 		QRBaseURL:             getenv("BV_QR_BASE_URL", "https://bv.link/q/"),
 		MetricsAddr:           getenv("BV_METRICS_ADDR", ""),
 		WebsiteURL:            getenv("BV_WEBSITE_URL", "http://localhost:5175"),
