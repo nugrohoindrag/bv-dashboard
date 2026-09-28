@@ -68,10 +68,10 @@ func penaltySummary(r *PenaltyRule) string {
 		b.WriteString(" dari sisa tagihan")
 	}
 	if r.GraceDays > 0 {
-		b.WriteString(fmt.Sprintf(" setelah %d hari", r.GraceDays))
+		fmt.Fprintf(&b, " setelah %d hari", r.GraceDays)
 	}
 	if r.MaxPct != nil {
-		b.WriteString(fmt.Sprintf(", maks. %s%%", strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", *r.MaxPct), "0"), ".")))
+		fmt.Fprintf(&b, ", maks. %s%%", strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", *r.MaxPct), "0"), "."))
 	}
 	if r.MaxAmount != nil {
 		b.WriteString(", maks. " + rupiahText(*r.MaxAmount))

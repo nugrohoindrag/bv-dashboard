@@ -116,7 +116,7 @@ func readRows(fileName string, data []byte) ([][]string, string, error) {
 		if err != nil {
 			return nil, "", apperr.Validation("File Excel tidak dapat dibaca: " + err.Error())
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		sheets := f.GetSheetList()
 		if len(sheets) == 0 {
 			return nil, "", apperr.Validation("File Excel kosong")

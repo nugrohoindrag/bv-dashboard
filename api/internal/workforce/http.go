@@ -9,13 +9,10 @@ import (
 
 	"github.com/buildingvision/api/internal/iam"
 	"github.com/buildingvision/api/internal/platform/apperr"
-	"github.com/buildingvision/api/internal/platform/authctx"
 	"github.com/buildingvision/api/internal/platform/httpx"
 )
 
 func httpxValidation(msg string) error { return apperr.Validation(msg) }
-
-func meID(r *http.Request) uuid.UUID { return authctx.Must(r.Context()).UserID }
 
 type Handler struct {
 	Svc *Service

@@ -37,8 +37,6 @@ var FinanceEvents = []string{"invoice.issued", "invoice.paid", "invoice.overdue"
 
 const maxAttempts = 8
 
-func isFinanceEvent(t string) bool { return has(FinanceEvents, t) || t == "webhook.test" }
-
 type Endpoint struct {
 	ID             uuid.UUID  `json:"id"`
 	Name           string     `json:"name"`

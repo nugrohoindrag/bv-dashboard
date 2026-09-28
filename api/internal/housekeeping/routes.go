@@ -122,13 +122,6 @@ type RouteRun struct {
 	NextStop       *RouteRunStop  `json:"next_stop"`
 }
 
-func routePerm(ctx context.Context, action string, propertyID uuid.UUID) error {
-	if authctx.Must(ctx).HasOnProperty("housekeeping.cleaning_routes."+action, propertyID) {
-		return nil
-	}
-	return apperr.Forbidden("Memerlukan housekeeping.cleaning_routes." + action)
-}
-
 // routePermAt: scope Building/Tower (P2-NFR-05) — izin property-wide, atau grant ber-scope yang mencakup SEMUA
 // lokasi stop (menulis) / SALAH SATU lokasi stop (melihat).
 func routePermAt(ctx context.Context, tx pgx.Tx, action string, propertyID uuid.UUID, locIDs []uuid.UUID, all bool) error {

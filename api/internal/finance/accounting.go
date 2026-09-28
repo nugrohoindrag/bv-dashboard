@@ -572,7 +572,9 @@ func (s *Service) ExportJournal(ctx context.Context, propertyID *uuid.UUID, from
 		if format == "xlsx" {
 			x := excelize.NewFile()
 			sh := "Jurnal"
-			x.SetSheetName("Sheet1", sh)
+			if err := x.SetSheetName("Sheet1", sh); err != nil {
+				return err
+			}
 			for c, h := range head {
 				cell, _ := excelize.CoordinatesToCellName(c+1, 1)
 				_ = x.SetCellValue(sh, cell, h)

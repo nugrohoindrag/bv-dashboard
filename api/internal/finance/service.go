@@ -77,13 +77,6 @@ func validCat(kind, key string) bool {
 	return false
 }
 
-func actorOrNil(p *authctx.Principal) *uuid.UUID {
-	if p.IsSystem || p.UserID == uuid.Nil {
-		return nil
-	}
-	return &p.UserID
-}
-
 func has(xs []string, x string) bool {
 	for _, v := range xs {
 		if v == x {
