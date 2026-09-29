@@ -35,6 +35,8 @@ x-api-env: &api-env
   BV_DEMO_ENABLED: ${BV_DEMO_ENABLED:-false}
   BV_QR_BASE_URL: ${BV_QR_BASE_URL:-https://app.example.com/q/}
   BV_LOG_LEVEL: ${BV_LOG_LEVEL:-info}
+  # zona waktu sesi database: "hari ini" di SQL (current_date) = tanggal operasional, bukan UTC server
+  BV_DB_TIMEZONE: ${BV_DB_TIMEZONE:-Asia/Jakarta}
   BV_SENTRY_DSN: ${BV_SENTRY_DSN:-}
   BV_RELEASE: ${BV_RELEASE:-dev}
   # Website PRD v1.1: website publik, email transaksional, trial

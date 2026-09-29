@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,6 +32,16 @@ func Open(ctx context.Context, url string) (*DB, error) {
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
+	}
+	// Zona waktu sesi: SQL memakai current_date/now()::date untuk "hari ini" (izin parkir, akses tenant, kedaluwarsa,
+	// jadwal). Server Postgres production berjalan di UTC, sehingga pukul 00:00–07:00 WIB tanggalnya masih kemarin.
+	// Sesi diset ke zona operasional (BV_DB_TIMEZONE, default Asia/Jakarta) kecuali URL/PGTZ sudah menentukannya.
+	if _, set := cfg.ConnConfig.RuntimeParams["timezone"]; !set {
+		tz := os.Getenv("BV_DB_TIMEZONE")
+		if tz == "" {
+			tz = "Asia/Jakarta"
+		}
+		cfg.ConnConfig.RuntimeParams["timezone"] = tz
 	}
 	cfg.MaxConns = 20
 	cfg.MinConns = 2
